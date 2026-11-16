@@ -264,8 +264,37 @@ def test_check_counts_and_json_come_from_the_same_results() -> None:
         "detail": EXAMPLE_FAILURE.what_happened + " " + SECOND_FAILURE.what_happened,
         "next_step": "Run goodall onboard. Fix both.",
         "waiting_for": None,
+        "note": None,
         "failures": [EXAMPLE_FAILURE.as_json(), SECOND_FAILURE.as_json()],
     }
     assert REPORT_RESULTS[2].as_json()["waiting_for"] == "settings.valid"
     assert REPORT_RESULTS[0].as_json()["detail"] is None
     assert REPORT_RESULTS[0].as_json()["next_step"] is None
+
+
+def test_a_passing_check_with_a_note_shows_the_note_beneath_it_and_in_json() -> None:
+    result = CheckResult(
+        id="secrets.env_file",
+        group="Secrets",
+        status=CheckStatus.PASS,
+        summary="The env file holds only secret references",
+        note="There is no env file, which is fine if this eval uses no secrets, as many small evals do not.",
+    )
+    standard_output = io.StringIO()
+    terminal = Terminal(standard_output=standard_output, standard_error=io.StringIO())
+
+    terminal.show_check_report([result, REPORT_RESULTS[-1]])
+
+    assert standard_output.getvalue() == (
+        "Secrets\n"
+        "  pass  The env file holds only secret references\n"
+        "        There is no env file, which is fine if this eval uses no secrets, as\n"
+        "        many small evals do not.\n"
+        "\n"
+        "Tools\n"
+        "  pass  git is installed\n"
+        "\n"
+        "2 passed, 0 warned, 0 failed, 0 skipped\n"
+    )
+    assert result.as_json()["note"] == result.note
+    assert REPORT_RESULTS[-1].as_json()["note"] is None

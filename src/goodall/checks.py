@@ -73,16 +73,24 @@ class CheckOutcome:
     """What one check function found: a status, and what is wrong when something is.
 
     Make one with `passed`, `failed` or `warned` rather than directly, so a
-    failure or warning always carries at least one next step.
+    failure or warning always carries at least one next step, and only a
+    pass carries a note.
     """
 
     status: CheckStatus
     failures: list[Failure] = field(default_factory=list)
+    note: str | None = None
 
 
-def passed() -> CheckOutcome:
-    """The outcome of a check that found what it looked for."""
-    return CheckOutcome(status=CheckStatus.PASS)
+def passed(note: str | None = None) -> CheckOutcome:
+    """The outcome of a check that found what it looked for.
+
+    `note` is for a pass a person should still know about, such as "there
+    is no env file, which is fine if this eval uses no secrets"; it is
+    shown beneath the check. Anything that needs acting on is a warning
+    instead.
+    """
+    return CheckOutcome(status=CheckStatus.PASS, note=note)
 
 
 def failed(failures: list[Failure]) -> CheckOutcome:
@@ -154,6 +162,7 @@ def run_checks(checks: list[Check], context: CheckContext) -> list[CheckResult]:
                 status=outcome.status,
                 summary=check.summary,
                 failures=outcome.failures,
+                note=outcome.note,
             )
         else:
             result = CheckResult(

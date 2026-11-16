@@ -265,6 +265,7 @@ def test_healthy_setup_as_json_gives_the_same_results(healthy_account: EvalAccou
         "detail": None,
         "next_step": None,
         "waiting_for": None,
+        "note": None,
         "failures": [],
     }
     assert list(statuses(document)) == ALL_CHECK_IDS

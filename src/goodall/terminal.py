@@ -143,6 +143,10 @@ class CheckResult:
       when it is: a failed check always carries a next step.
     - `waiting_for` is set only when the status is SKIP: the id of the
       failed check this one depends on.
+    - `note` is something a person should know about a check that passed,
+      such as "there is no env file, which is fine if this eval uses no
+      secrets". It is for passes only: anything that needs acting on is a
+      failure or a warning, with a next step.
     """
 
     id: str
@@ -151,6 +155,7 @@ class CheckResult:
     summary: str
     failures: list[Failure] = field(default_factory=list)
     waiting_for: str | None = None
+    note: str | None = None
 
     @property
     def detail(self) -> str | None:
@@ -190,6 +195,7 @@ class CheckResult:
             "detail": self.detail,
             "next_step": self.next_step,
             "waiting_for": self.waiting_for,
+            "note": self.note,
             "failures": failure_documents,
         }
 
@@ -359,11 +365,12 @@ class Terminal:
 
         Groups appear in the order of their first check, and checks in the
         order given, which is the order they ran in. Beneath a failed or
-        warning check go what happened and the next step; beneath a skipped
-        check goes one line naming the check it was waiting for. A blank line
-        follows each failed or warning check, so one problem's next step is
-        never read as the next check's; skipped checks stay one under
-        another, since several usually wait for the same failure.
+        warning check go what happened and the next step; beneath a passed
+        check with a note goes the note; beneath a skipped check goes one
+        line naming the check it was waiting for. A blank line follows each
+        failed or warning check, and each note, so one check's text is never
+        read as the next check's; skipped checks stay one under another,
+        since several usually wait for the same failure.
         """
         self.start_output_block()
 
@@ -384,7 +391,8 @@ class Terminal:
             for position, result in enumerate(group_results):
                 group_text += self.check_entry(result, summaries_by_id)
                 is_last_in_group = position == len(group_results) - 1
-                if result.failures and not is_last_in_group:
+                has_text_beneath = bool(result.failures) or result.note is not None
+                if has_text_beneath and not is_last_in_group:
                     group_text += "\n"
             group_blocks.append(group_text)
 
@@ -414,6 +422,9 @@ class Terminal:
             # the id instead.
             waited_for_summary = summaries_by_id.get(result.waiting_for, result.waiting_for)
             entry += self.wrap("Waiting for: " + waited_for_summary, self.output_width, CHECK_DETAIL_INDENT) + "\n"
+
+        if result.note is not None:
+            entry += self.wrap(result.note, self.output_width, CHECK_DETAIL_INDENT) + "\n"
 
         failure_texts = []
         for failure in result.failures:
