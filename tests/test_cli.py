@@ -130,8 +130,14 @@ def test_group_without_subcommand_is_usage_error() -> None:
     assert "usage: goodall export" in output
 
 
+# Commands that do something real, so they no longer report "not built yet".
+BUILT_COMMANDS = ["status"]
+
+
 def test_every_stub_returns_error_and_names_itself() -> None:
     for command_name in PLANNED_COMMANDS:
+        if command_name in BUILT_COMMANDS:
+            continue
         exit_code, output = run_goodall(arguments_for(command_name))
         assert exit_code == exit_codes.ERROR, f"goodall {command_name} returned {exit_code}"
         assert f"goodall {command_name} is not built yet" in output
