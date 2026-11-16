@@ -132,9 +132,12 @@ def test_status_json_reports_the_same_failure_on_standard_output(empty_config_di
     document = json.loads(json_output)
     # One stable shape whatever went wrong: an agent reads work_block_active
     # to decide whether to proceed, and failures is always a list, because
-    # a settings file can have several things wrong with it at once.
-    assert set(document) == {"work_block_active", "failures"}
+    # a settings file can have several things wrong with it at once. The
+    # eval and the contributor are null until goodall has read them.
+    assert set(document) == {"work_block_active", "eval", "contributor", "failures"}
     assert document["work_block_active"] is False
+    assert document["eval"] is None
+    assert document["contributor"] is None
     assert len(document["failures"]) == 1
     failure = document["failures"][0]
     assert failure["kind"] == "local_settings_missing"
@@ -231,6 +234,28 @@ def test_status_json_with_unreadable_settings_file_names_the_problem(
 # folder that GOODALL_CONFIG_DIR names, a record repo folder and a log
 # directory. Each test then breaks one thing.
 
+# The eval config in the agreed shape (goodall-xes.8), with two contributors
+# so the roster holds someone other than this account.
+VALID_EVAL_CONFIG_TEXT = """\
+schema_version = 1
+name = "goodall-pilot"
+description = "Building a SaaS product to first recurring revenue with AI."
+workstreams = ["engineering", "research", "go-to-market"]
+intervention_categories = ["policy-mandated", "infrastructure", "agent-limitation", "freely-delegable"]
+
+[[contributors]]
+id = "ada-lovelace"
+display_name = "Ada Lovelace"
+
+[[contributors]]
+id = "grace-hopper"
+display_name = "Grace Hopper"
+
+[[scope]]
+repository = "github.com/your-org/goodall-pilot-app"
+paths = ["**"]
+"""
+
 
 @dataclass
 class EvalAccount:
@@ -256,6 +281,18 @@ class EvalAccount:
 
     def write_settings(self, text: str) -> None:
         self.settings_file.write_text(text)
+
+    @property
+    def eval_config_file(self) -> Path:
+        return self.record_repo / "eval.toml"
+
+    def write_eval_config(self, text: str) -> None:
+        self.eval_config_file.write_text(text)
+
+    def make_valid(self) -> None:
+        """Write valid local settings and a valid eval config, so a test can break one thing."""
+        self.write_settings(self.valid_settings_text())
+        self.write_eval_config(VALID_EVAL_CONFIG_TEXT)
 
 
 @pytest.fixture
@@ -444,20 +481,50 @@ def test_tilde_of_another_account_is_not_expanded(eval_account: EvalAccount) -> 
     assert failure_kinds() == ["local_settings_value_invalid"]
 
 
-def test_valid_settings_end_in_saying_the_eval_config_cannot_be_read_yet(eval_account: EvalAccount) -> None:
+def test_valid_eval_reports_the_eval_the_contributor_and_no_work_block(eval_account: EvalAccount) -> None:
     # The record repo is written as ~/evals/goodall-pilot-records and only
     # exists under the pretend home folder, so reaching this point also
     # proves that a leading ~ means this account's home.
-    eval_account.write_settings(eval_account.valid_settings_text())
+    eval_account.make_valid()
 
     exit_code, standard_output, standard_error = run_goodall(["status"])
 
+    # Exit 0 is reserved for an active work block, which cannot exist yet.
     assert exit_code == exit_codes.ERROR
-    assert standard_output == ""
-    assert standard_error.startswith("FAIL  Local settings are valid")
-    assert "eval config" in standard_error
-    assert str(eval_account.record_repo) in standard_error
-    assert failure_kinds() == ["eval_config_not_read_yet"]
+    assert standard_error == ""
+    assert standard_output == (
+        "Eval         goodall-pilot\n"
+        "Contributor  Ada Lovelace (ada-lovelace)\n"
+        "Workstream   research, your main workstream\n"
+        "\n"
+        "No work block is active, so nothing is being recorded.\n"
+    )
+
+
+def test_valid_eval_as_json_gives_the_same_facts(eval_account: EvalAccount) -> None:
+    eval_account.make_valid()
+
+    exit_code, standard_output, standard_error = run_goodall(["status", "--json"])
+
+    assert exit_code == exit_codes.ERROR
+    assert standard_error == ""
+    assert json.loads(standard_output) == {
+        "work_block_active": False,
+        "eval": {"name": "goodall-pilot"},
+        "contributor": {"id": "ada-lovelace", "display_name": "Ada Lovelace", "main_workstream": "research"},
+        "failures": [],
+    }
+
+
+def test_reading_the_eval_changes_no_files(eval_account: EvalAccount) -> None:
+    eval_account.make_valid()
+    files_before = files_under(eval_account.home_folder)
+
+    run_goodall(["status"])
+    run_goodall(["status", "--json"])
+
+    assert files_under(eval_account.home_folder) == files_before
+    assert eval_account.eval_config_file.read_text() == VALID_EVAL_CONFIG_TEXT
     assert eval_account.settings_file.read_text() == eval_account.valid_settings_text()
 
 
@@ -542,3 +609,379 @@ def test_every_failure_says_what_why_and_next_and_exits_1(
         assert set(failure) == {"kind", "what_happened", "why", "what_to_do_next"}
         for part in ["what_happened", "why", "what_to_do_next"]:
             assert failure[part].strip() != "", f"{failure['kind']} has an empty {part}"
+
+
+# What goes wrong with the eval config. Local settings are valid in every
+# test below; each test breaks one thing in eval.toml, or makes local
+# settings disagree with it.
+
+
+def break_eval_config(eval_account: EvalAccount, replace_from: str, replace_to: str) -> None:
+    """Write valid files, then change one piece of text in the eval config."""
+    eval_account.make_valid()
+    assert replace_from in VALID_EVAL_CONFIG_TEXT, f"{replace_from!r} is not in the eval config"
+    eval_account.write_eval_config(VALID_EVAL_CONFIG_TEXT.replace(replace_from, replace_to))
+
+
+def everything_goodall_printed() -> str:
+    """Run goodall status both ways and return everything it printed, on both streams."""
+    _, text_output, text_error = run_goodall(["status"])
+    _, json_output, json_error = run_goodall(["status", "--json"])
+    return text_output + text_error + json_output + json_error
+
+
+def test_missing_eval_config_names_the_file_and_the_fix(eval_account: EvalAccount) -> None:
+    eval_account.write_settings(eval_account.valid_settings_text())
+
+    exit_code, standard_output, standard_error = run_goodall(["status"])
+
+    assert exit_code == exit_codes.ERROR
+    assert standard_output == ""
+    assert standard_error.startswith("FAIL  No eval config was found")
+    assert str(eval_account.eval_config_file) in standard_error
+    # The fix is either a wrong record_repo in local settings or a record
+    # repo that is not up to date, so both files are named.
+    assert str(eval_account.settings_file) in standard_error
+    assert failure_kinds() == ["eval_config_missing"]
+
+
+def test_eval_config_failure_as_json_keeps_the_stable_shape(eval_account: EvalAccount) -> None:
+    eval_account.write_settings(eval_account.valid_settings_text())
+
+    exit_code, standard_output, standard_error = run_goodall(["status", "--json"])
+
+    assert exit_code == exit_codes.ERROR
+    assert standard_error == ""
+    document = json.loads(standard_output)
+    assert document["work_block_active"] is False
+    assert document["eval"] is None
+    assert document["contributor"] is None
+    assert [failure["kind"] for failure in document["failures"]] == ["eval_config_missing"]
+
+
+def test_unreadable_eval_config_fails_instead_of_crashing(
+    eval_account: EvalAccount, remove_permissions: Callable[[Path], None]
+) -> None:
+    eval_account.make_valid()
+    remove_permissions(eval_account.eval_config_file)
+
+    _, _, standard_error = run_goodall(["status"])
+
+    assert "Permission denied" in standard_error
+    assert failure_kinds() == ["eval_config_unreadable"]
+
+
+def test_eval_config_that_is_not_valid_toml_names_the_file_and_the_line(eval_account: EvalAccount) -> None:
+    # A hand-edit that forgot the quotes around the eval's name, on line 2.
+    break_eval_config(eval_account, 'name = "goodall-pilot"', "name = goodall-pilot")
+
+    _, _, standard_error = run_goodall(["status"])
+
+    assert standard_error.startswith("FAIL  The eval config at")
+    assert str(eval_account.eval_config_file) in standard_error
+    assert "line 2" in standard_error
+    assert failure_kinds() == ["eval_config_not_toml"]
+
+
+def test_unknown_key_in_eval_config_is_named_with_a_close_match(eval_account: EvalAccount) -> None:
+    break_eval_config(eval_account, "workstreams =", "workstream =")
+
+    _, _, standard_error = run_goodall(["status"])
+
+    assert "Did you mean workstreams?" in " ".join(standard_error.split())
+    assert str(eval_account.eval_config_file) in standard_error
+    assert sorted(failure_kinds()) == ["eval_config_key_missing", "eval_config_key_unknown"]
+
+
+def test_unknown_key_in_a_contributor_block_is_named(eval_account: EvalAccount) -> None:
+    break_eval_config(eval_account, 'display_name = "Grace Hopper"', 'display_name = "Grace Hopper"\nteam = "x"')
+
+    _, _, standard_error = run_goodall(["status"])
+
+    assert "team" in standard_error
+    assert failure_kinds() == ["eval_config_key_unknown"]
+
+
+def test_newer_eval_config_schema_says_to_upgrade_goodall_and_nothing_else(eval_account: EvalAccount) -> None:
+    break_eval_config(eval_account, "schema_version = 1", 'schema_version = 2\nadded_later = "yes"')
+
+    _, _, standard_error = run_goodall(["status"])
+
+    assert "schema_version 2" in standard_error
+    assert "upgrade goodall" in standard_error.lower()
+    assert failure_kinds() == ["eval_config_schema_too_new"]
+
+
+@pytest.mark.parametrize(
+    "replace_from, replace_to",
+    [
+        ('name = "goodall-pilot"\n', ""),
+        ('description = "Building a SaaS product to first recurring revenue with AI."\n', ""),
+        ("schema_version = 1\n", ""),
+    ],
+)
+def test_missing_eval_config_key_is_named(eval_account: EvalAccount, replace_from: str, replace_to: str) -> None:
+    break_eval_config(eval_account, replace_from, replace_to)
+    assert failure_kinds() == ["eval_config_key_missing"]
+
+
+@pytest.mark.parametrize(
+    "replace_from, replace_to",
+    [
+        ('name = "goodall-pilot"', 'name = ""'),
+        ('name = "goodall-pilot"', "name = 5"),
+        ('workstreams = ["engineering", "research", "go-to-market"]', "workstreams = []"),
+        ('workstreams = ["engineering", "research", "go-to-market"]', 'workstreams = "research"'),
+        ('"go-to-market"]', '"Go To Market"]'),
+        ('"freely-delegable"]', '"freely delegable"]'),
+        ('display_name = "Grace Hopper"', 'display_name = ""'),
+        ('paths = ["**"]', "paths = []"),
+        ('id = "grace-hopper"', 'id = "Grace_Hopper"'),
+        ('id = "grace-hopper"', 'id = "-grace"'),
+    ],
+)
+def test_eval_config_value_of_the_wrong_form_is_reported(
+    eval_account: EvalAccount, replace_from: str, replace_to: str
+) -> None:
+    break_eval_config(eval_account, replace_from, replace_to)
+    assert failure_kinds() == ["eval_config_value_invalid"]
+
+
+def test_contributor_id_rule_is_explained(eval_account: EvalAccount) -> None:
+    break_eval_config(eval_account, 'id = "grace-hopper"', 'id = "Grace Hopper"')
+
+    _, _, standard_error = run_goodall(["status"])
+
+    assert "lowercase letters, digits and hyphens" in " ".join(standard_error.split())
+
+
+def test_eval_config_without_contributors_or_scope_is_reported(eval_account: EvalAccount) -> None:
+    eval_account.make_valid()
+    first_block = VALID_EVAL_CONFIG_TEXT.index("[[contributors]]")
+    eval_account.write_eval_config(VALID_EVAL_CONFIG_TEXT[:first_block])
+
+    assert failure_kinds() == ["eval_config_key_missing", "eval_config_key_missing"]
+
+
+def test_duplicate_contributor_ids_are_reported(eval_account: EvalAccount) -> None:
+    break_eval_config(eval_account, 'id = "grace-hopper"', 'id = "ada-lovelace"')
+
+    _, _, standard_error = run_goodall(["status"])
+
+    assert "ada-lovelace" in standard_error
+    assert failure_kinds() == ["eval_config_duplicate"]
+
+
+def test_duplicate_workstreams_are_reported(eval_account: EvalAccount) -> None:
+    break_eval_config(eval_account, '"go-to-market"]', '"research"]')
+
+    _, _, standard_error = run_goodall(["status"])
+
+    assert "research" in standard_error
+    assert failure_kinds() == ["eval_config_duplicate"]
+
+
+def test_several_eval_config_problems_are_all_shown(eval_account: EvalAccount) -> None:
+    eval_account.make_valid()
+    eval_account.write_eval_config(
+        VALID_EVAL_CONFIG_TEXT.replace('name = "goodall-pilot"\n', "")
+        .replace("workstreams =", "workstream =")
+        .replace('id = "grace-hopper"', 'id = "Grace"')
+    )
+
+    _, _, standard_error = run_goodall(["status"])
+
+    assert standard_error.count("FAIL  ") == 4
+    assert sorted(failure_kinds()) == [
+        "eval_config_key_missing",
+        "eval_config_key_missing",
+        "eval_config_key_unknown",
+        "eval_config_value_invalid",
+    ]
+
+
+# Local settings checked against the eval config.
+
+
+def test_contributor_not_in_roster_names_the_id_and_the_roster(eval_account: EvalAccount) -> None:
+    eval_account.make_valid()
+    eval_account.write_settings(eval_account.valid_settings_text().replace("ada-lovelace", "charles-babbage"))
+
+    exit_code, _, standard_error = run_goodall(["status"])
+
+    assert exit_code == exit_codes.ERROR
+    one_line = " ".join(standard_error.split())
+    assert one_line.startswith("FAIL Your contributor id, charles-babbage, is not in this eval's roster.")
+    assert "ada-lovelace, grace-hopper" in one_line
+    # Either file may be the one to change, so both are named.
+    assert str(eval_account.settings_file) in standard_error
+    assert str(eval_account.eval_config_file) in standard_error
+    assert failure_kinds() == ["contributor_not_in_roster"]
+
+
+def test_main_workstream_not_in_eval_lists_the_valid_ones(eval_account: EvalAccount) -> None:
+    eval_account.make_valid()
+    eval_account.write_settings(eval_account.valid_settings_text().replace('"research"', '"marketing"'))
+
+    _, _, standard_error = run_goodall(["status"])
+
+    one_line = " ".join(standard_error.split())
+    assert "marketing" in one_line
+    assert "engineering, research, go-to-market" in one_line
+    assert str(eval_account.settings_file) in standard_error
+    assert failure_kinds() == ["main_workstream_unknown"]
+
+
+def test_both_cross_checks_are_reported_together(eval_account: EvalAccount) -> None:
+    eval_account.make_valid()
+    eval_account.write_settings(
+        eval_account.valid_settings_text().replace("ada-lovelace", "charles-babbage").replace('"research"', '"sales"')
+    )
+    assert failure_kinds() == ["contributor_not_in_roster", "main_workstream_unknown"]
+
+
+def test_contributor_setting_that_could_be_a_secret_is_not_echoed(eval_account: EvalAccount) -> None:
+    # Only a value shaped like an id is quoted back; anything else in that
+    # place may be a key pasted by mistake.
+    pasted_secret = "sk-ant-API03_not-a-real-key"
+    eval_account.make_valid()
+    eval_account.write_settings(eval_account.valid_settings_text().replace("ada-lovelace", pasted_secret))
+
+    assert pasted_secret not in everything_goodall_printed()
+    assert failure_kinds() == ["contributor_not_in_roster"]
+
+
+# The declared scope names repositories by identity, never by a local path.
+
+
+@pytest.mark.parametrize(
+    "repository",
+    [
+        "/Users/ada/code/goodall-pilot-app",
+        "~/code/goodall-pilot-app",
+        "./goodall-pilot-app",
+        "../goodall-pilot-app",
+        "goodall-pilot-app",
+        "your-org/goodall-pilot-app",
+        "file:///Users/ada/code/goodall-pilot-app",
+        "https://github.com/your-org/goodall-pilot-app",
+        "C:\\code\\goodall-pilot-app",
+        "github.com/your-org/goodall pilot app",
+        "github.com/your-org/goodall-pilot-app.git",
+        "your-org/goodall-pilot-app/extra",
+    ],
+)
+def test_scope_entry_that_is_not_a_repository_identity_is_rejected(eval_account: EvalAccount, repository: str) -> None:
+    break_eval_config(
+        eval_account,
+        'repository = "github.com/your-org/goodall-pilot-app"',
+        f"repository = {json.dumps(repository)}",
+    )
+
+    _, _, standard_error = run_goodall(["status"])
+
+    one_line = " ".join(standard_error.split())
+    assert "host/owner/name" in one_line
+    assert 'repository = "github.com/your-org/goodall-pilot-app"' in one_line
+    assert failure_kinds() == ["eval_config_scope_not_a_repository"]
+
+
+@pytest.mark.parametrize("path_pattern", ["/etc/**", "~/code/**", "../other-repo/**", "src/../../escape"])
+def test_scope_path_that_leaves_the_repository_is_rejected(eval_account: EvalAccount, path_pattern: str) -> None:
+    break_eval_config(eval_account, 'paths = ["**"]', f'paths = ["src/**", "{path_pattern}"]')
+
+    _, _, standard_error = run_goodall(["status"])
+
+    assert "inside the repository" in " ".join(standard_error.split())
+    assert failure_kinds() == ["eval_config_scope_path_invalid"]
+
+
+def test_several_scope_entries_and_patterns_are_accepted(eval_account: EvalAccount) -> None:
+    eval_account.make_valid()
+    eval_account.write_eval_config(
+        VALID_EVAL_CONFIG_TEXT
+        + '\n[[scope]]\nrepository = "gitlab.com/your-org/research-notes"\npaths = ["docs/**", "*.md", ".github/**"]\n'
+    )
+
+    exit_code, standard_output, _ = run_goodall(["status", "--json"])
+
+    assert exit_code == exit_codes.ERROR
+    assert json.loads(standard_output)["failures"] == []
+
+
+# The eval config may be published as it stands (ADR 0009), so it holds no
+# email address and no secret reference anywhere.
+
+
+@pytest.mark.parametrize(
+    "replace_from, replace_to",
+    [
+        ('display_name = "Ada Lovelace"', 'display_name = "Ada Lovelace <ada@example.org>"'),
+        (
+            'description = "Building a SaaS product to first recurring revenue with AI."',
+            'description = "Contact ada@example.org about this eval."',
+        ),
+    ],
+)
+def test_email_address_in_eval_config_is_rejected_without_being_echoed(
+    eval_account: EvalAccount, replace_from: str, replace_to: str
+) -> None:
+    break_eval_config(eval_account, replace_from, replace_to)
+
+    printed = everything_goodall_printed()
+
+    assert "ada@example.org" not in printed
+    assert "email address" in printed
+    assert failure_kinds() == ["eval_config_contains_email_address"]
+
+
+@pytest.mark.parametrize(
+    "replace_from, replace_to",
+    [
+        (
+            'description = "Building a SaaS product to first recurring revenue with AI."',
+            'description = "op://Eval/anthropic-engineering/credential"',
+        ),
+        ('paths = ["**"]', 'paths = ["**", "op://Eval/anthropic-engineering/credential"]'),
+    ],
+)
+def test_secret_reference_in_eval_config_is_rejected_without_being_echoed(
+    eval_account: EvalAccount, replace_from: str, replace_to: str
+) -> None:
+    break_eval_config(eval_account, replace_from, replace_to)
+
+    printed = everything_goodall_printed()
+
+    assert "anthropic-engineering" not in printed
+    assert "secret reference" in printed
+    assert failure_kinds() == ["eval_config_contains_secret_reference"]
+
+
+@pytest.mark.parametrize(
+    "replace_from, replace_to",
+    [
+        ("schema_version = 1", "schema_version = = 1"),
+        ('name = "goodall-pilot"\n', ""),
+        ("workstreams =", "workstreem ="),
+        ("schema_version = 1", "schema_version = 99"),
+        ('id = "grace-hopper"', 'id = "ada-lovelace"'),
+        ('"github.com/your-org/goodall-pilot-app"', '"~/code/app"'),
+        ('paths = ["**"]', 'paths = ["/"]'),
+        ('display_name = "Ada Lovelace"', 'display_name = "ada@example.org"'),
+        ('display_name = "Ada Lovelace"', 'display_name = "op://Eval/item/field"'),
+    ],
+)
+def test_every_eval_config_failure_says_what_why_and_next_and_exits_1(
+    eval_account: EvalAccount, replace_from: str, replace_to: str
+) -> None:
+    break_eval_config(eval_account, replace_from, replace_to)
+
+    exit_code, standard_output, _ = run_goodall(["status", "--json"])
+
+    assert exit_code == exit_codes.ERROR
+    document = json.loads(standard_output)
+    assert document["eval"] is None
+    assert document["failures"] != []
+    for failure in document["failures"]:
+        assert set(failure) == {"kind", "what_happened", "why", "what_to_do_next"}
+        assert str(eval_account.eval_config_file) in failure["what_happened"] + failure["what_to_do_next"]
