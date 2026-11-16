@@ -1,0 +1,69 @@
+"""Tests for goodall.telemetry_receiver, driven the way Claude Code drives it.
+
+Every test starts a real receiver on a free port chosen by the operating
+system (port 0), sends it real HTTP requests with the standard library's
+`http.client`, and reads back the telemetry files it wrote in `tmp_path`.
+The `receiver` fixture stops the receiver after each test, even a failing one.
+
+`http.client` is used rather than `urllib` because several tests need to send
+headers a well-behaved client never would (a wrong Host, no Content-Length).
+"""
+
+import http.client
+import json
+from collections.abc import Iterator
+from pathlib import Path
+
+import pytest
+
+from goodall import telemetry_receiver
+from goodall.telemetry_receiver import RunningReceiver
+
+# A trimmed copy of a real Claude Code log export, in the shape spike
+# goodall-fs9.2 observed: one {"resourceLogs": [...]} object per request,
+# compact, with no line breaks.
+CLAUDE_CODE_LOGS_BODY = (
+    b'{"resourceLogs":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"claude-code"}}]},'
+    b'"scopeLogs":[{"scope":{"name":"com.anthropic.claude_code.events"},"logRecords":[{"timeUnixNano":"1763251200000000000",'
+    b'"body":{"stringValue":"claude_code.user_prompt"},"attributes":[{"key":"session.id",'
+    b'"value":{"stringValue":"0b7c1c1e-0000-4000-8000-000000000000"}},{"key":"prompt_length","value":{"intValue":12}}]}]}]}]}'
+)
+
+
+@pytest.fixture
+def receiver(tmp_path: Path) -> Iterator[RunningReceiver]:
+    """Start a receiver writing into tmp_path, and always stop it afterwards."""
+    running_receiver = telemetry_receiver.start_receiver(tmp_path)
+    try:
+        yield running_receiver
+    finally:
+        running_receiver.stop()
+
+
+def post_like_claude_code(port: int, path: str, body: bytes) -> tuple[int, bytes]:
+    """Send one OTLP http/json export the way Claude Code's exporter does, and return status and response body."""
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+    try:
+        connection.request(
+            "POST",
+            path,
+            body=body,
+            headers={"Content-Type": "application/json", "User-Agent": "OTel-OTLP-Exporter-JavaScript/0.200.0"},
+        )
+        response = connection.getresponse()
+        return response.status, response.read()
+    finally:
+        connection.close()
+
+
+def stored_lines(telemetry_file: Path) -> list[bytes]:
+    """Read a telemetry file back as its lines, without their line endings."""
+    return telemetry_file.read_bytes().splitlines()
+
+
+def test_claude_code_log_export_lands_verbatim_as_one_line(receiver: RunningReceiver, tmp_path: Path) -> None:
+    status, response_body = post_like_claude_code(receiver.port, "/v1/logs", CLAUDE_CODE_LOGS_BODY)
+
+    assert status == 200
+    assert json.loads(response_body) == {}
+    assert (tmp_path / "logs.jsonl").read_bytes() == CLAUDE_CODE_LOGS_BODY + b"\n"
