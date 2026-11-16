@@ -30,12 +30,12 @@ the PATH without being run, `id -Gn` and `git rev-parse` only read, and no
 check that could print a secret runs here.
 """
 
-from dataclasses import dataclass
 from pathlib import Path
 
 from goodall.checks import Check, CheckContext, CheckOutcome, failed, passed
 from goodall.local_settings import LocalSettings
-from goodall.runner import Command, CommandOutcome, first_non_blank_line
+from goodall.runner import Command, CommandOutcome, RequiredProgram, first_non_blank_line
+from goodall.secrets_manager import SECRETS_MANAGER_PROGRAMS
 from goodall.settings_checks import LOCAL_SETTINGS_VALID, RECORD_REPO_FOUND, valid_local_settings
 from goodall.terminal import Failure
 
@@ -62,23 +62,6 @@ ACCOUNT_GROUPS_COMMAND = ["/usr/bin/id", "-Gn"]
 ADMINISTRATOR_GROUPS = ["admin", "wheel", "sudo"]
 
 
-@dataclass(frozen=True)
-class RequiredProgram:
-    """A program goodall needs, and what to tell a contributor when it is missing.
-
-    - `name` is the command, as found on the PATH.
-    - `described` names it for a person, at the start of a sentence, such
-      as "gh, GitHub's command-line tool,".
-    - `why` says what goodall uses it for.
-    - `how_to_install` says where to get it, as the end of a sentence.
-    """
-
-    name: str
-    described: str
-    why: str
-    how_to_install: str
-
-
 GIT = RequiredProgram(
     name="git",
     described="git",
@@ -92,22 +75,6 @@ GH = RequiredProgram(
     why="Goodall asks gh about the record repo on GitHub, so that goodall itself never holds a GitHub token.",
     how_to_install="from https://cli.github.com",
 )
-
-# The command of each secrets manager local settings can name. Local
-# settings accept only these (goodall.local_settings), so a lookup cannot
-# miss. This moves into the secrets manager module (ADR 0011) once that
-# module exists.
-SECRETS_MANAGER_PROGRAMS = {
-    "1password": RequiredProgram(
-        name="op",
-        described="op, 1Password's command-line tool,",
-        why=(
-            "This eval's secrets are kept in 1Password, and goodall reaches them only through op: op checks "
-            "that each secret reference points at a real item, and launches programs with the secrets they need."
-        ),
-        how_to_install="following https://developer.1password.com/docs/cli/get-started/",
-    ),
-}
 
 
 def check_program_installed(context: CheckContext, program: RequiredProgram) -> CheckOutcome:

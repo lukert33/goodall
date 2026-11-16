@@ -40,6 +40,8 @@ launches programs will use it, as the hook path may.
 
 import re
 
+from goodall.runner import RequiredProgram
+
 # One part of a 1Password reference: allowed characters only, and no space
 # at either end. A single character is allowed, since a vault can be called "a".
 ONE_PASSWORD_REFERENCE_PART = r"[A-Za-z0-9_.\-](?:[A-Za-z0-9_.\- ]*[A-Za-z0-9_.\-])?"
@@ -69,6 +71,21 @@ REFERENCE_FORMS = {
 # Where a contributor finds a secret's reference in each secrets manager.
 WHERE_TO_FIND_A_REFERENCE = {
     "1password": "In the 1Password app, open the item and choose Copy Secret Reference from the field's menu",
+}
+
+# The command of each secrets manager local settings can name, and what to
+# tell a contributor when it is missing. Local settings accept only these
+# (goodall.local_settings), so a lookup cannot miss.
+SECRETS_MANAGER_PROGRAMS = {
+    "1password": RequiredProgram(
+        name="op",
+        described="op, 1Password's command-line tool,",
+        why=(
+            "This eval's secrets are kept in 1Password, and goodall reaches them only through op: op checks "
+            "that each secret reference points at a real item, and launches programs with the secrets they need."
+        ),
+        how_to_install="following https://developer.1password.com/docs/cli/get-started/",
+    ),
 }
 
 
