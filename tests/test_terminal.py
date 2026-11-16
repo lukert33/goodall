@@ -216,7 +216,8 @@ Settings
         Next: Fix both.
 
   skip  The folder named in the settings exists, which is a long enough summary
-        to wrap (waiting for: Settings are valid)
+        to wrap
+        Waiting for: Settings are valid
 
 Tools
   warn  The drive is connected

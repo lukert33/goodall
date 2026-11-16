@@ -359,10 +359,11 @@ class Terminal:
 
         Groups appear in the order of their first check, and checks in the
         order given, which is the order they ran in. Beneath a failed or
-        warning check go what happened and the next step; a skipped check
-        names, after its summary, the check it was waiting for. A blank line
-        follows each check that has text beneath it, so one problem's next
-        step is never read as the next check's.
+        warning check go what happened and the next step; beneath a skipped
+        check goes one line naming the check it was waiting for. A blank line
+        follows each failed or warning check, so one problem's next step is
+        never read as the next check's; skipped checks stay one under
+        another, since several usually wait for the same failure.
         """
         self.start_output_block()
 
@@ -400,19 +401,19 @@ class Terminal:
         codes never count towards the line length.
         """
         word = STATUS_WORDS[result.status]
-        summary = result.summary
-        if result.waiting_for is not None:
-            # A skipped check names the summary of the one it waited for,
-            # which a person can find in the report; --json gives the id.
-            waited_for_summary = summaries_by_id.get(result.waiting_for, result.waiting_for)
-            summary = f"{summary} (waiting for: {waited_for_summary})"
-
         status_column = CHECK_INDENT + word.ljust(len(CHECK_DETAIL_INDENT) - len(CHECK_INDENT))
-        wrapped_summary = self.wrap(summary, self.output_width, CHECK_DETAIL_INDENT)
+        wrapped_summary = self.wrap(result.summary, self.output_width, CHECK_DETAIL_INDENT)
         colour = STATUS_COLOURS[result.status]
         if self.output_colour and colour != "":
             status_column = status_column.replace(word, colour + word + RESET, 1)
         entry = status_column + wrapped_summary[len(CHECK_DETAIL_INDENT) :] + "\n"
+
+        if result.waiting_for is not None:
+            # A skipped check names the summary of the one it waited for,
+            # which a person can find higher up in the report; --json gives
+            # the id instead.
+            waited_for_summary = summaries_by_id.get(result.waiting_for, result.waiting_for)
+            entry += self.wrap("Waiting for: " + waited_for_summary, self.output_width, CHECK_DETAIL_INDENT) + "\n"
 
         failure_texts = []
         for failure in result.failures:
