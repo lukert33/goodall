@@ -525,3 +525,38 @@ def test_intervene_missing_both_category_and_decision_reports_both_at_once(eval_
         "intervention_category_missing",
         "intervention_decision_missing",
     ]
+
+
+def intervene_arguments(*extra_arguments: str) -> list[str]:
+    """A valid `goodall intervene` command line, with `extra_arguments` added before the text."""
+    return ["intervene", "--category", "agent-limitation", "--decision", "modify", *extra_arguments, "Stopped it."]
+
+
+def test_intervene_records_what_was_interrupted_and_which_claude_session(eval_account: EvalAccount) -> None:
+    session_id = "5b8e2a71-9c04-4d3f-b6a2-17e0c9d4f8a3"
+
+    run = run_goodall(intervene_arguments("--interrupted", "tool_call", "--claude-session", session_id))
+
+    assert run.exit_code == exit_codes.SUCCESS, run.standard_error
+    [intervention_file] = eval_account.intervention_files()
+    text = intervention_file.read_text()
+    assert 'interrupted = "tool_call"' in text
+    assert f'claude_session = "{session_id}"' in text
+
+
+def test_intervene_with_an_unknown_interrupted_activity_is_a_usage_error(eval_account: EvalAccount) -> None:
+    run = run_goodall(intervene_arguments("--interrupted", "typing"), standard_input=io.StringIO(""))
+
+    assert run.exit_code == exit_codes.USAGE_ERROR
+    assert eval_account.intervention_files() == []
+
+
+def test_intervene_with_a_claude_session_that_is_not_a_session_id_says_where_to_find_one(
+    eval_account: EvalAccount,
+) -> None:
+    run = run_goodall(intervene_arguments("--claude-session", "yesterday afternoon"))
+
+    assert run.exit_code == exit_codes.USAGE_ERROR
+    assert run.standard_error.startswith("FAIL  The --claude-session given is not a Claude Code session id.")
+    assert "/status" in run.standard_error
+    assert eval_account.intervention_files() == []

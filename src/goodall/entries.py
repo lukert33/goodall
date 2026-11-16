@@ -104,11 +104,17 @@ def add_journal_entry(terminal: Terminal, runner: Runner, request: EntryRequest)
 class InterventionDetails:
     """What `goodall intervene` needs beyond the text, as typed on the command line.
 
-    Each is None when its option was left out.
+    Each is None when its option was left out. The record schema's other
+    optional field, `question_outcome`, is deliberately not offered: it
+    describes how a question the agent asked was answered, which the hook
+    path can read from the transcript far more reliably than a person can
+    recall it afterwards.
     """
 
     category: str | None
     decision: str | None
+    interrupted: str | None = None
+    claude_session: str | None = None
 
 
 def run_intervene(terminal: Terminal, runner: Runner, request: EntryRequest, details: InterventionDetails) -> int:
@@ -138,6 +144,8 @@ def add_intervention(
     decision_failure = check_decision(details.decision)
     if decision_failure is not None:
         usage_failures.append(decision_failure)
+    if details.claude_session is not None and not records.CLAUDE_SESSION_ID_PATTERN.fullmatch(details.claude_session):
+        usage_failures.append(claude_session_invalid_failure())
     if usage_failures:
         return stopped(record_type, exit_codes.USAGE_ERROR, usage_failures)
     # The checks above guarantee these; the assert tells the type checker.
@@ -151,6 +159,8 @@ def add_intervention(
         decision=details.decision,
         body=text,
         work_block=current_work_block_id(),
+        claude_session=details.claude_session,
+        interrupted=details.interrupted,
     )
     facts = [("Category", details.category), ("Decision", details.decision)]
     return check_and_write(runner, eval_reading, intervention, facts)
@@ -230,6 +240,25 @@ def check_decision(decision: str | None) -> Failure | None:
         what_happened="The --decision given is not one of the five decisions. Nothing was recorded.",
         why=why + " They are matched exactly, in lowercase.",
         what_to_do_next=what_to_do_next,
+    )
+
+
+def claude_session_invalid_failure() -> Failure:
+    """The failure for a --claude-session that is not a Claude Code session id.
+
+    The value is not repeated back, in case something private was pasted.
+    """
+    return Failure(
+        kind="intervention_claude_session_invalid",
+        what_happened="The --claude-session given is not a Claude Code session id. Nothing was recorded.",
+        why=(
+            "A session id ties the intervention to the transcript of the Claude session it happened in. It is "
+            "a lowercase id like 0f6c1d2e-3a4b-4c5d-8e9f-a0b1c2d3e4f5."
+        ),
+        what_to_do_next=(
+            "In that Claude session, type /status and copy the Session ID it shows. Or leave --claude-session "
+            "out: it is optional."
+        ),
     )
 
 

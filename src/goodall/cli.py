@@ -29,7 +29,7 @@ Design decisions a reader might otherwise reverse-engineer:
 import argparse
 from pathlib import Path
 
-from goodall import exit_codes
+from goodall import exit_codes, records
 from goodall.doctor import run_doctor
 from goodall.entries import DECISION_MEANINGS, EntryRequest, InterventionDetails, run_intervene, run_journal
 from goodall.runner import RealRunner, Runner
@@ -132,6 +132,19 @@ def build_parser() -> argparse.ArgumentParser:
         "--decision",
         metavar="<decision>",
         help="What you decided: approve, modify, reject, escalate or terminate (see below).",
+    )
+    intervene.add_argument(
+        "--interrupted",
+        choices=records.INTERRUPTED_ACTIVITIES,
+        help=(
+            "Only if you cut the agent short: what it was doing. generate means writing its reply, tool_call "
+            "running a tool, between_turns neither."
+        ),
+    )
+    intervene.add_argument(
+        "--claude-session",
+        metavar="<session id>",
+        help="The Claude session it happened in, as the Session ID that /status shows in Claude Code.",
     )
     intervene.set_defaults(command_name="intervene")
 
@@ -243,7 +256,12 @@ def main(argv: list[str] | None = None, terminal: Terminal | None = None, runner
         return run_journal(terminal, runner, entry_request)
     if command_name == "intervene":
         entry_request = EntryRequest(text=arguments.text, as_json=arguments.json, text_file=arguments.file)
-        intervention_details = InterventionDetails(category=arguments.category, decision=arguments.decision)
+        intervention_details = InterventionDetails(
+            category=arguments.category,
+            decision=arguments.decision,
+            interrupted=arguments.interrupted,
+            claude_session=arguments.claude_session,
+        )
         return run_intervene(terminal, runner, entry_request, intervention_details)
 
     return run_stub(command_name, terminal)
