@@ -88,6 +88,13 @@ def write_record(runner: Runner, record_repo: Path, record: records.Record) -> R
     relative_path = records.relative_path_for(record)
     path = record_repo / relative_path
 
+    # Trap: a link anywhere on the way (a `journal` folder that is really a
+    # link to another folder, say) would carry the record out of the record
+    # repo, where it would be neither committed nor safe. So the folder must
+    # be exactly where it appears to be: resolving links must change nothing.
+    expected_folder = record_repo.resolve() / relative_path.parent
+    if path.parent.resolve() != expected_folder:
+        return not_written(path, record_path_outside_record_repo_failure(record_repo, path))
     path.parent.mkdir(parents=True, exist_ok=True)
     # "x" creates the file only if nothing is there, in one step, so an
     # existing record (or anything else at that name) is never overwritten,
@@ -333,6 +340,22 @@ def not_written(path: Path, failure: Failure) -> RecordWriteOutcome:
     """The outcome for a record whose file was not written, because of `failure`."""
     return RecordWriteOutcome(
         path=path, written=False, committed=False, push_state=PushState.NOT_ATTEMPTED, failures=[failure]
+    )
+
+
+def record_path_outside_record_repo_failure(record_repo: Path, path: Path) -> Failure:
+    """The failure for a record whose folder is a link leading somewhere other than inside the record repo."""
+    return Failure(
+        kind="record_path_outside_record_repo",
+        what_happened=(
+            f"Goodall did not write the record at {path}: a folder on the way there is a link to somewhere else, "
+            f"so the record would not have landed inside the record repo {record_repo}."
+        ),
+        why="Goodall writes records only inside the record repo, where they are committed and kept.",
+        what_to_do_next=(
+            f"Look at the folders in {record_repo} (ls -l shows links) and replace the link with a real folder, "
+            "or ask the researcher who runs the eval. Then run the command again."
+        ),
     )
 
 

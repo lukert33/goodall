@@ -195,3 +195,18 @@ def test_a_record_whose_file_already_exists_is_refused_and_the_file_left_alone(t
     assert outcome.push_state == PushState.NOT_ATTEMPTED
     assert "The original note." in outcome.path.read_text()
     assert git(record_repo, "rev-list", "--count", "HEAD") == commits_before
+
+
+def test_a_record_whose_folder_leads_outside_the_record_repo_is_refused(tmp_path: Path) -> None:
+    record_repo = make_record_repo(tmp_path / "records")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    # A link where the journal folder should be would carry the record out of the record repo.
+    (record_repo / "journal").symlink_to(elsewhere)
+
+    outcome = write_record(FakeRunner(), record_repo, journal_entry())
+
+    assert [failure.kind for failure in outcome.failures] == ["record_path_outside_record_repo"]
+    assert not outcome.written
+    assert not outcome.committed
+    assert list(elsewhere.iterdir()) == []
