@@ -28,7 +28,7 @@ from datetime import UTC, datetime
 from goodall import exit_codes, records
 from goodall.eval_config import EvalForThisAccount, read_eval_for_this_account
 from goodall.local_settings import read_local_settings
-from goodall.record_repo import RecordWriteOutcome, write_record
+from goodall.record_repo import RECORD_TYPE_NAMES, RecordWriteOutcome, write_record
 from goodall.runner import Runner
 from goodall.terminal import Failure, Terminal
 
@@ -56,6 +56,10 @@ def run_journal(terminal: Terminal, runner: Runner, request: EntryRequest) -> in
         written_at=datetime.now(UTC),
         body=text,
     )
+    problems = check_record(entry, eval_reading)
+    if problems:
+        terminal.show_failures(problems)
+        return exit_codes.ERROR
     outcome = write_record(runner, eval_reading.local_settings.record_repo.path, entry)
     return report_outcome(terminal, "journal entry", outcome)
 
@@ -112,6 +116,48 @@ def text_missing_failure(record_type_name: str, command: str) -> Failure:
             f'{command} "What happened, and who decided"',
             f"pbpaste | {command}",
         ),
+    )
+
+
+def check_record(record: records.Record, eval_for_this_account: EvalForThisAccount) -> list[Failure]:
+    """Check `record` against the records rules and this eval's config, as one failure per problem.
+
+    The records module refuses email addresses and secrets anywhere in a
+    record, and its messages never repeat what they found, so neither do
+    these. Nothing a person writes is refused for any other reason.
+    """
+    eval_config = eval_for_this_account.eval_config
+    contributor_ids = []
+    for contributor in eval_config.contributors:
+        contributor_ids.append(contributor.id)
+    problems = records.validate_record(
+        record,
+        contributor_ids=contributor_ids,
+        workstreams=eval_config.workstreams,
+        intervention_categories=eval_config.intervention_categories,
+    )
+    record_type_name = RECORD_TYPE_NAMES[type(record)]
+    failures = []
+    for problem in problems:
+        failures.append(record_problem_failure(record_type_name, problem))
+    return failures
+
+
+def record_problem_failure(record_type_name: str, problem: records.RecordProblem) -> Failure:
+    """The failure for one problem the records module found in a record goodall was about to write."""
+    message = problem.message
+    # The records module calls the text a record's "body", a word a
+    # contributor never sees; they wrote "the text", so it is called that.
+    if problem.field == "body" and message.startswith("body"):
+        message = "The text" + message.removeprefix("body")
+    return Failure(
+        kind="entry_refused",
+        what_happened=f"Goodall did not record the {record_type_name}. {message}",
+        why=(
+            "Records are meant to be published, so goodall keeps email addresses and secrets out of them, and "
+            "keeps every value in the shape the eval config expects."
+        ),
+        what_to_do_next="Change what the message above names, then run the command again.",
     )
 
 

@@ -215,3 +215,23 @@ def test_journal_refuses_empty_or_blank_text(
     assert run.standard_error.startswith("FAIL  The text for the journal entry is empty.")
     assert eval_account.journal_files() == []
     assert eval_account.commit_subjects() == ["Start the record repo"]
+
+
+@pytest.mark.parametrize(
+    ("private_text", "what_is_named"),
+    [
+        ("Line one is fine.\nAsked bob.smith@example.org about pricing.", "email address"),
+        ("Pasted the key sk-ant-abcdefghijklmnopqrstuvwxyz0123 by mistake.", "secret"),
+    ],
+)
+def test_journal_refuses_an_email_address_or_secret_without_repeating_it(
+    eval_account: EvalAccount, private_text: str, what_is_named: str
+) -> None:
+    run = run_goodall(["journal"], standard_input=io.StringIO(private_text))
+
+    assert run.exit_code == exit_codes.ERROR
+    assert run.standard_error.startswith("FAIL  Goodall did not record the journal entry")
+    assert what_is_named in run.standard_error
+    assert "bob.smith" not in run.standard_error + run.standard_output
+    assert "abcdefghijklmnop" not in run.standard_error + run.standard_output
+    assert eval_account.journal_files() == []
