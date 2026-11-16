@@ -1367,3 +1367,99 @@ def test_every_secrets_manager_command_discards_its_output_or_is_a_value_free_li
         if command.output == OutputMode.DISCARD:
             continue
         assert command.arguments[:3] in VALUE_FREE_OP_COMMANDS, f"`{command.as_typed}` kept its output"
+
+
+# Every place in the files doctor reads where a person could paste a key by
+# mistake. Each case is: the synthetic secret, which file it goes in, the
+# text to replace in that file's valid form ("" puts the new text at the
+# start of the file, and "end" at its end), and what to put there. No case
+# may ever print its secret. `goodall status` has the same test for the two
+# files it reads (tests/test_status.py).
+SYNTHETIC_KEY = "sk-ant-api03-SYNTHETICsyntheticSYNTHETIC"
+SYNTHETIC_HEX_TOKEN = "0123456789abcdef0123456789abcdef"
+VALID_REFERENCE = "op://Eval/anthropic-admin/credential"
+
+SECRET_POSITIONS = {
+    "settings unknown key": (SYNTHETIC_KEY, "settings", "", f'{SYNTHETIC_KEY} = "x"\n'),
+    "settings table declared twice": (SYNTHETIC_KEY, "settings", "end", f"[{SYNTHETIC_KEY}]\n[{SYNTHETIC_KEY}]\n"),
+    "settings secrets_manager": (SYNTHETIC_KEY, "settings", '"1password"', f'"{SYNTHETIC_KEY}"'),
+    "settings record_repo": (SYNTHETIC_KEY, "settings", '"~/evals/goodall-pilot-records"', f'"{SYNTHETIC_KEY}"'),
+    "settings log_directory with a null character": (
+        SYNTHETIC_KEY,
+        "settings",
+        "LOG_DIRECTORY",
+        f"/{SYNTHETIC_KEY}\\u0000",
+    ),
+    "settings contributor shaped like a name": (
+        SYNTHETIC_HEX_TOKEN,
+        "settings",
+        '"ada-lovelace"',
+        f'"{SYNTHETIC_HEX_TOKEN}"',
+    ),
+    "eval config unknown key": (SYNTHETIC_KEY, "eval_config", "", f'{SYNTHETIC_KEY} = "x"\n'),
+    "eval config key holding a reference": (
+        SYNTHETIC_KEY,
+        "eval_config",
+        "[[scope]]",
+        f'[extra]\n{SYNTHETIC_KEY} = "op://Eval/item/field"\n\n[[scope]]',
+    ),
+    "eval config unknown blocks": (
+        SYNTHETIC_KEY,
+        "eval_config",
+        "[[scope]]",
+        f'[[{SYNTHETIC_KEY}]]\nnote = "x@example.com"\n\n[[scope]]',
+    ),
+    "env file value": (SYNTHETIC_KEY, "env", "end", f'ANTHROPIC_API_KEY_GTM="{SYNTHETIC_KEY}"\n'),
+    "env file line on its own": (SYNTHETIC_KEY, "env", "end", f"{SYNTHETIC_KEY}\n"),
+    "env file base64 token": (PASTED_BASE64_TOKEN, "env", "end", f"{PASTED_BASE64_TOKEN}==\n"),
+    "env file token name with a reference": (
+        PASTED_BASE64_TOKEN,
+        "env",
+        "end",
+        f"{PASTED_BASE64_TOKEN}={VALID_REFERENCE}\n",
+    ),
+    "shared env file base64 token": (PASTED_BASE64_TOKEN, "shared_env", "end", f"{PASTED_BASE64_TOKEN}==\n"),
+    "shared env file value": (SYNTHETIC_KEY, "shared_env", "end", f"SOME_SETTING={SYNTHETIC_KEY}\n"),
+    "shared env file secret name": (SYNTHETIC_KEY, "shared_env", "end", f"OPENAI_API_KEY={SYNTHETIC_KEY}\n"),
+}
+
+
+def put_secret_in_place(account: EvalAccount, file_name: str, replace_from: str, replace_to: str) -> None:
+    """Put a pasted secret in one place in one of the healthy account's files."""
+    files = {
+        "settings": account.settings_file,
+        "eval_config": account.eval_config_file,
+        "env": account.env_file,
+        "shared_env": account.shared_env_file,
+    }
+    file = files[file_name]
+    valid_text = file.read_text()
+    # The log directory's path differs in every test, so a case names it
+    # with this placeholder.
+    if replace_from == "LOG_DIRECTORY":
+        replace_from = str(account.log_directory)
+    if replace_from == "":
+        broken_text = replace_to + valid_text
+    elif replace_from == "end":
+        broken_text = valid_text + replace_to
+    else:
+        assert replace_from in valid_text, f"{replace_from!r} is not in {file}"
+        broken_text = valid_text.replace(replace_from, replace_to, 1)
+    file.write_text(broken_text)
+
+
+@pytest.mark.parametrize("position", list(SECRET_POSITIONS))
+def test_a_secret_pasted_anywhere_doctor_reads_is_never_shown(healthy_account: EvalAccount, position: str) -> None:
+    secret, file_name, replace_from, replace_to = SECRET_POSITIONS[position]
+    put_secret_in_place(healthy_account, file_name, replace_from, replace_to)
+
+    _, text_output, text_error = run_goodall(["doctor"])
+    _, json_output, json_error = run_goodall(["doctor", "--json"])
+
+    for printed in [text_output, text_error, json_output, json_error]:
+        assert secret not in printed
+    # Something is always reported about the place: a failure, a warning,
+    # or (for a long name holding a well-formed reference) the unverified
+    # field check that lists every variable.
+    summary = json.loads(json_output)["summary"]
+    assert summary["failed"] + summary["warned"] + summary["unverified"] > 0
