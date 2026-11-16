@@ -44,7 +44,7 @@ See `docs/agents/domain.md`.
 ## Two kinds of machine account
 
 Goodall imposes strict rules on an **eval account**: a standard (non-admin)
-macOS account used only for one eval. Those rules are product behaviour, to be
+macOS user account used only for one eval. Those rules are product behaviour, to be
 enforced by `goodall doctor` and `goodall onboard`.
 
 Developing goodall happens in an ordinary **development account** and is
