@@ -7,12 +7,21 @@ disk; the module works on text and values only.
 
 Expected values are written out as literals (a known file, a known name)
 rather than recomputed the way the module computes them, so a test can
-disagree with the code.
+disagree with the code. The three documented examples are read from
+docs/record-schemas.md, so the page cannot drift from the code.
+
+The standard-library check starts a fresh Python with `subprocess` directly,
+not through the package's runner: it tests the import itself, and a test
+helper is outside the code the runner rule (AGENTS.md invariant 9) governs.
 """
 
 import dataclasses
+import re
+import subprocess
+import sys
 import tomllib
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 
@@ -453,3 +462,105 @@ def test_a_secret_looking_value_in_a_header_field_is_refused() -> None:
 def test_rendering_an_invalid_record_is_refused() -> None:
     with pytest.raises(ValueError, match="decision"):
         records.render_record(good_intervention(decision="overrode"))
+
+
+# ---------------------------------------------------------------------------
+# The examples in docs/record-schemas.md are real, valid files
+# ---------------------------------------------------------------------------
+
+SCHEMA_DOCUMENT = Path(__file__).parent.parent / "docs" / "record-schemas.md"
+
+# Each example in the schema document follows a marker comment naming its
+# record type, and sits in a fenced block of three or more backticks.
+EXAMPLE_PATTERN = re.compile(r"<!-- example: (\w+) -->\n(`{3,})\w*\n(.*?\n)\2\n", re.DOTALL)
+
+
+def examples_in_schema_document() -> dict[str, str]:
+    examples: dict[str, str] = {}
+    for match in EXAMPLE_PATTERN.finditer(SCHEMA_DOCUMENT.read_text(encoding="utf-8")):
+        examples[match.group(1)] = match.group(3)
+    return examples
+
+
+def test_the_schema_document_has_one_example_of_each_record_type() -> None:
+    assert sorted(examples_in_schema_document()) == ["intervention", "journal_entry", "work_block"]
+
+
+def test_the_documented_work_block_example_parses_and_validates() -> None:
+    parsed = records.parse_work_block_record(examples_in_schema_document()["work_block"])
+
+    assert parsed.problems == []
+    assert parsed.record is not None
+    assert records.validate_record(parsed.record, contributor_ids=ROSTER, workstreams=WORKSTREAMS) == []
+
+
+def test_the_documented_journal_entry_example_parses_and_validates() -> None:
+    parsed = records.parse_journal_entry(examples_in_schema_document()["journal_entry"])
+
+    assert parsed.problems == []
+    assert parsed.record is not None
+    assert records.validate_record(parsed.record, contributor_ids=ROSTER) == []
+
+
+def test_the_documented_intervention_example_parses_and_validates() -> None:
+    parsed = records.parse_intervention(examples_in_schema_document()["intervention"])
+
+    assert parsed.problems == []
+    assert parsed.record is not None
+    problems = records.validate_record(
+        parsed.record,
+        contributor_ids=ROSTER,
+        intervention_categories=records.DEFAULT_INTERVENTION_CATEGORIES,
+    )
+    assert problems == []
+
+
+def test_the_documented_examples_are_exactly_what_goodall_would_write() -> None:
+    # So the documents show the real layout, not a hand-tidied version of it.
+    examples = examples_in_schema_document()
+    work_block = records.parse_work_block_record(examples["work_block"]).record
+    journal_entry = records.parse_journal_entry(examples["journal_entry"]).record
+    intervention = records.parse_intervention(examples["intervention"]).record
+    assert work_block is not None and journal_entry is not None and intervention is not None
+
+    assert records.render_record(work_block) == examples["work_block"]
+    assert records.render_record(journal_entry) == examples["journal_entry"]
+    assert records.render_record(intervention) == examples["intervention"]
+
+
+# ---------------------------------------------------------------------------
+# Standard library only
+# ---------------------------------------------------------------------------
+
+# Run in a fresh interpreter, so modules this test process already loaded
+# (pytest and its plugins) cannot hide or fake an import. It prints the
+# top-level name of every module the import loaded that is neither part of
+# the standard library nor goodall itself.
+LIST_THIRD_PARTY_IMPORTS = """
+import sys
+loaded_before = set(sys.modules)
+__import__(sys.argv[1])
+for module_name in sorted(set(sys.modules) - loaded_before):
+    top_level_name = module_name.split(".")[0]
+    if top_level_name not in sys.stdlib_module_names and top_level_name != "goodall":
+        print(top_level_name)
+"""
+
+
+def third_party_modules_loaded_by(module_name: str) -> set[str]:
+    completed = subprocess.run(
+        [sys.executable, "-c", LIST_THIRD_PARTY_IMPORTS, module_name],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return set(completed.stdout.split())
+
+
+def test_the_import_check_notices_a_third_party_package() -> None:
+    # Proves the check below can fail: pytest is not in the standard library.
+    assert "pytest" in third_party_modules_loaded_by("pytest")
+
+
+def test_importing_records_loads_only_the_standard_library() -> None:
+    assert third_party_modules_loaded_by("goodall.records") == set()
