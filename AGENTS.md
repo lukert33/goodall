@@ -121,6 +121,8 @@ understand why each function exists.
 - The quality gates, all of which pass before a change is handed over:
   `uv run pytest`, `uv run ruff check .`, `uv run ruff format --check .`,
   `uv run mypy`.
+- CI (`.github/workflows/quality-gates.yml`) runs the same four gates on every
+  pull request.
 - Tests use the fake runner and `tmp_path`; the real network, the real `op`
   session and the user's real files stay out of reach.
 - Real `git` is used in tests, because git behaviour is what they verify.
