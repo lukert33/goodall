@@ -53,6 +53,11 @@ class ClaudeCodeMarkers:
     interrupted_during_tool_call: str
     # How a tool result begins when the person stopped that tool while it ran.
     cancelled_tool_result_prefix: str
+    # How a tool result begins when the person refused permission for the call.
+    rejected_tool_result_prefix: str
+    # The words in a rejected tool result that come just before the feedback
+    # the person typed with the refusal, if they typed any.
+    rejection_feedback_lead_in: str
 
 
 def claude_code_markers() -> ClaudeCodeMarkers:
@@ -61,6 +66,8 @@ def claude_code_markers() -> ClaudeCodeMarkers:
         interrupted_during_generation="[Request interrupted by user]",
         interrupted_during_tool_call="[Request interrupted by user for tool use]",
         cancelled_tool_result_prefix="The user doesn't want to take this action right now",
+        rejected_tool_result_prefix="The user doesn't want to proceed with this tool use",
+        rejection_feedback_lead_in="the user said:",
         harness_text_prefixes=(
             "<system-reminder>",
             "<command-name>",
@@ -106,7 +113,24 @@ class Interruption:
     kind: str = field(default="interruption", init=False)
 
 
-HumanAction = TypedPrompt | Interruption
+@dataclass(frozen=True)
+class ToolCallRejection:
+    """The person refused permission for a tool call the agent asked to make.
+
+    `decision` is always "reject", Inspect's ApprovalEvent value. `feedback`
+    is what the person typed with the refusal, or None if they typed nothing.
+    """
+
+    line_number: int
+    entry_id: str | None
+    timestamp: str | None
+    tool_call_id: str | None
+    feedback: str | None
+    decision: Literal["reject"] = field(default="reject", init=False)
+    kind: str = field(default="tool_call_rejection", init=False)
+
+
+HumanAction = TypedPrompt | Interruption | ToolCallRejection
 
 
 @dataclass(frozen=True)
@@ -131,11 +155,19 @@ def parse_human_actions(transcript_path: Path) -> ParseResult:
     """Read one transcript and return the person's actions, in order."""
     markers = claude_code_markers()
     result = ParseResult(actions=[], unfamiliar_entries=[])
+    # Ids of entries that held a rejection, so the interruption marker Claude
+    # Code writes straight after one can be recognised as part of it.
+    rejection_entry_ids: set[str] = set()
     with transcript_path.open(encoding="utf-8", errors="replace") as transcript_file:
         for line_number, line in enumerate(transcript_file, start=1):
             entry = json.loads(line)
-            if entry.get("type") == "user":
-                result.actions.extend(actions_from_user_entry(entry, line_number, markers))
+            if entry.get("type") != "user":
+                continue
+            actions = actions_from_user_entry(entry, line_number, markers, rejection_entry_ids)
+            for action in actions:
+                if isinstance(action, ToolCallRejection) and action.entry_id is not None:
+                    rejection_entry_ids.add(action.entry_id)
+            result.actions.extend(actions)
     return result
 
 
@@ -183,7 +215,9 @@ def tool_result_text(tool_result: dict[str, Any]) -> str:
     return "\n".join(texts)
 
 
-def actions_from_user_entry(entry: dict[str, Any], line_number: int, markers: ClaudeCodeMarkers) -> list[HumanAction]:
+def actions_from_user_entry(
+    entry: dict[str, Any], line_number: int, markers: ClaudeCodeMarkers, rejection_entry_ids: set[str]
+) -> list[HumanAction]:
     """Return the human actions in one "user" entry, by applying each rule."""
     content = read_user_content(entry)
 
@@ -193,10 +227,18 @@ def actions_from_user_entry(entry: dict[str, Any], line_number: int, markers: Cl
     if content.tool_results:
         actions: list[HumanAction] = []
         for tool_result in content.tool_results:
+            rejection = rejection_from_tool_result(entry, line_number, tool_result, markers)
+            if rejection is not None:
+                actions.append(rejection)
             interruption = interruption_from_tool_result(entry, line_number, tool_result, markers)
             if interruption is not None:
                 actions.append(interruption)
         return actions
+
+    # The marker Claude Code writes after a rejection is the end of that
+    # rejection, not a second thing the person did.
+    if entry.get("parentUuid") in rejection_entry_ids:
+        return []
 
     interruption = interruption_from_marker(entry, line_number, content.text, markers)
     if interruption is not None:
@@ -257,6 +299,35 @@ def interruption_from_tool_result(
         timestamp=entry.get("timestamp"),
         interrupted="tool_call",
         interrupted_tool_call_id=tool_result.get("tool_use_id"),
+    )
+
+
+def rejection_from_tool_result(
+    entry: dict[str, Any], line_number: int, tool_result: dict[str, Any], markers: ClaudeCodeMarkers
+) -> ToolCallRejection | None:
+    """Rule: an error tool result with the rejection text is a rejection.
+
+    The trap: Claude Code's `toolDenialKind` field is not reliable here. It
+    says "user-rejected" for a plain refusal but "permission-rule" when the
+    person typed feedback, which is also what it says when a configured rule
+    refused the call. The fixed text is what separates the person from a rule.
+    Any feedback follows the lead-in words and is kept as typed, trimmed.
+    """
+    if tool_result.get("is_error") is not True:
+        return None
+    text = tool_result_text(tool_result)
+    if not text.startswith(markers.rejected_tool_result_prefix):
+        return None
+    feedback = None
+    lead_in_position = text.find(markers.rejection_feedback_lead_in)
+    if lead_in_position != -1:
+        feedback = text[lead_in_position + len(markers.rejection_feedback_lead_in) :].strip() or None
+    return ToolCallRejection(
+        line_number=line_number,
+        entry_id=entry.get("uuid"),
+        timestamp=entry.get("timestamp"),
+        tool_call_id=tool_result.get("tool_use_id"),
+        feedback=feedback,
     )
 
 

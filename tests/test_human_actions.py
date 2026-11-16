@@ -9,7 +9,7 @@ contributor's private prompts and must never be copied into fixtures.
 
 from pathlib import Path
 
-from goodall.human_actions import Interruption, TypedPrompt, parse_human_actions
+from goodall.human_actions import Interruption, ToolCallRejection, TypedPrompt, parse_human_actions
 
 FIXTURES = Path(__file__).parent / "fixtures" / "claude_code_transcripts"
 
@@ -71,6 +71,55 @@ def test_interruptions_say_what_was_interrupted() -> None:
     prompt_lines = [action.line_number for action in result.actions if isinstance(action, TypedPrompt)]
     assert prompt_lines == [1, 4, 7]
     assert result.unfamiliar_entries == []
+
+
+def test_rejected_tool_calls_carry_the_call_id_and_any_feedback() -> None:
+    result = parse_human_actions(FIXTURES / "rejections.jsonl")
+
+    assert result.actions == [
+        TypedPrompt(
+            line_number=1,
+            entry_id="u-0001",
+            timestamp="2026-01-08T12:00:00.000Z",
+            text="Tidy up the example configuration file.",
+            image_count=0,
+        ),
+        ToolCallRejection(
+            line_number=3,
+            entry_id="u-0003",
+            timestamp="2026-01-08T12:00:20.000Z",
+            tool_call_id="toolu_example_05",
+            feedback=None,
+        ),
+        # Line 4 is the interruption marker Claude Code writes after a
+        # rejection without feedback. It is part of the rejection, not a
+        # second action, so it is not counted.
+        TypedPrompt(
+            line_number=5,
+            entry_id="u-0005",
+            timestamp="2026-01-08T12:01:00.000Z",
+            text="Only change the indentation.",
+            image_count=0,
+        ),
+        ToolCallRejection(
+            line_number=7,
+            entry_id="u-0007",
+            timestamp="2026-01-08T12:01:30.000Z",
+            tool_call_id="toolu_example_06",
+            feedback="Use two spaces, not four.",
+        ),
+        # Line 9 was denied by a permission rule, not by the person.
+    ]
+    assert result.unfamiliar_entries == []
+
+
+def test_a_rejection_uses_inspects_decision_value() -> None:
+    result = parse_human_actions(FIXTURES / "rejections.jsonl")
+
+    rejection = result.actions[1]
+    assert isinstance(rejection, ToolCallRejection)
+    assert rejection.decision == "reject"
+    assert rejection.kind == "tool_call_rejection"
 
 
 def test_text_the_harness_wrote_is_not_a_human_action() -> None:
