@@ -583,12 +583,26 @@ def test_concurrent_requests_each_become_one_whole_line(receiver: RunningReceive
             b'{"resourceLogs":[],"padding":"' + b"x" * 50000 + b'","n":' + str(request_number).encode() + b"}"
         )
 
+    # Each thread records what happened to its request, because an exception
+    # inside a thread would otherwise vanish and leave only a missing line.
+    outcomes: list[str] = []
+
+    def send_and_record(body: bytes) -> None:
+        try:
+            status, _ = post_like_claude_code(receiver.port, "/v1/logs", body)
+            outcomes.append(str(status))
+        except OSError as request_error:
+            outcomes.append(repr(request_error))
+
     threads = []
     for body in sent_bodies:
-        thread = threading.Thread(target=post_like_claude_code, args=(receiver.port, "/v1/logs", body))
+        thread = threading.Thread(target=send_and_record, args=(body,))
         threads.append(thread)
         thread.start()
     for thread in threads:
         thread.join(timeout=30)
 
-    assert sorted(stored_lines(tmp_path / "logs.jsonl")) == sorted(sent_bodies)
+    assert sorted(outcomes) == ["200"] * len(sent_bodies)
+    stored = stored_lines(tmp_path / "logs.jsonl")
+    assert len(stored) == len(sent_bodies)
+    assert sorted(stored) == sorted(sent_bodies)

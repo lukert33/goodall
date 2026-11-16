@@ -379,7 +379,7 @@ class TelemetryRequestHandler(BaseHTTPRequestHandler):
 class LoopbackTelemetryServer(ThreadingHTTPServer):
     """The HTTP server, with the threading choices spelled out.
 
-    Non-daemon request threads, with block_on_close, mean `server_close`
+    Each connection gets its own thread. Non-daemon request threads, with block_on_close, mean `server_close`
     waits for a request that is mid-write to finish, so stopping never cuts
     a line short. SO_REUSEPORT stays off so no other program can listen on
     the same port alongside the receiver.
@@ -388,6 +388,10 @@ class LoopbackTelemetryServer(ThreadingHTTPServer):
     daemon_threads = False
     block_on_close = True
     allow_reuse_port = False
+    # How many connections may wait to be accepted. The standard library's
+    # default of 5 can drop or reset connections when a burst arrives at
+    # once, as seen on Linux in CI; 64 is ample for one Claude Code.
+    request_queue_size = 64
 
 
 @dataclass
