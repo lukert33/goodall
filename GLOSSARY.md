@@ -95,6 +95,14 @@ _Avoid_: Project config, project file, settings
 The settings true for one eval account on one machine: where its record repo and log directory are, which contributor it is, and which secrets manager it uses.
 _Avoid_: Local config, machine config, pointer file
 
+**Setup page**:
+The page goodall opens in a browser to ask a person the questions needed to set up an eval account. Nothing is listening behind it.
+_Avoid_: Wizard, onboarding form, web app, dashboard
+
+**Answers file**:
+The file holding one person's answers to the setup questions, produced by the setup page or written by hand for unattended setup.
+_Avoid_: Config file, setup file, response file
+
 **Secrets manager**:
 A program that stores secrets outside files and can hand one to a program it launches.
 _Avoid_: Vault, password manager, keychain
