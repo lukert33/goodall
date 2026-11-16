@@ -1,0 +1,73 @@
+# Runs the four quality gates from AGENTS.md ("Testing") on every pull request
+# and on every push to main.
+#
+# Security choices a reader might otherwise undo (see docs/DEPENDENCIES.md):
+# - `pull_request`, never `pull_request_target`: code from a pull request runs
+#   with a read-only token and no access to secrets.
+# - The token can only read the repository, and checkout does not keep it.
+# - Actions are pinned to a full commit id; a tag can be moved, a commit cannot.
+# - uv is installed from PyPI at an exact version and checked against its
+#   sha256 hash, instead of through a third-party setup action.
+# - uv versions below 0.13.4 trust a compromised certificate authority in their
+#   bundled certificate list (GHSA-hq85-5cpj-mr62). `UV_NATIVE_TLS` makes uv use
+#   the runner's system certificate store instead.
+
+name: Quality gates
+
+on:
+  # No branch filter: this repo stacks pull requests, so many target a branch
+  # other than main.
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# A new push to the same pull request cancels the run it replaces.
+concurrency:
+  group: quality-gates-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gates:
+    # Goodall targets macOS, but the tests use only git, sh and Python, and
+    # Linux runners are cheaper and quicker to start.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      UV_NATIVE_TLS: "true"
+      # Use the runner's own Python 3.12 rather than downloading one.
+      UV_PYTHON_DOWNLOADS: never
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        # Ubuntu's system Python refuses `pip install` outside a virtual
+        # environment, so uv goes into its own. The hash is the PyPI wheel for
+        # Linux x86_64; raise the version and the hash together, and keep the
+        # version inside the uv_build range in pyproject.toml.
+        run: |
+          python3 -m venv "$RUNNER_TEMP/uv-tool"
+          echo "uv==0.11.33 --hash=sha256:9542178978b0b6f16a7ae99e55aca039f493a1edb373a15d7993eab80a28615a" > "$RUNNER_TEMP/uv-requirements.txt"
+          "$RUNNER_TEMP/uv-tool/bin/pip" install --require-hashes --only-binary :all: -r "$RUNNER_TEMP/uv-requirements.txt"
+          echo "$RUNNER_TEMP/uv-tool/bin" >> "$GITHUB_PATH"
+
+      - name: Install dependencies from the lockfile
+        # --locked fails if uv.lock does not match pyproject.toml.
+        run: uv sync --locked
+
+      - name: Tests
+        run: uv run pytest
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Formatting
+        run: uv run ruff format --check .
+
+      - name: Type check
+        run: uv run mypy
