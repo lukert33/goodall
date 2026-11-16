@@ -33,14 +33,16 @@ The folder checks themselves live in goodall.folders, because
 way.
 """
 
-from goodall import exit_codes
+from goodall import exit_codes, work_blocks
 from goodall.eval_config import EvalForThisAccount, read_eval_for_this_account
 from goodall.folders import describe_folder_problem, log_directory_unreachable_failure, record_repo_missing_failure
 from goodall.local_settings import read_local_settings
+from goodall.runner import Runner
 from goodall.terminal import Failure, Terminal
+from goodall.work_block_commands import Clock, describe_moment
 
 
-def run_status(terminal: Terminal, as_json: bool) -> int:
+def run_status(terminal: Terminal, runner: Runner, clock: Clock, as_json: bool) -> int:
     """Report the state of this macOS user account's eval and return the exit code."""
     settings_reading = read_local_settings()
     if isinstance(settings_reading, list):
@@ -62,7 +64,29 @@ def run_status(terminal: Terminal, as_json: bool) -> int:
     eval_reading = read_eval_for_this_account(settings)
     if isinstance(eval_reading, list):
         return report_failures(terminal, eval_reading, as_json)
+    active = work_blocks.active_work_block(settings.log_directory.path, clock())
+    if active is not None:
+        return report_active_work_block(terminal, eval_reading, active)
     return report_no_work_block(terminal, eval_reading, as_json)
+
+
+def report_active_work_block(
+    terminal: Terminal, eval_for_this_account: EvalForThisAccount, active: work_blocks.RunningWorkBlock
+) -> int:
+    """Report the active work block: its workstream and since when. Returns 0, the one success."""
+    contributor = eval_for_this_account.contributor
+    started = describe_moment(active.record.started_at)
+    terminal.show_facts(
+        [
+            ("Eval", eval_for_this_account.eval_config.name),
+            ("Contributor", f"{contributor.display_name} ({contributor.id})"),
+            ("Workstream", active.record.workstream),
+        ]
+    )
+    terminal.show_paragraph(
+        f"A work block is active on {active.record.workstream} since {started}, so goodall is recording."
+    )
+    return exit_codes.SUCCESS
 
 
 def report_no_work_block(terminal: Terminal, eval_for_this_account: EvalForThisAccount, as_json: bool) -> int:
