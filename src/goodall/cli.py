@@ -85,6 +85,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     journal = commands.add_parser("journal", help="Add an entry to the eval journal in the record repo.")
     journal.add_argument("text", nargs="?", help="What was decided or done, and by whom.")
+    journal.add_argument(
+        "--json",
+        action="store_true",
+        help="Print the result as one JSON document on standard output, for agents and scripts.",
+    )
     journal.set_defaults(command_name="journal")
 
     intervene = commands.add_parser("intervene", help="Log a researcher intervention in the record repo.")
@@ -173,6 +178,6 @@ def main(argv: list[str] | None = None, terminal: Terminal | None = None, runner
     if command_name == "doctor":
         return run_doctor(terminal, runner, as_json=arguments.json)
     if command_name == "journal":
-        return run_journal(terminal, runner, EntryRequest(text=arguments.text, as_json=False))
+        return run_journal(terminal, runner, EntryRequest(text=arguments.text, as_json=arguments.json))
 
     return run_stub(command_name, terminal)

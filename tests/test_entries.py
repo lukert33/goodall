@@ -14,6 +14,7 @@ home folder, and every `GIT_*` variable is removed).
 """
 
 import io
+import json
 import os
 import subprocess
 from dataclasses import dataclass
@@ -235,3 +236,38 @@ def test_journal_refuses_an_email_address_or_secret_without_repeating_it(
     assert "bob.smith" not in run.standard_error + run.standard_output
     assert "abcdefghijklmnop" not in run.standard_error + run.standard_output
     assert eval_account.journal_files() == []
+
+
+def test_journal_json_prints_one_document_with_the_id_the_path_and_whether_it_was_pushed(
+    eval_account: EvalAccount,
+) -> None:
+    run = run_goodall(["journal", "--json", "Chose Postgres."])
+
+    assert run.exit_code == exit_codes.SUCCESS
+    assert run.standard_error == ""
+    [entry_file] = eval_account.journal_files()
+    # json.loads refuses trailing text, so this also proves nothing else was printed.
+    document = json.loads(run.standard_output)
+    assert document == {
+        "record_type": "journal_entry",
+        "id": entry_file.stem,
+        "path": str(entry_file),
+        "committed": True,
+        "pushed": False,
+        "push_state": "no_remote",
+        "warnings": [],
+        "failures": [],
+    }
+
+
+def test_journal_json_reports_a_usage_failure_in_the_same_shape(eval_account: EvalAccount) -> None:
+    run = run_goodall(["journal", "--json"])
+
+    assert run.exit_code == exit_codes.USAGE_ERROR
+    assert run.standard_error == ""
+    document = json.loads(run.standard_output)
+    assert document["id"] is None
+    assert document["path"] is None
+    assert document["committed"] is False
+    assert document["pushed"] is False
+    assert [failure["kind"] for failure in document["failures"]] == ["entry_text_missing"]
