@@ -159,3 +159,24 @@ def test_a_push_to_an_unreachable_remote_is_pending_and_goes_out_with_the_next_w
         "Add journal entry 20261116T093000Z-ada-lovelace-00000002",
         "Add journal entry 20261116T093000Z-ada-lovelace-00000001",
     ]
+
+
+def test_a_push_rejected_because_a_collaborator_pushed_first_succeeds_after_merging(tmp_path: Path) -> None:
+    remote, adas_record_repo = make_remote_and_clone(tmp_path, "adas-records", "Ada Lovelace")
+    graces_record_repo = clone(tmp_path, remote, "graces-records", "Grace Hopper")
+
+    adas_outcome = write_record(FakeRunner(), adas_record_repo, journal_entry(contributor=ADA))
+    graces_outcome = write_record(FakeRunner(), graces_record_repo, journal_entry(contributor=GRACE))
+
+    assert adas_outcome.push_state == PushState.PUSHED
+    assert graces_outcome.failures == []
+    assert graces_outcome.push_state == PushState.PUSHED
+    assert graces_outcome.pending_commits == 0
+    # Both contributors' commits are on the remote, unrewritten, joined by a merge.
+    remote_history = git(remote, "log", "--format=%an|%s", "main").splitlines()
+    assert "Ada Lovelace|Add journal entry 20261116T093000Z-ada-lovelace-7f3a9c2e" in remote_history
+    assert "Grace Hopper|Add journal entry 20261116T093000Z-grace-hopper-7f3a9c2e" in remote_history
+    assert git(remote, "rev-list", "--count", "--merges", "main") == "1\n"
+    assert git(adas_record_repo, "rev-parse", "HEAD") in git(remote, "rev-list", "main")
+    # Grace's copy now has Ada's record too.
+    assert (graces_record_repo / "journal" / "20261116T093000Z-ada-lovelace-7f3a9c2e.md").exists()

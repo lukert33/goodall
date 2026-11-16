@@ -30,7 +30,7 @@ from enum import StrEnum
 from pathlib import Path
 
 from goodall import records
-from goodall.runner import Command, CommandResult, Runner
+from goodall.runner import Command, CommandOutcome, CommandResult, Runner
 from goodall.terminal import Failure
 
 
@@ -67,6 +67,12 @@ class RecordWriteOutcome:
     pending_commits: int = 0
     failures: list[Failure] = field(default_factory=list)
 
+
+# How many times a push refused because a collaborator pushed first is
+# retried after combining their commits. More than one, because a third
+# contributor can push in between; small, because each retry is a round trip
+# to the remote while a person waits.
+MAXIMUM_PUSH_RETRIES = 3
 
 # Each kind of record, named for a person reading the repository's history.
 RECORD_TYPE_NAMES = {
@@ -131,6 +137,28 @@ def push_pending(runner: Runner, record_repo: Path) -> PushOutcome:
     if target is None:
         return PushOutcome(push_state=PushState.NO_REMOTE)
     push_result = run_git(runner, record_repo, ["push", "--quiet", target.remote, f"HEAD:refs/heads/{target.branch}"])
+    for _retry in range(MAXIMUM_PUSH_RETRIES):
+        if push_result.succeeded:
+            return PushOutcome(push_state=PushState.PUSHED)
+        # A program that never completed (a timeout, say) told us nothing
+        # about the remote, so there is nothing to combine.
+        if push_result.outcome != CommandOutcome.COMPLETED:
+            break
+        # Was the push refused because a collaborator pushed first? Fetch
+        # the branch and look: if everything on the remote is already in
+        # this copy, the refusal was for some other reason, and merging
+        # cannot help.
+        fetch_result = fetch_branch(runner, record_repo, target)
+        if not fetch_result.succeeded:
+            break
+        if remote_branch_already_included(runner, record_repo, target):
+            break
+        merge_failure = merge_remote_branch(runner, record_repo, target)
+        if merge_failure is not None:
+            return pending_outcome(runner, record_repo, target, merge_failure)
+        push_result = run_git(
+            runner, record_repo, ["push", "--quiet", target.remote, f"HEAD:refs/heads/{target.branch}"]
+        )
     if push_result.succeeded:
         return PushOutcome(push_state=PushState.PUSHED)
     pending_commits = count_pending_commits(runner, record_repo, target)
@@ -138,6 +166,114 @@ def push_pending(runner: Runner, record_repo: Path) -> PushOutcome:
         push_state=PushState.PENDING,
         pending_commits=pending_commits,
         failures=[push_failed_failure(record_repo, target, push_result, pending_commits)],
+    )
+
+
+def pending_outcome(runner: Runner, record_repo: Path, target: PushTarget, failure: Failure) -> PushOutcome:
+    """A push outcome saying commits are still waiting, because of `failure`."""
+    return PushOutcome(
+        push_state=PushState.PENDING,
+        pending_commits=count_pending_commits(runner, record_repo, target),
+        failures=[failure],
+    )
+
+
+def fetch_branch(runner: Runner, record_repo: Path, target: PushTarget) -> CommandResult:
+    """Bring git's copy of the remote branch (its remote-tracking branch) up to date.
+
+    The refspec is written out, rather than left to the remote's configured
+    one, so the tracking branch is updated however the clone was set up.
+    The leading `+` lets it follow a remote branch that was rewritten:
+    the tracking branch is only git's note of where the remote stands.
+    """
+    refspec = f"+refs/heads/{target.branch}:{target.tracking_reference}"
+    return run_git(runner, record_repo, ["fetch", "--quiet", "--no-tags", target.remote, refspec])
+
+
+def remote_branch_already_included(runner: Runner, record_repo: Path, target: PushTarget) -> bool:
+    """True when every commit on the remote branch, as last fetched, is already in this copy's history."""
+    ancestor_result = run_git(runner, record_repo, ["merge-base", "--is-ancestor", target.tracking_reference, "HEAD"])
+    return ancestor_result.succeeded
+
+
+def merge_remote_branch(runner: Runner, record_repo: Path, target: PushTarget) -> Failure | None:
+    """Combine a collaborator's pushed commits with this copy's, with a merge commit; None when it worked.
+
+    A merge, not a rebase: the project never rewrites history, and a merge
+    keeps every contributor's commits exactly as they made them. Because
+    every record is a file of its own, the two sides add different files
+    and cannot conflict over a record.
+
+    It merges only when no tracked file has uncommitted changes. Trap: a
+    merge that stops part-way can be undone with `git merge --abort`, but
+    git warns that the undo may not restore uncommitted changes. With none
+    present, the undo always puts the copy back exactly as it was, so a
+    failed merge leaves the local commit in place and nothing else changed.
+    """
+    status_result = run_git(runner, record_repo, ["status", "--porcelain", "--untracked-files=no"])
+    if not status_result.succeeded:
+        return merge_failed_failure(record_repo, target, status_result.problem or "git status failed")
+    if status_result.standard_output.strip():
+        return local_changes_block_merge_failure(record_repo, target)
+    merge_message = (
+        f"Merge records from {target.remote}/{target.branch}\n\n"
+        "Written by goodall: another contributor pushed records first, and this joins their commits with "
+        "this copy's so both can be pushed."
+    )
+    merge_result = run_git(
+        runner,
+        record_repo,
+        ["merge", "--quiet", "--no-ff", "--no-edit", "-m", merge_message, target.tracking_reference],
+    )
+    if merge_result.succeeded:
+        return None
+    # A merge that stopped part-way leaves MERGE_HEAD behind; undo it. One
+    # that refused before starting (an untracked file in the way, say)
+    # changed nothing and leaves nothing to undo.
+    merge_in_progress = run_git(runner, record_repo, ["rev-parse", "--verify", "--quiet", "MERGE_HEAD"])
+    if merge_in_progress.succeeded:
+        run_git(runner, record_repo, ["merge", "--abort"])
+    return merge_failed_failure(record_repo, target, merge_result.problem or "git merge failed")
+
+
+def local_changes_block_merge_failure(record_repo: Path, target: PushTarget) -> Failure:
+    """The failure for a merge goodall will not start, because the contributor has uncommitted changes."""
+    return Failure(
+        kind="record_push_blocked_by_local_changes",
+        what_happened=(
+            f"The record is saved and committed in {record_repo}, but not pushed: another contributor pushed to "
+            f"{target.remote} first, and goodall will not combine their records with yours while files in the "
+            "record repo have changes that are not committed."
+        ),
+        why=(
+            "Combining the two histories changes files in the record repo. Goodall does that only when it can "
+            "always put everything back as it was, which uncommitted changes would prevent."
+        ),
+        what_to_do_next=(
+            f"Run git status in {record_repo} to see the changed files, then commit them or put them back as "
+            "they were. Goodall will push the waiting commits with the next record it writes."
+        ),
+    )
+
+
+def merge_failed_failure(record_repo: Path, target: PushTarget, problem: str) -> Failure:
+    """The failure for a merge with the remote branch that did not complete, and was undone."""
+    return Failure(
+        kind="record_merge_failed",
+        what_happened=(
+            f"The record is saved and committed in {record_repo}, but not pushed: another contributor pushed to "
+            f"{target.remote} first, and combining their commits with yours failed ({problem}). Goodall undid "
+            "the attempt; your commits are as they were."
+        ),
+        why=(
+            "Records are separate files, so this should not happen; it usually means a file other than a "
+            "record was changed on both sides."
+        ),
+        what_to_do_next=(
+            f"Ask the researcher who runs the eval to look at the record repo in {record_repo} (git status and "
+            "git log show the state). Goodall will push the waiting commits with the next record it writes "
+            "once the histories can be combined."
+        ),
     )
 
 
