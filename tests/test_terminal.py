@@ -8,10 +8,20 @@ produce them too.
 
 import io
 import json
+import re
 
 import pytest
 
-from goodall.terminal import FIXED_WIDTH, Failure, Terminal, clamp_width
+from goodall.terminal import (
+    FIXED_WIDTH,
+    CheckCounts,
+    CheckResult,
+    CheckStatus,
+    Failure,
+    Terminal,
+    clamp_width,
+    count_checks,
+)
 
 
 class FakeTerminalStream(io.StringIO):
@@ -160,3 +170,101 @@ def test_measured_width_is_clamped_to_a_readable_range() -> None:
     assert clamp_width(20) == 40
     assert clamp_width(72) == 72
     assert clamp_width(300) == 100
+
+
+# The check report, which goodall doctor prints. Two groups and every status,
+# so the layout of each kind of line is pinned down. The words pass, FAIL,
+# warn and skip are always printed, so the screen reads without colour.
+
+REPORT_RESULTS = [
+    CheckResult(id="settings.found", group="Settings", status=CheckStatus.PASS, summary="Settings are found"),
+    CheckResult(
+        id="settings.valid",
+        group="Settings",
+        status=CheckStatus.FAIL,
+        summary="Settings are valid",
+        failures=[EXAMPLE_FAILURE, SECOND_FAILURE],
+    ),
+    CheckResult(
+        id="settings.folder",
+        group="Settings",
+        status=CheckStatus.SKIP,
+        summary="The folder named in the settings exists, which is a long enough summary to wrap",
+        waiting_for="settings.valid",
+    ),
+    CheckResult(
+        id="tools.drive",
+        group="Tools",
+        status=CheckStatus.WARN,
+        summary="The drive is connected",
+        failures=[
+            Failure(kind="drive", what_happened="Not recording.", why="No drive.", what_to_do_next="Plug it in.")
+        ],
+    ),
+    CheckResult(id="tools.git", group="Tools", status=CheckStatus.PASS, summary="git is installed"),
+]
+
+EXPECTED_REPORT_SCREEN = """\
+Settings
+  pass  Settings are found
+  FAIL  Settings are valid
+        No example file was found at
+        /tmp/an/example/folder/with/a/rather/long/name/example.toml.
+        Next: Run goodall onboard.
+
+        A second thing went wrong.
+        Next: Fix both.
+
+  skip  The folder named in the settings exists, which is a long enough summary
+        to wrap (waiting for: Settings are valid)
+
+Tools
+  warn  The drive is connected
+        Not recording.
+        Next: Plug it in.
+
+  pass  git is installed
+
+2 passed, 1 warned, 1 failed, 1 skipped
+"""
+
+
+def test_check_report_screen_without_colour() -> None:
+    standard_output = io.StringIO()
+    standard_error = io.StringIO()
+    terminal = Terminal(standard_output=standard_output, standard_error=standard_error)
+
+    terminal.show_check_report(REPORT_RESULTS)
+
+    assert standard_output.getvalue() == EXPECTED_REPORT_SCREEN
+    assert standard_error.getvalue() == ""
+
+
+def test_check_report_with_colour_reads_the_same_once_colour_is_removed(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    standard_output = FakeTerminalStream()
+    terminal = Terminal(standard_output=standard_output, standard_error=io.StringIO())
+
+    terminal.show_check_report(REPORT_RESULTS)
+
+    screen = standard_output.getvalue()
+    assert "\x1b[1;31mFAIL\x1b[0m  Settings are valid" in screen
+    without_colour = re.sub("\x1b\\[[0-9;]*m", "", screen)
+    assert without_colour == EXPECTED_REPORT_SCREEN
+
+
+def test_check_counts_and_json_come_from_the_same_results() -> None:
+    assert count_checks(REPORT_RESULTS) == CheckCounts(passed=2, warned=1, failed=1, skipped=1)
+    assert REPORT_RESULTS[1].as_json() == {
+        "id": "settings.valid",
+        "group": "Settings",
+        "status": "fail",
+        "summary": "Settings are valid",
+        "detail": EXAMPLE_FAILURE.what_happened + " " + SECOND_FAILURE.what_happened,
+        "next_step": "Run goodall onboard. Fix both.",
+        "waiting_for": None,
+        "failures": [EXAMPLE_FAILURE.as_json(), SECOND_FAILURE.as_json()],
+    }
+    assert REPORT_RESULTS[2].as_json()["waiting_for"] == "settings.valid"
+    assert REPORT_RESULTS[0].as_json()["detail"] is None
+    assert REPORT_RESULTS[0].as_json()["next_step"] is None
