@@ -7,9 +7,12 @@ like the entries Claude Code writes. Real transcripts hold a contributor's
 private prompts and must never be copied into fixtures.
 """
 
+import subprocess
+import sys
 from pathlib import Path
 
 from goodall.actor_labels import (
+    ACTOR_LABEL_RULES,
     ACTOR_LABEL_RULES_VERSION,
     EntryLabel,
     LabelSummary,
@@ -17,6 +20,7 @@ from goodall.actor_labels import (
     label_transcript,
     summarise_labels,
 )
+from goodall.human_actions import parse_human_actions
 
 FIXTURES = Path(__file__).parent / "fixtures" / "claude_code_transcripts"
 
@@ -62,6 +66,44 @@ def test_the_result_says_which_rules_version_produced_it() -> None:
 
     assert result.rules_version == ACTOR_LABEL_RULES_VERSION
     assert result.rules_version == "1"
+
+
+def test_the_module_loads_nothing_outside_the_standard_library() -> None:
+    # A fresh interpreter, so modules pytest itself imported do not count.
+    # Only modules the import adds are checked: the interpreter's own start-up
+    # (a virtual environment's helper, for example) is not goodall's doing.
+    probe = (
+        "import sys\n"
+        "before = set(sys.modules)\n"
+        "import goodall.actor_labels\n"
+        "outside = set()\n"
+        "for name in set(sys.modules) - before:\n"
+        "    top = name.split('.')[0]\n"
+        "    if top not in sys.stdlib_module_names and top != 'goodall':\n"
+        "        outside.add(top)\n"
+        "print(sorted(outside))\n"
+    )
+    completed = subprocess.run([sys.executable, "-I", "-c", probe], capture_output=True, text=True, check=True)
+
+    assert completed.stdout.strip() == "[]"
+
+
+def test_every_rule_has_a_unique_name_and_a_one_sentence_description() -> None:
+    names = [rule.name for rule in ACTOR_LABEL_RULES]
+    assert len(names) == len(set(names))
+    for rule in ACTOR_LABEL_RULES:
+        assert rule.description.endswith(".")
+        assert rule.description.count(". ") == 0, rule.name
+
+
+def test_human_labels_fall_on_exactly_the_lines_holding_a_human_action() -> None:
+    # The person is decided by goodall.human_actions, so on its own fixtures
+    # the human labels and the human actions must sit on the same lines.
+    for fixture_name in ("typed_prompts.jsonl", "interruptions.jsonl", "rejections.jsonl"):
+        labels = label_transcript(FIXTURES / fixture_name).labels
+        human_lines = [label.line_number for label in labels if label.actor_label == "human"]
+        action_lines = sorted({action.line_number for action in parse_human_actions(FIXTURES / fixture_name).actions})
+        assert human_lines == action_lines, fixture_name
 
 
 def test_the_summary_shows_how_a_transcript_divides() -> None:
