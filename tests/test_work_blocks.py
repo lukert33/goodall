@@ -444,3 +444,61 @@ def test_stop_the_morning_after_closes_the_forgotten_work_block_at_its_last_hear
     assert "was left running" in stop.everything_printed
     [record] = eval_account.work_block_records()
     assert record["end_state"] == "inferred"
+
+
+# ---------------------------------------------------------------------------
+# A marker goodall cannot read: the abnormal end
+# ---------------------------------------------------------------------------
+
+
+def damaged_markers(eval_account: EvalAccount) -> list[Path]:
+    return sorted((eval_account.log_directory / "work-blocks" / "damaged-markers").glob("*"))
+
+
+def test_a_damaged_marker_is_kept_aside_and_what_can_be_recovered_is_recorded_as_abnormal(
+    eval_account: EvalAccount,
+) -> None:
+    run_goodall(eval_account, ["start"])
+    work_blocks.record_heartbeat(eval_account.log_directory, MONDAY_MORNING + timedelta(minutes=40), CLAUDE_SESSION)
+    # Something damaged the marker: its machine facts are gone.
+    marker = json.loads(marker_file(eval_account).read_text())
+    del marker["machine"]
+    damaged_text = json.dumps(marker)
+    marker_file(eval_account).write_text(damaged_text)
+    eval_account.clock.advance(timedelta(hours=1))
+
+    status = run_goodall(eval_account, ["status"])
+
+    assert status.exit_code == exit_codes.ERROR
+    assert "could not read the marker of your work block" in status.everything_printed
+    [kept] = damaged_markers(eval_account)
+    assert kept.read_text() == damaged_text
+    assert str(kept) in status.everything_printed
+    assert not marker_file(eval_account).exists()
+    [record] = eval_account.work_block_records()
+    assert record["id"] == marker["id"]
+    assert record["workstream"] == "research"
+    assert record["started_at"] == "2026-11-16T09:30:00Z"
+    assert record["ended_at"] == "2026-11-16T10:10:00Z"
+    assert record["end_state"] == "abnormal"
+    assert record["claude_sessions"] == [CLAUDE_SESSION]
+
+    start = run_goodall(eval_account, ["start"])
+    assert start.exit_code == exit_codes.SUCCESS
+    assert "Started a work block" in start.everything_printed
+
+
+def test_a_marker_too_damaged_to_recover_is_kept_aside_and_the_person_is_told(eval_account: EvalAccount) -> None:
+    run_goodall(eval_account, ["start"])
+    marker_file(eval_account).write_text('{"schema_version": 1, "record_type": "work_bl')
+
+    start = run_goodall(eval_account, ["start"])
+
+    assert start.exit_code == exit_codes.SUCCESS, start.standard_error
+    assert "could not read the marker of your work block" in start.everything_printed
+    assert "Nothing could be recovered from it" in start.everything_printed
+    [kept] = damaged_markers(eval_account)
+    assert kept.read_text() == '{"schema_version": 1, "record_type": "work_bl'
+    assert stat.S_IMODE(kept.stat().st_mode) == 0o600
+    assert eval_account.work_block_files() == []
+    assert "Started a work block" in start.everything_printed

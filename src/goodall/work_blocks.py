@@ -146,13 +146,13 @@ class RunningWorkBlock:
 class DamagedMarker:
     """A marker goodall could not read as a running work block.
 
-    `problem` says why, in words for a person. `values` holds whatever the
-    file did contain as a JSON object (empty when it held none), so goodall
-    can recover what is left. `modified_at` is when the file last changed;
-    a marker is never rewritten, so that is when the work block started.
+    `values` holds whatever the file did contain as a JSON object (empty
+    when it held none), so goodall can recover what is left. `modified_at`
+    is when the file last changed, or None when that cannot be read; a
+    marker is never rewritten by goodall, so normally that is when the work
+    block started.
     """
 
-    problem: str
     values: dict[str, object]
     modified_at: datetime | None
 
@@ -169,18 +169,15 @@ def read_marker(log_directory: Path) -> RunningWorkBlock | DamagedMarker | None:
         marker_text = files.marker.read_text(encoding="utf-8")
     except FileNotFoundError:
         return None
-    except (OSError, UnicodeDecodeError) as read_error:
-        return DamagedMarker(problem=f"it could not be read ({read_error})", values={}, modified_at=None)
+    except (OSError, UnicodeDecodeError):
+        return damaged_marker(files.marker, "")
 
     parse_result = records.parse_work_block_record(marker_text)
     running_record = parse_result.record
-    problems = list(parse_result.problems)
-    if running_record is not None:
-        problems.extend(records.validate_record(running_record))
-        if running_record.ended_at is not None or running_record.end_state is not None:
-            problems.append(records.RecordProblem("end_state", "a running work block cannot have ended"))
-    if running_record is None or problems:
-        return damaged_marker(files.marker, marker_text, problems)
+    if running_record is None or parse_result.problems or records.validate_record(running_record):
+        return damaged_marker(files.marker, marker_text)
+    if running_record.ended_at is not None or running_record.end_state is not None:
+        return damaged_marker(files.marker, marker_text)
 
     if files.unrecorded_file(running_record.id).exists():
         return None
@@ -188,7 +185,7 @@ def read_marker(log_directory: Path) -> RunningWorkBlock | DamagedMarker | None:
     return RunningWorkBlock(record=running_record, last_heartbeat_at=last_heartbeat_at)
 
 
-def damaged_marker(marker: Path, marker_text: str, problems: list[records.RecordProblem]) -> DamagedMarker:
+def damaged_marker(marker: Path, marker_text: str) -> DamagedMarker:
     """Describe a marker that is not a running work block, keeping whatever it held."""
     values: dict[str, object] = {}
     try:
@@ -202,12 +199,26 @@ def damaged_marker(marker: Path, marker_text: str, problems: list[records.Record
         modified_at = datetime.fromtimestamp(marker.stat().st_mtime, UTC).replace(microsecond=0)
     except OSError:
         pass
-    problem = "it is empty"
-    if problems:
-        problem = problems[0].message
-    if marker_text.strip() != "" and not problems:
-        problem = "it does not hold a running work block"
-    return DamagedMarker(problem=problem, values=values, modified_at=modified_at)
+    return DamagedMarker(values=values, modified_at=modified_at)
+
+
+def move_damaged_marker_aside(log_directory: Path, now: datetime) -> Path | None:
+    """Move a damaged marker out of the way, keeping it, and return where it now is.
+
+    A damaged marker is evidence, so it is never deleted: it goes into
+    `damaged-markers/` under a name that starts with when it was found.
+    Renaming is atomic, so of two goodall commands doing this at once,
+    exactly one moves it; the other gets None.
+    """
+    files = WorkBlockFiles(log_directory)
+    files.damaged_markers_folder.mkdir(mode=FOLDER_PERMISSIONS, parents=True, exist_ok=True)
+    found_at = now.astimezone(UTC).strftime("%Y%m%dT%H%M%SZ")
+    kept_marker = files.damaged_markers_folder / f"{found_at}-{secrets.token_hex(4)}-{MARKER_FILE_NAME}"
+    try:
+        os.rename(files.marker, kept_marker)
+    except FileNotFoundError:
+        return None
+    return kept_marker
 
 
 def active_work_block(log_directory: Path, now: datetime) -> RunningWorkBlock | None:

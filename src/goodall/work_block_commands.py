@@ -348,6 +348,10 @@ def settle(runner: Runner, eval_reading: EvalForThisAccount, now: datetime) -> S
     log_directory = eval_reading.local_settings.log_directory.path
     closings = []
     marker = work_blocks.read_marker(log_directory)
+    if isinstance(marker, work_blocks.DamagedMarker):
+        closing = close_damaged_work_block(runner, eval_reading, marker, now)
+        if closing is not None:
+            closings.append(closing)
     if isinstance(marker, work_blocks.RunningWorkBlock) and marker.is_overdue(now):
         end_work_block(log_directory, marker, marker.last_heartbeat_at, "inferred")
         closings.append(
@@ -357,6 +361,101 @@ def settle(runner: Runner, eval_reading: EvalForThisAccount, now: datetime) -> S
             f"{describe_moment(marker.last_heartbeat_at)}, so the time after that is not counted as work."
         )
     return Settling(closings=closings, writes=write_unrecorded_records(runner, eval_reading))
+
+
+def close_damaged_work_block(
+    runner: Runner, eval_reading: EvalForThisAccount, damaged: work_blocks.DamagedMarker, now: datetime
+) -> str | None:
+    """Move a damaged marker aside, keep it, and record what can be recovered with the end state `abnormal`.
+
+    Returns what to tell the person, or None when another goodall moved
+    the marker first (and so tells them itself).
+    """
+    log_directory = eval_reading.local_settings.log_directory.path
+    recovered = recover_work_block(runner, eval_reading, damaged)
+    kept_marker = work_blocks.move_damaged_marker_aside(log_directory, now)
+    if kept_marker is None:
+        return None
+    message = (
+        "Goodall could not read the marker of your work block, so it could not tell whether that work block was "
+        f"still running. The marker is kept, unchanged, at {kept_marker}."
+    )
+    if recovered is None:
+        return message + (
+            " Nothing could be recovered from it, so no record of that work block was written. Please tell the "
+            "researcher who runs the eval, with the path above."
+        )
+    work_blocks.save_unrecorded(log_directory, recovered)
+    return message + (
+        f" What could be recovered is recorded as a work block on {recovered.workstream} from "
+        f"{describe_moment(recovered.started_at)} to {describe_ended_at(recovered)}, its last heartbeat, with the "
+        "end state abnormal."
+    )
+
+
+def recover_work_block(
+    runner: Runner, eval_reading: EvalForThisAccount, damaged: work_blocks.DamagedMarker
+) -> records.WorkBlockRecord | None:
+    """Rebuild what can be trusted of a damaged marker's work block, ended at its last heartbeat; None if too little.
+
+    Only observations are used, never guesses. The workstream must be in
+    the marker, because nothing else says which one it was. The contributor
+    falls back to this account's own, since an eval account belongs to one
+    contributor; the start falls back to when the marker file was made;
+    the machine facts, if lost, are observed again now, on what is the same
+    Mac. PROVISIONAL: the owner may prefer to record nothing but the kept
+    marker.
+    """
+    values = damaged.values
+    workstream = values.get("workstream")
+    if not isinstance(workstream, str) or workstream not in eval_reading.eval_config.workstreams:
+        return None
+    contributor = values.get("contributor")
+    if not isinstance(contributor, str) or not records.IDENTIFIER_PATTERN.fullmatch(contributor):
+        contributor = eval_reading.contributor.id
+    started_at_text = values.get("started_at")
+    started_at = damaged.modified_at
+    if isinstance(started_at_text, str) and records.TIMESTAMP_PATTERN.fullmatch(started_at_text):
+        started_at = datetime.fromisoformat(started_at_text)
+    if started_at is None:
+        return None
+    work_block_id = values.get("id")
+    if not isinstance(work_block_id, str) or not records.RECORD_ID_PATTERN.fullmatch(work_block_id):
+        work_block_id = records.make_record_id(started_at, contributor)
+
+    log_directory = eval_reading.local_settings.log_directory.path
+    heartbeat_file = work_blocks.WorkBlockFiles(log_directory).heartbeat_file(work_block_id)
+    recovered = records.WorkBlockRecord(
+        schema_version=records.SCHEMA_VERSION,
+        id=work_block_id,
+        contributor=contributor,
+        workstream=workstream,
+        started_at=started_at,
+        ended_at=work_blocks.read_last_heartbeat_at(heartbeat_file, started_at),
+        end_state="abnormal",
+        machine=recover_machine_facts(runner, values.get("machine")),
+        claude_sessions=work_blocks.read_claude_sessions(log_directory, work_block_id),
+    )
+    if records.validate_record(recovered):
+        return None
+    return recovered
+
+
+def recover_machine_facts(runner: Runner, machine_values: object) -> records.MachineFacts:
+    """The machine facts a damaged marker still holds, or, when they are lost, the same facts observed now."""
+    if isinstance(machine_values, dict):
+        hostname = machine_values.get("hostname")
+        macos_version = machine_values.get("macos_version")
+        goodall_version = machine_values.get("goodall_version")
+        claude_code_version = machine_values.get("claude_code_version")
+        if (
+            isinstance(hostname, str)
+            and isinstance(goodall_version, str)
+            and (macos_version is None or isinstance(macos_version, str))
+            and (claude_code_version is None or isinstance(claude_code_version, str))
+        ):
+            return records.MachineFacts(hostname, macos_version, goodall_version, claude_code_version)
+    return observe_machine_facts(runner)
 
 
 def show_settling(terminal: Terminal, settling: Settling) -> None:
