@@ -74,6 +74,12 @@ class RecordWriteOutcome:
 # to the remote while a person waits.
 MAXIMUM_PUSH_RETRIES = 3
 
+# How long a push or fetch may take. A remote that cannot be reached must
+# not hang a command a person is waiting on; the record is already safe in a
+# local commit by then, so giving up costs only a later push. Long enough
+# for a slow connection to send a few small text files.
+NETWORK_TIMEOUT_SECONDS = 30.0
+
 # How long a commit may take. Longer than a short command's limit, because
 # the contributor's own hooks and commit signing run inside it.
 COMMIT_TIMEOUT_SECONDS = 60.0
@@ -239,18 +245,19 @@ def push_pending(runner: Runner, record_repo: Path) -> PushOutcome:
     target = find_push_target(runner, record_repo)
     if target is None:
         return PushOutcome(push_state=PushState.NO_REMOTE)
-    push_result = run_git(runner, record_repo, ["push", "--quiet", target.remote, f"HEAD:refs/heads/{target.branch}"])
+    push_result = push_branch(runner, record_repo, target)
     for _retry in range(MAXIMUM_PUSH_RETRIES):
         if push_result.succeeded:
-            return PushOutcome(push_state=PushState.PUSHED)
-        # A program that never completed (a timeout, say) told us nothing
+            break
+        # A push that never completed (it timed out, say) told us nothing
         # about the remote, so there is nothing to combine.
         if push_result.outcome != CommandOutcome.COMPLETED:
             break
         # Was the push refused because a collaborator pushed first? Fetch
         # the branch and look: if everything on the remote is already in
-        # this copy, the refusal was for some other reason, and merging
-        # cannot help.
+        # this copy, the refusal was for some other reason (no permission,
+        # a protected branch, the remote unreachable), and merging cannot
+        # help.
         fetch_result = fetch_branch(runner, record_repo, target)
         if not fetch_result.succeeded:
             break
@@ -259,9 +266,8 @@ def push_pending(runner: Runner, record_repo: Path) -> PushOutcome:
         merge_failure = merge_remote_branch(runner, record_repo, target)
         if merge_failure is not None:
             return pending_outcome(runner, record_repo, target, merge_failure)
-        push_result = run_git(
-            runner, record_repo, ["push", "--quiet", target.remote, f"HEAD:refs/heads/{target.branch}"]
-        )
+        push_result = push_branch(runner, record_repo, target)
+
     if push_result.succeeded:
         return PushOutcome(push_state=PushState.PUSHED)
     pending_commits = count_pending_commits(runner, record_repo, target)
@@ -269,6 +275,23 @@ def push_pending(runner: Runner, record_repo: Path) -> PushOutcome:
         push_state=PushState.PENDING,
         pending_commits=pending_commits,
         failures=[push_failed_failure(record_repo, target, push_result, pending_commits)],
+    )
+
+
+def push_branch(runner: Runner, record_repo: Path, target: PushTarget) -> CommandResult:
+    """Push the current branch, with every commit on it, to its branch on the remote.
+
+    The destination is written out in full, so the push goes where the
+    branch's upstream says whatever the contributor's `push.default` is,
+    and goodall never changes the repository's settings to make it so.
+    A plain push, never a forced one: the remote's history is never
+    rewritten.
+    """
+    return run_git(
+        runner,
+        record_repo,
+        ["push", "--quiet", target.remote, f"HEAD:refs/heads/{target.branch}"],
+        timeout_seconds=NETWORK_TIMEOUT_SECONDS,
     )
 
 
@@ -290,7 +313,12 @@ def fetch_branch(runner: Runner, record_repo: Path, target: PushTarget) -> Comma
     the tracking branch is only git's note of where the remote stands.
     """
     refspec = f"+refs/heads/{target.branch}:{target.tracking_reference}"
-    return run_git(runner, record_repo, ["fetch", "--quiet", "--no-tags", target.remote, refspec])
+    return run_git(
+        runner,
+        record_repo,
+        ["fetch", "--quiet", "--no-tags", target.remote, refspec],
+        timeout_seconds=NETWORK_TIMEOUT_SECONDS,
+    )
 
 
 def remote_branch_already_included(runner: Runner, record_repo: Path, target: PushTarget) -> bool:
@@ -501,5 +529,29 @@ def commit_message(record: records.Record) -> str:
 def run_git(
     runner: Runner, record_repo: Path, arguments: list[str], timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS
 ) -> CommandResult:
-    """Run git with `arguments` in the record repo."""
-    return runner.run(Command(["git", *arguments], working_directory=record_repo, timeout_seconds=timeout_seconds))
+    """Run git with `arguments` in the record repo, shielded from stray settings and unable to prompt.
+
+    - Every `GIT_*` variable in goodall's environment is left out. Trap:
+      git obeys `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE` and their
+      siblings over the folder it runs in, and they are set, for instance,
+      while a git hook of some other repository runs; goodall would commit
+      into that repository. The contributor's git settings in their home
+      folder still apply, because those are theirs to choose.
+    - Nothing may ask for a password or passphrase: goodall never asks
+      questions in the terminal, and a prompt nobody sees hangs until the
+      timeout. `GIT_TERMINAL_PROMPT=0` stops git's own prompts;
+      `credential.interactive=never` asks credential helpers that honour it
+      (Git Credential Manager does) not to open a window; `SSH_ASKPASS` is
+      left out so ssh has no program to ask with. ssh cannot ask in the
+      terminal either, because the runner starts git with no terminal
+      attached. A helper that ignores all this is still stopped by the
+      timeout.
+    """
+    command = Command(
+        ["git", "-c", "credential.interactive=never", *arguments],
+        working_directory=record_repo,
+        timeout_seconds=timeout_seconds,
+        removed_environment_prefixes=["GIT_", "SSH_ASKPASS"],
+        extra_environment={"GIT_TERMINAL_PROMPT": "0"},
+    )
+    return runner.run(command)

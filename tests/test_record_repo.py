@@ -319,3 +319,22 @@ def test_a_merge_that_conflicts_is_undone_and_the_local_commit_kept(tmp_path: Pa
     assert commit_subjects(graces_record_repo)[0] == "Add journal entry 20261116T093000Z-grace-hopper-7f3a9c2e"
     assert git(graces_record_repo, "status", "--porcelain") == ""
     assert (graces_record_repo / "eval.toml").read_text() == 'name = "Grace\'s name"\n'
+
+
+def test_stray_git_variables_in_the_environment_cannot_redirect_the_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    record_repo = make_record_repo(tmp_path / "records")
+    other_repository = make_record_repo(tmp_path / "other", contributor_name="Someone Else")
+    # As when goodall runs inside a git hook of another repository.
+    monkeypatch.setenv("GIT_DIR", str(other_repository / ".git"))
+    monkeypatch.setenv("GIT_WORK_TREE", str(other_repository))
+    monkeypatch.setenv("GIT_INDEX_FILE", str(other_repository / ".git" / "index"))
+    monkeypatch.setenv("GIT_AUTHOR_NAME", "Not The Contributor")
+
+    outcome = write_record(FakeRunner(), record_repo, journal_entry())
+
+    assert outcome.failures == []
+    assert commit_subjects(record_repo)[0] == "Add journal entry 20261116T093000Z-ada-lovelace-7f3a9c2e"
+    assert git(record_repo, "log", "-1", "--format=%an") == "Ada Lovelace\n"
+    assert commit_subjects(other_repository) == ["Start the record repo"]
