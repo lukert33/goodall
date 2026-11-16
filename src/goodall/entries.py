@@ -131,7 +131,8 @@ def add_intervention(
 ) -> EntryResult:
     """Build an intervention from the request, check it, and write it into the record repo."""
     record_type = records.INTERVENTION_RECORD_TYPE
-    text = get_entry_text(terminal, request, "intervention", "goodall intervene")
+    command = intervene_command(details)
+    text = get_entry_text(terminal, request, "intervention", command)
     if isinstance(text, Failure):
         return stopped(record_type, exit_codes.USAGE_ERROR, [text])
     eval_reading = find_eval_for_this_account()
@@ -151,7 +152,7 @@ def add_intervention(
     now = datetime.now(UTC)
     occurred_at = now
     if details.occurred_at is not None:
-        occurred_at_or_failure = parse_occurred_at(details.occurred_at, now)
+        occurred_at_or_failure = parse_occurred_at(details.occurred_at, now, command)
         if isinstance(occurred_at_or_failure, Failure):
             usage_failures.append(occurred_at_or_failure)
         else:
@@ -252,11 +253,29 @@ def check_decision(decision: str | None) -> Failure | None:
     )
 
 
+def intervene_command(details: InterventionDetails) -> str:
+    """The start of a `goodall intervene` command for a failure to offer, without the text.
+
+    It carries the person's own --category and --decision when they are
+    well formed, so the example is theirs to copy, and plain capitalised
+    words where not. Trap: a placeholder like `<category>` must never be
+    offered, because a shell reads `<` as "read from this file", so pasting
+    it would fail confusingly or worse.
+    """
+    category = "CATEGORY"
+    if details.category is not None and records.IDENTIFIER_PATTERN.fullmatch(details.category):
+        category = details.category
+    decision = "DECISION"
+    if details.decision in records.DECISIONS:
+        decision = details.decision
+    return f"goodall intervene --category {category} --decision {decision}"
+
+
 # A time of day on its own, like 9:30 or 14:05:30.
 TIME_OF_DAY_PATTERN = re.compile(r"(\d{1,2}):(\d{2})(?::(\d{2}))?")
 
 
-def parse_occurred_at(typed: str, now: datetime) -> datetime | Failure:
+def parse_occurred_at(typed: str, now: datetime, command: str) -> datetime | Failure:
     """Turn what was typed after --occurred-at into a moment no later than `now`, or a usage failure.
 
     People think in their own clock, so a time without a zone is this Mac's
@@ -270,7 +289,8 @@ def parse_occurred_at(typed: str, now: datetime) -> datetime | Failure:
 
     A date on its own is refused rather than read as midnight, which would
     pretend to know the time. So is a moment after `now`: the schema says an
-    intervention is written down no earlier than it happened.
+    intervention is written down no earlier than it happened. `command` is
+    the start of the command a failure offers to copy (`intervene_command`).
     """
     local_now = now.astimezone()
     time_of_day = TIME_OF_DAY_PATTERN.fullmatch(typed)
@@ -295,22 +315,21 @@ def parse_occurred_at(typed: str, now: datetime) -> datetime | Failure:
             # Mac's local time, which is what a person typing it meant.
             moment = moment.astimezone()
     if moment is None:
-        return occurred_at_unreadable_failure()
+        return occurred_at_unreadable_failure(command)
     if moment > now:
-        return occurred_at_in_future_failure()
+        return occurred_at_in_future_failure(command)
     return moment.astimezone(UTC)
 
 
-def occurred_at_examples() -> tuple[str, ...]:
+def occurred_at_examples(command: str) -> tuple[str, ...]:
     """Commands showing the forms --occurred-at accepts, for a failure to offer."""
     return (
-        'goodall intervene --category <category> --decision <decision> --occurred-at 14:05 "What happened"',
-        'goodall intervene --category <category> --decision <decision> --occurred-at "2026-11-16 14:05" '
-        '"What happened"',
+        f'{command} --occurred-at 14:05 "What happened"',
+        f'{command} --occurred-at "2026-11-16 14:05" "What happened"',
     )
 
 
-def occurred_at_unreadable_failure() -> Failure:
+def occurred_at_unreadable_failure(command: str) -> Failure:
     """The failure for an --occurred-at goodall cannot read as a moment."""
     return Failure(
         kind="intervention_occurred_at_unreadable",
@@ -320,11 +339,11 @@ def occurred_at_unreadable_failure() -> Failure:
             "Give a time of day on this Mac's clock, such as 14:05 (the most recent 14:05), or a date and time, "
             "such as 2026-11-16 14:05. Leave --occurred-at out if it happened just now."
         ),
-        commands_to_try=occurred_at_examples(),
+        commands_to_try=occurred_at_examples(command),
     )
 
 
-def occurred_at_in_future_failure() -> Failure:
+def occurred_at_in_future_failure(command: str) -> Failure:
     """The failure for an --occurred-at later than now."""
     return Failure(
         kind="intervention_occurred_at_in_future",
@@ -334,7 +353,7 @@ def occurred_at_in_future_failure() -> Failure:
             "Check the date and time, and that this Mac's clock is right. A time without a date means the most "
             "recent one, on this Mac's clock."
         ),
-        commands_to_try=occurred_at_examples(),
+        commands_to_try=occurred_at_examples(command),
     )
 
 

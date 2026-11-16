@@ -629,3 +629,58 @@ def test_intervene_occurred_at_in_the_future_or_unreadable_is_a_usage_error_with
     flattened_error = " ".join(run.standard_error.split())
     assert "--occurred-at 14:05" in flattened_error
     assert eval_account.intervention_files() == []
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["intervene", "--category", "agent-limitation", "--decision", "modify"],
+        ["intervene", "--category", "agent-limitation", "--decision", "modify", "--occurred-at", "soon", "Stopped."],
+        ["intervene", "--decision", "modify", "Stopped it."],
+    ],
+)
+def test_every_command_offered_to_try_is_safe_to_paste_into_a_shell(
+    eval_account: EvalAccount, arguments: list[str]
+) -> None:
+    run = run_goodall(arguments)
+
+    try_lines = []
+    in_try_block = False
+    for line in run.standard_error.splitlines():
+        if line.startswith("Try   "):
+            in_try_block = True
+        elif not line.startswith("      "):
+            in_try_block = False
+        if in_try_block:
+            try_lines.append(line)
+    assert try_lines != []
+    for line in try_lines:
+        # < and > are redirections in a shell: a placeholder like <category>
+        # pasted as it stands would read or overwrite a file.
+        assert "<" not in line and ">" not in line, line
+        # An intervention needs both, so every example shows both.
+        assert "goodall intervene --category " in line
+        assert " --decision " in line
+
+
+def test_intervene_json_prints_one_document_with_the_id_the_path_and_whether_it_was_pushed(
+    eval_account: EvalAccount,
+) -> None:
+    eval_account.add_remote()
+
+    run = run_goodall(intervene_arguments("--json"))
+
+    assert run.exit_code == exit_codes.SUCCESS
+    assert run.standard_error == ""
+    [intervention_file] = eval_account.intervention_files()
+    document = json.loads(run.standard_output)
+    assert document == {
+        "record_type": "intervention",
+        "id": intervention_file.stem,
+        "path": str(intervention_file),
+        "committed": True,
+        "pushed": True,
+        "push_state": "pushed",
+        "warnings": [],
+        "failures": [],
+    }
