@@ -79,7 +79,7 @@ goodall writes, so it is JSON. Folder: `work-blocks/`.
 | `ended_at` | no | When it ended; `null` while it is still running. |
 | `end_state` | no | How it ended: `clean` (closed by `goodall stop`), `abnormal` (ended by something going wrong), or `inferred` (nobody closed it, so its end was taken from its last heartbeat). `null` while running. Set together with `ended_at`: both or neither. |
 | `machine.hostname` | yes | The machine's name, as observed. |
-| `machine.macos_version` | yes | As observed, for example `26.1`. |
+| `machine.macos_version` | no | As observed, for example `26.1`; `null` on a system that is not macOS. |
 | `machine.goodall_version` | yes | The goodall that wrote the record. |
 | `machine.claude_code_version` | no | `null` if Claude Code was not found. |
 | `claude_sessions` | yes | The Claude Code session ids of the Claude sessions that fell inside the work block; `[]` if none. |
