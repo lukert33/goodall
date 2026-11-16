@@ -1,7 +1,9 @@
 """Tests for the `goodall` command-line skeleton in goodall.cli.
 
-These call `main(argv)` directly and capture what it prints with the standard
-library, so they need no pytest fixtures.
+These call `main(argv, runner=FakeRunner())` directly and capture what it
+prints with the standard library, so they need no pytest fixtures. The fake
+runner has nothing scripted, so a command that tried to start a program
+would fail its test instead of running it.
 
 PLANNED_COMMANDS is the list of every command a user can run. When a command
 is added to the parser it must be added here too, or
@@ -13,6 +15,7 @@ import contextlib
 import io
 
 from goodall import cli, exit_codes
+from goodall.fake_runner import FakeRunner
 
 # Each entry is the words a user types after `goodall`. The hook command also
 # needs an event name, which `arguments_for` supplies.
@@ -46,7 +49,7 @@ def run_goodall(arguments: list[str]) -> tuple[int, str]:
     """Run goodall in-process and return its exit code and everything it printed."""
     captured_output = io.StringIO()
     with contextlib.redirect_stdout(captured_output), contextlib.redirect_stderr(captured_output):
-        exit_code = cli.main(arguments)
+        exit_code = cli.main(arguments, runner=FakeRunner())
     return exit_code, captured_output.getvalue()
 
 

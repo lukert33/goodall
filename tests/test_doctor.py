@@ -12,21 +12,46 @@ with colour off.
 
 import io
 import json
+import shutil
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
 
 from goodall import cli, exit_codes
+from goodall.fake_runner import FakeRunner
 from goodall.terminal import Terminal
 
+# The command the account check runs, by its full path (see goodall.program_checks).
+ACCOUNT_GROUPS_COMMAND = ["/usr/bin/id", "-Gn"]
 
-def run_goodall(arguments: list[str]) -> tuple[int, str, str]:
-    """Run goodall with a captured terminal; return the exit code, standard output and standard error."""
+# The groups a standard macOS user account belongs to.
+STANDARD_ACCOUNT_GROUPS = "staff everyone localaccounts _appserverusr com.apple.sharepoint.group.1\n"
+
+
+def healthy_runner() -> FakeRunner:
+    """A fake runner for a Mac where every program is installed and the account is a standard one.
+
+    git is real (FakeRunner's default), so the record repo check asks real
+    git about a real folder.
+    """
+    runner = FakeRunner(installed_programs=["git", "gh", "op"])
+    runner.answer(ACCOUNT_GROUPS_COMMAND, standard_output=STANDARD_ACCOUNT_GROUPS)
+    return runner
+
+
+def run_goodall(arguments: list[str], runner: FakeRunner | None = None) -> tuple[int, str, str]:
+    """Run goodall with a captured terminal; return the exit code, standard output and standard error.
+
+    Without a `runner`, goodall gets `healthy_runner()`.
+    """
+    if runner is None:
+        runner = healthy_runner()
     standard_output = io.StringIO()
     standard_error = io.StringIO()
     terminal = Terminal(standard_output=standard_output, standard_error=standard_error)
-    exit_code = cli.main(arguments, terminal=terminal)
+    exit_code = cli.main(arguments, terminal=terminal, runner=runner)
     return exit_code, standard_output.getvalue(), standard_error.getvalue()
 
 
@@ -89,6 +114,8 @@ def healthy_account(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> EvalAcco
         folder.mkdir(parents=True)
     account.settings_file.write_text(account.settings_text())
     account.eval_config_file.write_text(VALID_EVAL_CONFIG_TEXT)
+    # The record repo is a real git repository, because real git checks it.
+    subprocess.run(["git", "init", "--quiet", str(account.record_repo)], check=True, capture_output=True)
     monkeypatch.setenv("HOME", str(home_folder))
     monkeypatch.setenv("GOODALL_CONFIG_DIR", str(account.config_directory))
     # Doctor must not depend on, or write to, the folder it is run from.
@@ -106,7 +133,18 @@ Settings
   pass  This account's contributor is in the roster
   pass  The main workstream is one of the eval's workstreams
 
-7 passed, 0 warned, 0 failed, 0 skipped
+Tools
+  pass  git is installed
+  pass  gh is installed
+  pass  The secrets manager's command is installed
+
+Eval account
+  pass  This macOS user account is a standard account, not an administrator
+
+Record repo
+  pass  The record repo folder is a git repository
+
+12 passed, 0 warned, 0 failed, 0 skipped
 """
 
 
@@ -145,7 +183,20 @@ Settings
   skip  The main workstream is one of the eval's workstreams
         Waiting for: Local settings are found
 
-0 passed, 0 warned, 1 failed, 6 skipped
+Tools
+  pass  git is installed
+  pass  gh is installed
+  skip  The secrets manager's command is installed
+        Waiting for: Local settings are found
+
+Eval account
+  pass  This macOS user account is a standard account, not an administrator
+
+Record repo
+  skip  The record repo folder is a git repository
+        Waiting for: Local settings are found
+
+3 passed, 0 warned, 1 failed, 8 skipped
 """
 
 
@@ -190,6 +241,11 @@ ALL_CHECK_IDS = [
     "settings.eval_config_valid",
     "settings.contributor_in_roster",
     "settings.main_workstream_known",
+    "tools.git_installed",
+    "tools.gh_installed",
+    "tools.secrets_manager_installed",
+    "eval_account.standard_account",
+    "record_repo.is_git_repository",
 ]
 
 
@@ -198,7 +254,7 @@ def test_healthy_setup_as_json_gives_the_same_results(healthy_account: EvalAccou
 
     assert exit_code == exit_codes.SUCCESS
     assert document["schema_version"] == 1
-    assert document["summary"] == {"passed": 7, "warned": 0, "failed": 0, "skipped": 0}
+    assert document["summary"] == {"passed": 12, "warned": 0, "failed": 0, "skipped": 0}
     checks = document["checks"]
     assert isinstance(checks, list)
     assert checks[0] == {
@@ -221,7 +277,7 @@ def test_missing_local_settings_as_json_names_what_each_skip_waited_for(settings
     exit_code, document = doctor_json()
 
     assert exit_code == exit_codes.ERROR
-    assert document["summary"] == {"passed": 0, "warned": 0, "failed": 1, "skipped": 6}
+    assert document["summary"] == {"passed": 3, "warned": 0, "failed": 1, "skipped": 8}
     checks = document["checks"]
     assert isinstance(checks, list)
     failed_check = checks[0]
@@ -229,10 +285,15 @@ def test_missing_local_settings_as_json_names_what_each_skip_waited_for(settings
     assert [failure["kind"] for failure in failed_check["failures"]] == ["local_settings_missing"]
     assert "goodall onboard" in failed_check["next_step"]
     assert MISSING_CONFIG_DIRECTORY in failed_check["detail"]
-    for skipped_check in checks[1:]:
-        assert skipped_check["status"] == "skip"
-        assert skipped_check["waiting_for"] == "settings.local_settings_found"
-        assert skipped_check["failures"] == []
+    # Every check that needs to know this account's eval waits for local
+    # settings; the checks that do not (git, gh, the account) still run.
+    for check in checks[1:]:
+        if check["id"] in ["tools.git_installed", "tools.gh_installed", "eval_account.standard_account"]:
+            assert check["status"] == "pass"
+            continue
+        assert check["status"] == "skip"
+        assert check["waiting_for"] == "settings.local_settings_found"
+        assert check["failures"] == []
 
 
 def test_invalid_local_settings_fail_once_and_name_every_problem(healthy_account: EvalAccount) -> None:
@@ -250,7 +311,7 @@ def test_invalid_local_settings_fail_once_and_name_every_problem(healthy_account
     assert "favourite_colour" in standard_output
     assert standard_output.count("        Next: ") == 2
     assert "Waiting for: Local settings are valid" in standard_output
-    assert standard_output.endswith("1 passed, 0 warned, 1 failed, 5 skipped\n")
+    assert standard_output.endswith("4 passed, 0 warned, 1 failed, 7 skipped\n")
 
 
 def test_relative_settings_folder_override_fails_the_found_check(
@@ -283,13 +344,19 @@ def test_missing_record_repo_skips_the_eval_config_but_still_checks_the_log_dire
         "settings.eval_config_valid": "skip",
         "settings.contributor_in_roster": "skip",
         "settings.main_workstream_known": "skip",
+        "tools.git_installed": "pass",
+        "tools.gh_installed": "pass",
+        "tools.secrets_manager_installed": "pass",
+        "eval_account.standard_account": "pass",
+        "record_repo.is_git_repository": "skip",
     }
     checks = document["checks"]
     assert isinstance(checks, list)
     # The checks two steps away name the record repo, the real cause, not
     # the eval config check they depend on directly.
-    for check in checks[4:]:
-        assert check["waiting_for"] == "settings.record_repo_found"
+    for check in checks:
+        if check["status"] == "skip":
+            assert check["waiting_for"] == "settings.record_repo_found"
 
 
 def test_unreachable_log_directory_is_a_warning_with_a_next_step_and_exits_0(healthy_account: EvalAccount) -> None:
@@ -303,7 +370,7 @@ def test_unreachable_log_directory_is_a_warning_with_a_next_step_and_exits_0(hea
     assert exit_code == exit_codes.SUCCESS
     assert "  warn  The log directory can be written to\n        Not recording:" in standard_output
     assert "        Next: If the log directory is on an external drive, connect it." in standard_output
-    assert standard_output.endswith("6 passed, 1 warned, 0 failed, 0 skipped\n")
+    assert standard_output.endswith("11 passed, 1 warned, 0 failed, 0 skipped\n")
 
     json_exit_code, document = doctor_json()
     assert json_exit_code == exit_code
@@ -330,7 +397,7 @@ def test_contributor_and_main_workstream_are_reported_as_separate_checks(healthy
     exit_code, document = doctor_json()
 
     assert exit_code == exit_codes.ERROR
-    assert document["summary"] == {"passed": 5, "warned": 0, "failed": 2, "skipped": 0}
+    assert document["summary"] == {"passed": 10, "warned": 0, "failed": 2, "skipped": 0}
     checks = document["checks"]
     assert isinstance(checks, list)
     assert [failure["kind"] for failure in checks[5]["failures"]] == ["contributor_not_in_roster"]
@@ -356,8 +423,7 @@ def test_every_failure_and_warning_has_a_next_step_and_exit_codes_agree(
     elif break_setup == "break local settings":
         healthy_account.settings_file.write_text("schema_version = = 1\n")
     elif break_setup == "remove record repo":
-        healthy_account.eval_config_file.unlink()
-        healthy_account.record_repo.rmdir()
+        shutil.rmtree(healthy_account.record_repo)
     elif break_setup == "unplug log directory":
         healthy_account.log_directory.rmdir()
     elif break_setup == "break eval config":
