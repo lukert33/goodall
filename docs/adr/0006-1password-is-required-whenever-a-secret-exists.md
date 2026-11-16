@@ -1,0 +1,3 @@
+# 1Password is required whenever a secret exists
+
+Every credential goodall refers to must be a 1Password reference (`op://vault/item/field`), resolved at the moment of use; raw secret values are rejected as input and never written to a file. Supporting several secrets managers, or allowing plain values with a warning, would lower the barrier for small teams, but the reference pattern is the strongest guarantee goodall offers that a secret cannot end up in a file, a shell history or a transcript an agent can read. The requirement applies only when a secret exists, so an eval with no credentials runs without 1Password.
