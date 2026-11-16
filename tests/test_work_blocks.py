@@ -576,3 +576,54 @@ def test_an_end_interrupted_after_its_record_was_saved_is_finished_by_the_next_c
     [record] = eval_account.work_block_records()
     assert record["ended_at"] == "2026-11-16T10:30:00Z"
     assert record["end_state"] == "clean"
+
+
+# ---------------------------------------------------------------------------
+# goodall status --json, for agents
+# ---------------------------------------------------------------------------
+
+
+def test_status_json_while_a_work_block_is_active_describes_it(eval_account: EvalAccount) -> None:
+    run_goodall(eval_account, ["start", "--workstream", "engineering"])
+    work_blocks.record_heartbeat(eval_account.log_directory, MONDAY_MORNING + timedelta(minutes=25), CLAUDE_SESSION)
+    eval_account.clock.advance(timedelta(minutes=30))
+
+    status = run_goodall(eval_account, ["status", "--json"])
+
+    assert status.exit_code == exit_codes.SUCCESS
+    assert status.standard_error == ""
+    document = json.loads(status.standard_output)
+    running = work_blocks.read_marker(eval_account.log_directory)
+    assert isinstance(running, work_blocks.RunningWorkBlock)
+    assert document == {
+        "work_block_active": True,
+        "eval": {"name": "goodall-pilot"},
+        "contributor": {"id": "ada-lovelace", "display_name": "Ada Lovelace", "main_workstream": "research"},
+        "work_block": {
+            "id": running.id,
+            "workstream": "engineering",
+            "started_at": "2026-11-16T09:30:00Z",
+            "last_heartbeat_at": "2026-11-16T09:55:00Z",
+            "claude_sessions": [CLAUDE_SESSION],
+        },
+        "ended_work_blocks": [],
+        "warnings": [],
+        "failures": [],
+    }
+
+
+def test_status_json_reports_a_work_block_it_closed_and_recorded(eval_account: EvalAccount) -> None:
+    run_goodall(eval_account, ["start"])
+    eval_account.clock.now = datetime(2026, 11, 17, 9, 0, tzinfo=UTC)
+
+    status = run_goodall(eval_account, ["status", "--json"])
+
+    assert status.exit_code == exit_codes.ERROR
+    document = json.loads(status.standard_output)
+    assert document["work_block_active"] is False
+    assert document["work_block"] is None
+    [ended] = document["ended_work_blocks"]
+    assert ended["workstream"] == "research"
+    assert ended["end_state"] == "inferred"
+    assert ended["ended_at"] == "2026-11-16T09:30:00Z"
+    assert ended["recorded"] is True

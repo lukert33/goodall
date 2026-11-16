@@ -134,8 +134,17 @@ def test_status_json_reports_the_same_failure_on_standard_output(empty_config_di
     # to decide whether to proceed, and failures is always a list, because
     # a settings file can have several things wrong with it at once. The
     # eval and the contributor are null until goodall has read them.
-    assert set(document) == {"work_block_active", "eval", "contributor", "failures"}
+    assert set(document) == {
+        "work_block_active",
+        "eval",
+        "contributor",
+        "work_block",
+        "ended_work_blocks",
+        "warnings",
+        "failures",
+    }
     assert document["work_block_active"] is False
+    assert document["work_block"] is None
     assert document["eval"] is None
     assert document["contributor"] is None
     assert len(document["failures"]) == 1
@@ -489,7 +498,7 @@ def test_valid_eval_reports_the_eval_the_contributor_and_no_work_block(eval_acco
 
     exit_code, standard_output, standard_error = run_goodall(["status"])
 
-    # Exit 0 is reserved for an active work block, which cannot exist yet.
+    # Exit 0 is reserved for an active work block, and none was started.
     assert exit_code == exit_codes.ERROR
     assert standard_error == ""
     assert standard_output == (
@@ -512,6 +521,9 @@ def test_valid_eval_as_json_gives_the_same_facts(eval_account: EvalAccount) -> N
         "work_block_active": False,
         "eval": {"name": "goodall-pilot"},
         "contributor": {"id": "ada-lovelace", "display_name": "Ada Lovelace", "main_workstream": "research"},
+        "work_block": None,
+        "ended_work_blocks": [],
+        "warnings": [],
         "failures": [],
     }
 
