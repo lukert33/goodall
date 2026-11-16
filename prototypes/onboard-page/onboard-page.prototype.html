@@ -1,0 +1,526 @@
+<!doctype html>
+<!--
+PROTOTYPE. Throwaway. Not production code and not wired to anything.
+
+Second round, after the owner's reaction to three-variants.prototype.html:
+  - the checklist version won (the whole journey, including steps outside the page);
+  - one button at the end, no choice of how to save;
+  - example names say "goodall", not a sponsor's name;
+  - a restrained field-notebook theme: khaki, forest, a pair of binoculars.
+
+Question this round answers (wayfinder tickets goodall-xes.4 and goodall-xes.6):
+  "Is a single 'Finish setup' button workable with no local server, and does
+   this look and read right for a researcher who is not at home in a terminal?"
+
+How the real thing would work, with nothing listening on the network:
+  1. The person runs `goodall onboard`. Goodall writes this page with a
+     one-time code inside it, opens it in the default browser, and waits.
+  2. "Finish setup" hands the browser one small file to save: the answers,
+     plus the one-time code.
+  3. The waiting `goodall onboard` notices that file in the Downloads folder,
+     checks the code, checks the folders, writes everything, and reports in
+     the Terminal window. No second command.
+What the page cannot do without a server: show whether that last step worked.
+The result appears in Terminal, and the page says so.
+
+Open this file by double-clicking it. No build, no server, no network.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>goodall setup (prototype)</title>
+<style>
+  :root {
+    /* Khaki paper, forest ink, red-earth for trouble. */
+    --paper: #efe8d6; --paper-deep: #e4dac2; --card: #fbf8ef; --ink: #2a251c; --muted: #6b6455;
+    --line: #cfc5aa; --forest: #2f4a39; --forest-ink: #f6f2e4; --canopy: #dde6d2;
+    --earth: #9a4a22; --earth-soft: #f3dfd0; --ochre: #8a6412; --ochre-soft: #f4e8c4;
+    --code-bg: #e9e1cb; --radius: 10px;
+    --serif: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      /* The same forest at night. */
+      --paper: #171b16; --paper-deep: #111410; --card: #20261f; --ink: #ece6d3; --muted: #a8a28e;
+      --line: #3a4236; --forest: #9ccaa9; --forest-ink: #13201a; --canopy: #263326;
+      --earth: #e8a27e; --earth-soft: #3b261c; --ochre: #e2c877; --ochre-soft: #36301a;
+      --code-bg: #2a3027;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--paper); color: var(--ink); font: 16px/1.55 var(--sans); padding-bottom: 96px; }
+  h1, h2, h3, .title { font-family: var(--serif); }
+  h1 { font-size: 1.9rem; line-height: 1.2; margin: 0 0 .35rem; font-weight: 600; }
+  h3 { font-size: 1.05rem; margin: 0 0 .5rem; }
+  p { margin: 0 0 .75rem; }
+  .muted { color: var(--muted); }
+  .small { font-size: .875rem; }
+  code, pre, .mono { font-family: var(--mono); font-size: .85rem; }
+  code { background: var(--code-bg); padding: .1em .35em; border-radius: 4px; }
+  .banner { background: var(--ochre-soft); color: var(--ochre); font-size: .8125rem; padding: 6px 16px; text-align: center; }
+
+  /* Masthead: a strip of far hills, and the binoculars. */
+  .masthead { background: var(--paper-deep); border-bottom: 1px solid var(--line); position: relative; overflow: hidden; }
+  .masthead svg.hills { position: absolute; left: 0; right: 0; bottom: 0; width: 100%; height: 100%; opacity: .55; }
+  .masthead .inner { position: relative; max-width: 780px; margin: 0 auto; padding: 22px 20px 20px; display: flex; gap: 14px; align-items: center; }
+  .masthead .mark { color: var(--forest); flex: none; }
+  .masthead .wordmark { font-family: var(--serif); font-size: 1.35rem; font-weight: 600; letter-spacing: .01em; }
+  .masthead .tagline { color: var(--muted); font-size: .875rem; }
+
+  .wrap { max-width: 780px; margin: 30px auto; padding: 0 20px; }
+  .stage { margin: 30px 0 10px; display: flex; align-items: center; gap: 10px; font-size: .78rem; letter-spacing: .09em; text-transform: uppercase; color: var(--muted); }
+  .stage::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+  .stage .num { font-family: var(--serif); font-size: 1rem; letter-spacing: 0; color: var(--forest); text-transform: none; }
+
+  .item { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); margin-bottom: 10px; }
+  .head { display: flex; gap: 12px; align-items: center; padding: 14px 16px; cursor: pointer; width: 100%; text-align: left; border: none; background: none; border-radius: var(--radius); color: var(--ink); font: inherit; }
+  .head .title { font-weight: 600; font-size: 1.05rem; flex: 0 1 auto; }
+  .head .summary { color: var(--muted); font-size: .875rem; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; }
+  .head .chevron { color: var(--muted); flex: none; transition: transform .15s; }
+  .head[aria-expanded="true"] .chevron { transform: rotate(90deg); }
+  .body { padding: 4px 16px 16px; border-top: 1px solid var(--line); }
+  .tick { display: flex; gap: 12px; align-items: flex-start; padding: 13px 16px; cursor: pointer; }
+  .tick input { margin-top: 5px; accent-color: var(--forest); width: 16px; height: 16px; }
+  .tick strong { font-family: var(--serif); font-size: 1.05rem; }
+
+  .badge { flex: none; display: inline-block; font-size: .72rem; letter-spacing: .04em; border-radius: 999px; padding: 2px 10px; text-transform: uppercase; }
+  .badge.ok { background: var(--canopy); color: var(--forest); }
+  .badge.todo { background: var(--ochre-soft); color: var(--ochre); }
+
+  .choice { display: flex; gap: 12px; flex-wrap: wrap; margin: 18px 0 4px; }
+  .choice label { flex: 1 1 240px; border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; cursor: pointer; background: var(--card); }
+  .choice label.on { border-color: var(--forest); background: var(--canopy); }
+  .choice input { margin-right: 6px; accent-color: var(--forest); }
+
+  label.field { display: block; margin: 0 0 16px; }
+  .name { display: block; font-weight: 600; margin-bottom: 2px; }
+  .help { display: block; color: var(--muted); font-size: .875rem; margin-bottom: 6px; }
+  input[type=text], textarea, select { width: 100%; font: inherit; color: var(--ink); background: var(--paper); border: 1px solid var(--line); border-radius: 8px; padding: 9px 11px; }
+  input[type=text]::placeholder { color: var(--muted); opacity: .75; }
+  textarea { min-height: 120px; resize: vertical; }
+  input:focus, textarea:focus, select:focus, button:focus-visible { outline: 2px solid var(--forest); outline-offset: 1px; }
+  .problem { color: var(--earth); font-size: .875rem; margin-top: 4px; }
+  .chips { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+  .chip { background: var(--canopy); color: var(--forest); border-radius: 999px; padding: 3px 6px 3px 12px; font-size: .875rem; display: inline-flex; align-items: center; gap: 4px; }
+  .chip button { border: none; background: none; padding: 0 6px; color: inherit; opacity: .7; cursor: pointer; font: inherit; }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  button.plain { font: inherit; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--ink); padding: 8px 14px; cursor: pointer; }
+  .note { background: var(--canopy); border-radius: 8px; padding: 10px 12px; font-size: .875rem; margin-bottom: 14px; }
+  .note.caution { background: var(--ochre-soft); color: var(--ochre); }
+  .note.trouble { background: var(--earth-soft); color: var(--earth); }
+  ul.plain { margin: .35rem 0 0; padding-left: 1.1rem; }
+
+  .finish { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 20px; }
+  .filelist { width: 100%; border-collapse: collapse; font-size: .875rem; margin-bottom: 16px; }
+  .filelist td { padding: 7px 8px; border-top: 1px solid var(--line); vertical-align: top; }
+  .filelist td:first-child { white-space: nowrap; color: var(--muted); }
+  .filelist td.path { font-family: var(--mono); font-size: .82rem; word-break: break-all; }
+  button.finish-button { font: inherit; font-weight: 600; font-size: 1.05rem; border: none; border-radius: 9px; background: var(--forest); color: var(--forest-ink); padding: 12px 22px; cursor: pointer; }
+  button.finish-button:disabled { opacity: .45; cursor: not-allowed; }
+  .handed { margin-top: 16px; border-left: 3px solid var(--forest); padding: 4px 0 4px 14px; }
+
+  /* The prototype bar: deliberately not part of the design under review. */
+  .protobar { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); background: #111; color: #fff; border-radius: 999px; padding: 6px 8px; display: flex; gap: 6px; align-items: center; box-shadow: 0 6px 24px rgba(0,0,0,.35); font-size: .875rem; z-index: 10; white-space: nowrap; }
+  .protobar button { background: #2c2c2c; color: #fff; border: none; border-radius: 999px; padding: 6px 12px; font: inherit; cursor: pointer; }
+  .protobar span { padding: 0 8px; color: #bbb; }
+</style>
+</head>
+<body>
+<div class="banner">Prototype: nothing here is saved or sent anywhere. The bar at the bottom fills in sample answers.</div>
+
+<header class="masthead">
+  <svg class="hills" viewBox="0 0 800 90" preserveAspectRatio="none" aria-hidden="true">
+    <path d="M0 70 C 90 40, 150 52, 230 44 S 380 20, 470 38 S 640 62, 800 30 L800 90 L0 90 Z" fill="var(--line)" opacity=".55"/>
+    <path d="M0 82 C 120 58, 210 74, 320 62 S 520 50, 620 66 S 740 74, 800 60 L800 90 L0 90 Z" fill="var(--forest)" opacity=".22"/>
+  </svg>
+  <div class="inner">
+    <svg class="mark" width="46" height="34" viewBox="0 0 46 34" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <!-- a pair of binoculars, seen from behind -->
+      <circle cx="11" cy="23" r="9"/><circle cx="35" cy="23" r="9"/>
+      <path d="M8 14.5 L11 4 h6 l2 9"/><path d="M38 14.5 L35 4 h-6 l-2 9"/>
+      <path d="M19 13 h8"/><path d="M20 21 h6"/>
+    </svg>
+    <div>
+      <div class="wordmark">goodall</div>
+      <div class="tagline">For observing interactions between apes and their tools.</div>
+    </div>
+  </div>
+</header>
+
+<div id="app"></div>
+<div class="protobar"><span>prototype</span><button data-action="sample">Fill sample answers</button><button data-action="clear">Clear</button></div>
+
+<script>
+// ---------------------------------------------------------------------------
+// The portable part: answers, checks on them, and the answers file they become.
+// No page code reaches in here; the page only calls these functions.
+// ---------------------------------------------------------------------------
+
+function emptyAnswers() {
+  return {
+    mode: "start",                 // "start" a new eval, or "join" one that exists
+    evalName: "",
+    workstreams: ["engineering", "research", "go-to-market"],
+    construct: "",
+    displayName: "",
+    mainWorkstream: "engineering",
+    accountOnly: false,
+    recordRepoPath: "",
+    recordRemote: "",
+    logDirectory: "",
+    secretsManager: "1password",
+    usesApiKeys: false,
+    references: {}                 // workstream -> secret reference
+  };
+}
+
+function sampleAnswers() {
+  return {
+    mode: "start",
+    evalName: "goodall-pilot",
+    workstreams: ["engineering", "research", "go-to-market", "operations", "design"],
+    construct: "What fraction of the design, engineering and go-to-market work needed to reach first recurring revenue can be delegated to AI, and which human interventions are indispensable?",
+    displayName: "Ada Lovelace",
+    mainWorkstream: "research",
+    accountOnly: true,
+    recordRepoPath: "~/evals/goodall-pilot-records",
+    recordRemote: "https://github.com/your-org/goodall-pilot-records.git",
+    logDirectory: "/Volumes/EvalLogs/goodall-pilot",
+    secretsManager: "1password",
+    usesApiKeys: true,
+    references: { engineering: "op://Eval/anthropic-engineering/credential", research: "op://Eval/anthropic-research/credential" }
+  };
+}
+
+function contributorId(displayName) {
+  return displayName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
+function variableNameFor(workstream) {
+  return "ANTHROPIC_API_KEY_" + workstream.toUpperCase().replace(/[^A-Z0-9]+/g, "_");
+}
+
+function looksLikeAReference(value) {
+  // 1Password references are op://vault/item/field. Anything else is refused,
+  // because it might be the secret itself.
+  return /^op:\/\/[^\/\s]+\/[^\/\s]+\/[^\/\s]+$/.test(value.trim());
+}
+
+function looksLikeAFolder(value) {
+  const trimmed = value.trim();
+  return trimmed.startsWith("/") || trimmed.startsWith("~/");
+}
+
+// Returns { fieldName: "what is wrong and what to do" } for every problem.
+function problemsIn(answers) {
+  const problems = {};
+  if (answers.mode === "start") {
+    if (!answers.evalName.trim()) problems.evalName = "Give the eval a short name, such as goodall-pilot.";
+    else if (!/^[a-z0-9][a-z0-9-]*$/.test(answers.evalName.trim())) problems.evalName = "Use lowercase letters, numbers and hyphens only.";
+    if (answers.workstreams.length === 0) problems.workstreams = "Add at least one workstream.";
+    if (!answers.construct.trim()) problems.construct = "Write the question this eval sets out to measure. A sentence or two is enough to start.";
+  }
+  if (!answers.displayName.trim()) problems.displayName = "Enter the name that should appear beside your work.";
+  if (!answers.accountOnly) problems.accountOnly = "Goodall needs a macOS user account used for this eval and nothing else. Create one first, then tick this.";
+  if (!answers.recordRepoPath.trim()) problems.recordRepoPath = "Say where your copy of the record repo is, or will be.";
+  else if (!looksLikeAFolder(answers.recordRepoPath)) problems.recordRepoPath = "Give the full folder path, starting with / or ~/.";
+  if (answers.mode === "join" && !answers.recordRemote.trim()) problems.recordRemote = "Paste the record repo's address. Whoever started the eval can send it to you.";
+  if (!answers.logDirectory.trim()) problems.logDirectory = "Say which folder raw records should go in.";
+  else if (!looksLikeAFolder(answers.logDirectory)) problems.logDirectory = "Give the full folder path, starting with / or ~/.";
+  if (answers.usesApiKeys) {
+    for (const workstream of answers.workstreams) {
+      const value = (answers.references[workstream] || "").trim();
+      if (value && !looksLikeAReference(value)) {
+        problems["reference:" + workstream] = "This is not a 1Password reference. Paste the reference (op://vault/item/field), never the key itself.";
+      }
+    }
+  }
+  return problems;
+}
+
+function tomlString(value) { return '"' + String(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"'; }
+
+// ONE_TIME_CODE: the real page has this written into it by `goodall onboard`,
+// which then accepts only an answers file that carries the same code.
+const ONE_TIME_CODE = "prototype-4f9c2a";
+
+function answersFile(answers) {
+  const lines = [];
+  lines.push("# goodall answers file, written by the setup page.");
+  lines.push("# It contains no secrets, only references into your secrets manager.");
+  lines.push("");
+  lines.push("one_time_code = " + tomlString(ONE_TIME_CODE));
+  lines.push("mode = " + tomlString(answers.mode));
+  lines.push("");
+  if (answers.mode === "start") {
+    lines.push("[eval]");
+    lines.push("name = " + tomlString(answers.evalName.trim()));
+    lines.push("workstreams = [" + answers.workstreams.map(tomlString).join(", ") + "]");
+    lines.push('construct = """');
+    lines.push(answers.construct.trim());
+    lines.push('"""');
+    lines.push("");
+  }
+  lines.push("[contributor]");
+  lines.push("id = " + tomlString(contributorId(answers.displayName)));
+  lines.push("display_name = " + tomlString(answers.displayName.trim()));
+  lines.push("main_workstream = " + tomlString(answers.mainWorkstream));
+  lines.push("");
+  lines.push("[local]");
+  lines.push("record_repo = " + tomlString(answers.recordRepoPath.trim()));
+  if (answers.recordRemote.trim()) lines.push("record_remote = " + tomlString(answers.recordRemote.trim()));
+  lines.push("log_directory = " + tomlString(answers.logDirectory.trim()));
+  lines.push("");
+  lines.push("[secrets]");
+  lines.push("manager = " + tomlString(answers.secretsManager));
+  if (answers.usesApiKeys) {
+    const entries = answers.workstreams
+      .map(workstream => [workstream, (answers.references[workstream] || "").trim()])
+      .filter(pair => pair[1]);
+    if (entries.length) {
+      lines.push("");
+      lines.push("[secrets.references]");
+      for (const [workstream, reference] of entries) lines.push(variableNameFor(workstream) + " = " + tomlString(reference));
+    }
+  }
+  return lines.join("\n") + "\n";
+}
+
+// What goodall would write once it has the answers.
+function filesToWrite(answers) {
+  const repo = answers.recordRepoPath.trim() || "<record repo>";
+  const files = [];
+  if (answers.mode === "start") {
+    files.push(["create", repo + "/eval.toml", "eval config: name, roster, workstreams"]);
+    files.push(["create", repo + "/CONSTRUCT.md", "the construct"]);
+    files.push(["create", repo + "/.env.shared", "shared env file: telemetry switches"]);
+  } else {
+    files.push(["change", repo + "/eval.toml", "eval config: adds you to the roster"]);
+  }
+  files.push(["create", "~/.config/goodall/local-settings.toml", "local settings"]);
+  files.push(["create", "~/.config/goodall/.env", "env file: secret references only"]);
+  files.push(["change", "~/.claude/settings.json", "adds goodall's hooks, keeps yours"]);
+  return files;
+}
+
+// ---------------------------------------------------------------------------
+// The page. Throwaway.
+// ---------------------------------------------------------------------------
+
+let answers = emptyAnswers();
+let openItem = "";
+let ticked = { account: false, manager: false, repo: false };   // steps done outside this page
+let handedOver = false;
+
+function escapeHtml(text) {
+  return String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+function problemLine(field) {
+  const problem = problemsIn(answers)[field];
+  return '<div class="problem" data-problem="' + field + '">' + (problem ? escapeHtml(problem) : "") + "</div>";
+}
+
+function textField(field, name, help, placeholder) {
+  return '<label class="field"><span class="name">' + name + '</span><span class="help">' + help + "</span>" +
+    '<input type="text" data-field="' + field + '" value="' + escapeHtml(answers[field]) + '" placeholder="' + escapeHtml(placeholder || "") + '">' +
+    problemLine(field) + "</label>";
+}
+
+function modeField() {
+  const option = (value, title, text) =>
+    '<label class="' + (answers.mode === value ? "on" : "") + '"><input type="radio" name="mode" data-action="mode" value="' + value + '"' +
+    (answers.mode === value ? " checked" : "") + "><strong>" + title + '</strong><div class="small muted">' + text + "</div></label>";
+  return '<div class="choice">' +
+    option("start", "I am starting a new eval", "You will name it, list its workstreams and write its construct.") +
+    option("join", "I am joining an eval", "Someone else started it. You only set up your own macOS user account.") + "</div>";
+}
+
+function workstreamsField() {
+  const chips = answers.workstreams.map((workstream, index) =>
+    '<span class="chip">' + escapeHtml(workstream) + '<button title="Remove" data-action="remove-workstream" data-index="' + index + '">×</button></span>').join("");
+  return '<div class="field" style="margin-bottom:16px"><span class="name">Workstreams</span>' +
+    '<span class="help">The divisions of the work, used to attribute effort and cost. You can change these later.</span>' +
+    '<div class="chips">' + chips + '</div><div class="row"><input type="text" id="new-workstream" placeholder="Add a workstream" style="max-width:240px">' +
+    '<button class="plain" data-action="add-workstream">Add</button></div>' + problemLine("workstreams") + "</div>";
+}
+
+function constructField() {
+  return '<label class="field"><span class="name">The construct</span><span class="help">The question this eval sets out to measure, written before the work starts. You can refine it later; its history is kept.</span>' +
+    '<textarea data-field="construct">' + escapeHtml(answers.construct) + "</textarea>" + problemLine("construct") + "</label>";
+}
+
+function mainWorkstreamField() {
+  if (answers.mode === "join") {
+    return textField("mainWorkstream", "Your main workstream", "Type one of the eval's workstreams. Goodall checks it against the eval config.", "engineering");
+  }
+  const options = answers.workstreams.map(workstream =>
+    '<option value="' + escapeHtml(workstream) + '"' + (workstream === answers.mainWorkstream ? " selected" : "") + ">" + escapeHtml(workstream) + "</option>").join("");
+  return '<label class="field"><span class="name">Your main workstream</span><span class="help">You choose a workstream each time you start a work block. This is only the default.</span>' +
+    '<select data-field="mainWorkstream">' + options + "</select></label>";
+}
+
+function accountField() {
+  return '<label class="field" style="display:flex;gap:10px;align-items:flex-start"><input type="checkbox" data-field="accountOnly"' + (answers.accountOnly ? " checked" : "") +
+    ' style="margin-top:5px;accent-color:var(--forest)"><span><span class="name">This macOS user account is used for this eval and nothing else</span>' +
+    '<span class="help">Goodall records everything this account does with Claude Code. One macOS user account holds one eval.</span>' +
+    problemLine("accountOnly") + "</span></label>";
+}
+
+function referencesField() {
+  if (!answers.usesApiKeys) return "";
+  const rows = answers.workstreams.map(workstream =>
+    '<label class="field"><span class="name mono">' + variableNameFor(workstream) + '</span>' +
+    '<input type="text" class="mono" data-reference="' + escapeHtml(workstream) + '" value="' + escapeHtml(answers.references[workstream] || "") + '" placeholder="op://vault/item/field">' +
+    problemLine("reference:" + workstream) + "</label>").join("");
+  return '<div class="note">Paste <strong>references</strong>, not keys. A reference names where a key lives in your secrets manager; goodall never sees the key itself. Leave a workstream blank if it will not use an API key.</div>' + rows;
+}
+
+function secretsFields() {
+  return '<label class="field"><span class="name">Secrets manager</span><span class="help">Where your keys are kept. 1Password is the only one goodall supports today.</span>' +
+    '<select data-field="secretsManager"><option value="1password" selected>1Password</option></select></label>' +
+    '<label class="field" style="display:flex;gap:10px;align-items:flex-start"><input type="checkbox" data-action="uses-api-keys"' + (answers.usesApiKeys ? " checked" : "") +
+    ' style="margin-top:5px;accent-color:var(--forest)"><span><span class="name">Some of my work blocks will be billed to API keys</span>' +
+    '<span class="help">Leave this off if you only use a Claude subscription. You can add keys later.</span></span></label>' +
+    referencesField();
+}
+
+function locationFields() {
+  return textField("recordRepoPath", "Record repo folder", "Where your copy of the eval's record repo is, or should be put.", "~/evals/goodall-pilot-records") +
+    textField("recordRemote", answers.mode === "join" ? "Record repo address" : "Record repo address (optional)",
+      answers.mode === "join" ? "The address to copy the record repo from." : "If you have already created an empty repository to hold the records, paste its address.", "https://github.com/your-org/goodall-pilot-records.git") +
+    textField("logDirectory", "Log directory", "The folder for raw records: transcripts and telemetry. It can be on an external drive.", "/Volumes/EvalLogs/goodall-pilot") +
+    '<div class="note caution">This page cannot look at your Mac, so it cannot tell whether these folders exist. Goodall checks them when you finish, and tells you in Terminal.</div>';
+}
+
+function itemSummary(id) {
+  if (id === "eval") return answers.evalName ? answers.evalName + " · " + answers.workstreams.length + " workstreams" : "";
+  if (id === "construct") return answers.construct;
+  if (id === "who") return answers.displayName ? answers.displayName + " · " + answers.mainWorkstream : "";
+  if (id === "where") return answers.recordRepoPath && answers.logDirectory ? answers.recordRepoPath + " · " + answers.logDirectory : "";
+  if (id === "secrets") return answers.usesApiKeys ? "1Password · API keys by reference" : "1Password · subscription only";
+  return "";
+}
+
+function itemIsDone(fields) {
+  const problems = problemsIn(answers);
+  for (const field of fields) {
+    if (field === "references") { if (Object.keys(problems).some(key => key.startsWith("reference:"))) return false; }
+    else if (problems[field]) return false;
+  }
+  return true;
+}
+
+const ITEM_FIELDS = {
+  eval: ["evalName", "workstreams"], construct: ["construct"], who: ["displayName", "accountOnly"],
+  where: ["recordRepoPath", "recordRemote", "logDirectory"], secrets: ["references"]
+};
+
+function badgeHtml(done) { return done ? ["ok", "done"] : ["todo", "to do"]; }
+
+function checklistItem(id, title, body) {
+  const [badgeClass, badgeText] = badgeHtml(itemIsDone(ITEM_FIELDS[id]));
+  const open = openItem === id;
+  return '<div class="item"><button class="head" data-action="open" data-item="' + id + '" aria-expanded="' + open + '">' +
+    '<span class="badge ' + badgeClass + '" data-badge="' + id + '">' + badgeText + "</span>" +
+    '<span class="title">' + title + '</span><span class="summary" data-summary="' + id + '">' + escapeHtml(itemSummary(id)) + "</span>" +
+    '<span class="chevron" aria-hidden="true">›</span></button>' +
+    (open ? '<div class="body"><div style="margin-top:14px">' + body() + "</div></div>" : "") + "</div>";
+}
+
+function tickItem(key, title, help) {
+  return '<div class="item"><label class="tick"><input type="checkbox" data-action="tick" data-key="' + key + '"' + (ticked[key] ? " checked" : "") + "><span><strong>" + title + '</strong><span class="muted small" style="display:block">' + help + "</span></span></label></div>";
+}
+
+function finishBlock() {
+  const problems = problemsIn(answers);
+  const count = Object.keys(problems).length;
+  const rows = filesToWrite(answers).map(file => "<tr><td>" + file[0] + '</td><td class="path">' + escapeHtml(file[1]) + '</td><td class="muted">' + escapeHtml(file[2]) + "</td></tr>").join("");
+  let html = "<h3>When you finish, goodall will write these files</h3><table class=\"filelist\">" + rows + "</table>";
+  if (count) {
+    html += '<div class="note trouble"><strong>' + count + (count === 1 ? " answer needs" : " answers need") + " attention first.</strong><ul class=\"plain\">" +
+      Object.values(problems).map(problem => "<li>" + escapeHtml(problem) + "</li>").join("") + "</ul></div>";
+  }
+  html += '<button class="finish-button" data-action="finish"' + (count ? " disabled" : "") + ">Finish setup</button>";
+  if (handedOver && !count) {
+    html += '<div class="handed"><strong>Your answers are on their way to goodall.</strong><br>Go back to the Terminal window where you started. Goodall is checking the folders and writing the files, and will tell you there when setup is complete. You can close this page.</div>';
+  }
+  return html;
+}
+
+function render() {
+  const startItems = answers.mode === "start"
+    ? checklistItem("eval", "Name the eval and its workstreams", () => textField("evalName", "Eval name", "A short name used in file names and reports.", "goodall-pilot") + workstreamsField()) +
+      checklistItem("construct", "Write the construct", constructField) : "";
+  document.getElementById("app").innerHTML =
+    '<div class="wrap"><h1>Setting up your eval</h1><p class="muted">The whole journey, in order. Some of it happens away from this page; tick those steps off as you go.</p>' + modeField() +
+    '<div class="stage"><span class="num">1</span> Before this page · on your Mac</div>' +
+    tickItem("account", "Create a standard macOS user account for this eval", "System Settings → Users &amp; Groups → Add User, type Standard. Sign in to it; you should be reading this from that account.") +
+    tickItem("manager", "Sign in to your secrets manager", "Open 1Password in this account and sign in.") +
+    tickItem("repo", answers.mode === "start" ? "Create an empty repository for the eval's records" : "Get the record repo's address from whoever started the eval", "Goodall keeps the eval's own records in a repository you control. Keep it private while the eval runs.") +
+    '<div class="stage"><span class="num">2</span> On this page · your answers</div>' + startItems +
+    checklistItem("who", "About you", () => textField("displayName", "Your display name", "Shown beside your work in the record. Not your email address.", "Ada Lovelace") + mainWorkstreamField() + accountField()) +
+    checklistItem("where", "Where things live on this Mac", locationFields) +
+    checklistItem("secrets", "Secrets", secretsFields) +
+    '<div class="stage"><span class="num">3</span> Finish</div><div class="finish" data-live="finish"></div></div>';
+  refreshLive();
+}
+
+function refreshLive() {
+  // Update what depends on the answers without redrawing the inputs, so the
+  // cursor stays where the person is typing.
+  const problems = problemsIn(answers);
+  document.querySelectorAll("[data-problem]").forEach(element => { element.textContent = problems[element.dataset.problem] || ""; });
+  document.querySelectorAll("[data-summary]").forEach(element => { element.textContent = itemSummary(element.dataset.summary); });
+  document.querySelectorAll("[data-badge]").forEach(element => {
+    const [badgeClass, badgeText] = badgeHtml(itemIsDone(ITEM_FIELDS[element.dataset.badge]));
+    element.className = "badge " + badgeClass; element.textContent = badgeText;
+  });
+  const finish = document.querySelector('[data-live="finish"]');
+  if (finish) finish.innerHTML = finishBlock();
+}
+
+document.addEventListener("input", event => {
+  const target = event.target;
+  if (target.dataset.field) { answers[target.dataset.field] = target.type === "checkbox" ? target.checked : target.value; handedOver = false; refreshLive(); }
+  else if (target.dataset.reference) { answers.references[target.dataset.reference] = target.value; handedOver = false; refreshLive(); }
+});
+
+document.addEventListener("change", event => {
+  const action = event.target.dataset.action;
+  if (action === "mode") { answers.mode = event.target.value; handedOver = false; render(); }
+  if (action === "uses-api-keys") { answers.usesApiKeys = event.target.checked; handedOver = false; render(); }
+  if (action === "tick") { ticked[event.target.dataset.key] = event.target.checked; }
+});
+
+document.addEventListener("click", event => {
+  const target = event.target.closest("[data-action]");
+  if (!target) return;
+  const action = target.dataset.action;
+  if (action === "add-workstream") {
+    const name = document.getElementById("new-workstream").value.trim().toLowerCase();
+    if (name && !answers.workstreams.includes(name)) { answers.workstreams.push(name); handedOver = false; render(); }
+  } else if (action === "remove-workstream") {
+    const removed = answers.workstreams.splice(Number(target.dataset.index), 1)[0];
+    delete answers.references[removed];
+    if (answers.mainWorkstream === removed) answers.mainWorkstream = answers.workstreams[0] || "";
+    handedOver = false; render();
+  } else if (action === "open") { openItem = openItem === target.dataset.item ? "" : target.dataset.item; render();
+  } else if (action === "finish") {
+    // The real page does exactly this and nothing more: it gives the browser
+    // one small file to save. The waiting `goodall onboard` picks it up.
+    const blob = new Blob([answersFile(answers)], { type: "text/plain" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob); link.download = "goodall-answers.toml"; link.click();
+    handedOver = true; refreshLive();
+  } else if (action === "sample") { answers = sampleAnswers(); ticked = { account: true, manager: true, repo: true }; handedOver = false; render();
+  } else if (action === "clear") { answers = emptyAnswers(); ticked = { account: false, manager: false, repo: false }; handedOver = false; openItem = ""; render(); }
+});
+
+render();
+</script>
+</body>
+</html>
