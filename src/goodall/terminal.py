@@ -149,6 +149,13 @@ class Terminal:
         ]
         self.standard_error.write("\n\n".join(paragraphs) + "\n")
 
+    def show_failures(self, failures: list[Failure]) -> None:
+        """Write several failures to standard error, one after another, with a blank line between them."""
+        for position, failure in enumerate(failures):
+            if position > 0:
+                self.standard_error.write("\n")
+            self.show_failure(failure)
+
     def write_json(self, document: dict[str, object]) -> None:
         """Write one JSON document to standard output, and nothing else.
 
