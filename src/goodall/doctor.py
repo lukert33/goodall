@@ -47,7 +47,9 @@ DOCTOR_JSON_SCHEMA_VERSION = 1
 # Every check doctor runs, in order. The settings checks come first, because
 # they say which eval this account belongs to; then the checks that run
 # other programs (tools, the eval account, the record repo); then the checks
-# of the env file and the shared env file (secrets).
+# of the env file and the shared env file (secrets). The check that the
+# secrets manager's command is installed is among the secrets checks, since
+# it waits for the env file, though the report shows it under "Tools".
 DOCTOR_CHECKS: list[Check] = [*SETTINGS_CHECKS, *PROGRAM_CHECKS, *SECRETS_CHECKS]
 
 

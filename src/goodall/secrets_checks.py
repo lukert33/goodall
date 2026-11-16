@@ -42,9 +42,13 @@ The dependency edges:
 - The shared env file check needs only the record repo folder.
 - The check for a name in both files needs both files' checks to have
   passed or warned, because it compares what they read.
+- The check that the secrets manager's command is installed needs the env
+  file read, because the command is needed only when the env file refers
+  to a secret: an eval with no secrets needs no secrets manager (ADR 0006).
+  It is shown under "Tools" beside git and gh.
 - The sign-in check needs the secrets manager's command installed and the
-  env file read, because it asks only when the env file refers to a secret:
-  an eval with no secrets needs no secrets manager (ADR 0006).
+  env file read, because it too asks only when the env file refers to a
+  secret.
 """
 
 import shlex
@@ -54,12 +58,13 @@ from pathlib import Path
 from goodall.checks import Check, CheckContext, CheckOutcome, could_not_verify, failed, passed, warned
 from goodall.env_files import EnvEntry, EnvFileNotRead, EnvLineProblem, read_env_file, variable_as_shown
 from goodall.local_settings import LocalSettings
-from goodall.program_checks import SECRETS_MANAGER_INSTALLED
+from goodall.program_checks import TOOLS_GROUP, check_program_installed
 from goodall.quoting import looks_like_a_random_token
 from goodall.runner import looks_like_a_secret_name
 from goodall.secrets_manager import (
     DISPLAY_NAMES,
     REFERENCE_FORMS,
+    SECRETS_MANAGER_PROGRAMS,
     SIGN_IN_STEPS,
     WHERE_TO_FIND_A_REFERENCE,
     WHY_FIELDS_CANNOT_BE_CHECKED,
@@ -84,6 +89,10 @@ NO_VARIABLE_IN_BOTH_ENV_FILES = "secrets.no_variable_in_both_env_files"
 SECRETS_MANAGER_SIGNED_IN = "secrets.secrets_manager_signed_in"
 REFERENCED_ITEMS_EXIST = "secrets.referenced_items_exist"
 REFERENCED_FIELDS_EXIST = "secrets.referenced_fields_exist"
+
+# Shown under "Tools" with git and gh, and named like them, but run here,
+# after the env file is read; see `check_secrets_manager_installed`.
+SECRETS_MANAGER_INSTALLED = "tools.secrets_manager_installed"
 
 # The permission bits that let accounts other than the file's owner read,
 # change or run a file: everything for the group and for everyone else.
@@ -502,6 +511,18 @@ def variable_in_both_env_files_failure(
     )
 
 
+def check_secrets_manager_installed(context: CheckContext) -> CheckOutcome:
+    """The command of the secrets manager that local settings name is installed, when the env file refers to any secret.
+
+    With no secret references the secrets manager is not needed at all
+    (ADR 0006), so a Mac without it passes, with a note saying why.
+    """
+    local_settings = valid_local_settings(context)
+    if not context.env_file_entries:
+        return passed(note="This eval uses no secret references, so no secrets manager is needed.")
+    return check_program_installed(context, SECRETS_MANAGER_PROGRAMS[local_settings.secrets_manager])
+
+
 def check_secrets_manager_signed_in(context: CheckContext) -> CheckOutcome:
     """The secrets manager that local settings name is signed in, when the env file refers to any secret.
 
@@ -716,6 +737,13 @@ SECRETS_CHECKS = [
         summary="The env file holds only secret references",
         prerequisites=[LOCAL_SETTINGS_VALID],
         run=check_env_file_holds_only_references,
+    ),
+    Check(
+        id=SECRETS_MANAGER_INSTALLED,
+        group=TOOLS_GROUP,
+        summary="The secrets manager's command is installed",
+        prerequisites=[ENV_FILE_HOLDS_ONLY_REFERENCES],
+        run=check_secrets_manager_installed,
     ),
     Check(
         id=ENV_FILE_PRIVATE,

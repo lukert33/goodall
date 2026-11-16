@@ -364,10 +364,12 @@ ALL_CHECK_IDS = [
     "settings.main_workstream_known",
     "tools.git_installed",
     "tools.gh_installed",
-    "tools.secrets_manager_installed",
     "eval_account.standard_account",
     "record_repo.is_git_repository",
     "secrets.env_file_holds_only_references",
+    # Shown under "Tools", but run once the env file is read, because the
+    # secrets manager is needed only when the env file refers to a secret.
+    "tools.secrets_manager_installed",
     "secrets.env_file_private",
     "secrets.shared_env_file_holds_no_secrets",
     "secrets.no_variable_in_both_env_files",
@@ -735,6 +737,26 @@ def test_missing_op_fails_the_secrets_manager_check_naming_1password(healthy_acc
     assert "op, 1Password's command-line tool," in secrets_manager_check["detail"]
     assert isinstance(secrets_manager_check["next_step"], str)
     assert "https://developer.1password.com/docs/cli/get-started/" in secrets_manager_check["next_step"]
+
+
+@pytest.mark.parametrize("env_file_text", [None, "# No secrets in this eval.\n"])
+def test_an_eval_with_no_secret_references_passes_doctor_without_op_installed(
+    healthy_account: EvalAccount, env_file_text: str | None
+) -> None:
+    # ADR 0006: a secrets manager is required only when a secret exists.
+    if env_file_text is None:
+        healthy_account.env_file.unlink()
+    else:
+        healthy_account.env_file.write_text(env_file_text)
+    runner = healthy_runner()
+    runner.installed_programs.remove("op")
+
+    exit_code, document = doctor_json(runner)
+
+    assert exit_code == exit_codes.SUCCESS
+    secrets_manager_check = check_document(document, "tools.secrets_manager_installed")
+    assert secrets_manager_check["status"] == "pass"
+    assert secrets_manager_check["note"] == ("This eval uses no secret references, so no secrets manager is needed.")
 
 
 # The groups of an administrator on macOS: the same as a standard account's,
