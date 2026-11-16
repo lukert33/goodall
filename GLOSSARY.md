@@ -83,6 +83,10 @@ _Avoid_: Log entry, diary entry, note
 The settings that describe one eval: its contributors, workstreams, declared scope and record repo.
 _Avoid_: Project config, project file, settings
 
+**Local settings**:
+The settings true for one eval account on one machine: where its record repo and log directory are, and which contributor it is.
+_Avoid_: Local config, machine config, pointer file
+
 **Declared scope**:
 The list of repositories and paths that count as an eval's dataset.
 _Avoid_: Dataset boundary, org
