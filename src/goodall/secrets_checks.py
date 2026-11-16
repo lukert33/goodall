@@ -195,7 +195,7 @@ def env_file_value_not_a_reference_failure(
         ),
         why=(
             "The env file must hold only secret references, never secrets themselves, so that a secret is never "
-            "written to a file an agent could read (ADR 0010)."
+            "written to a file an agent could read."
         ),
         what_to_do_next=(
             f"On line {line_number}, paste the secret reference in place of the value of {name}. A "
@@ -360,7 +360,7 @@ def shared_env_file_secret_name_failure(
         ),
         why=(
             "The shared env file is committed to the record repo, which every contributor can read and which "
-            "may be published, so it must never hold a secret (ADR 0010)."
+            "may be published, so it must never hold a secret."
         ),
         what_to_do_next=(
             f"For {name}, move this to the env file as a reference: delete line {line_number} of "
@@ -415,7 +415,7 @@ def shared_env_file_value_looks_secret_failure(
         ),
         why=(
             "The shared env file is committed to the record repo, which every contributor can read and which "
-            "may be published, so it must never hold a secret (ADR 0010)."
+            "may be published, so it must never hold a secret."
         ),
         what_to_do_next=(
             f"If {name} holds a secret, move this to the env file as a reference: delete line {line_number} of "
@@ -501,7 +501,7 @@ def variable_in_both_env_files_failure(
         ),
         why=(
             "A program can receive only one value for a variable, so a name in both files leaves it unclear "
-            "which one it gets (ADR 0010)."
+            "which one it gets."
         ),
         what_to_do_next=(
             f"Keep {name} in one file only: in the env file if it is a secret, which is the usual case, or in "
@@ -650,7 +650,7 @@ def referenced_fields_not_verified_failure(local_settings: LocalSettings, entrie
             f"{', '.join(variables)}."
         ),
         why=(
-            "No secret may enter goodall (ADR 0010), so goodall reports what it could not check rather than "
+            "No secret may enter goodall, so goodall reports what it could not check rather than "
             "read a secret to find out."
         ),
         what_to_do_next=(

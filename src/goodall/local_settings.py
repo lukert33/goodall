@@ -398,7 +398,7 @@ def local_settings_unreadable_failure(settings_file: Path, read_error: OSError) 
         ),
         what_to_do_next=(
             f"Check the permissions of {settings_file} and the folders above it: "
-            "this macOS user account must be able to read them. Then run goodall status again."
+            "this macOS user account must be able to read them. Then run the same goodall command again."
         ),
     )
 
@@ -518,7 +518,7 @@ def schema_too_new_failure(settings_file: Path, schema_version: int) -> Failure:
             "so this goodall could misread them."
         ),
         what_to_do_next=(
-            "Upgrade goodall to the version used to set up this eval account, then run goodall status again."
+            "Upgrade goodall to the version used to set up this eval account, then run the same goodall command again."
         ),
     )
 

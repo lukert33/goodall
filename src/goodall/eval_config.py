@@ -652,7 +652,7 @@ def eval_config_unreadable_failure(config_file: Path, read_error: OSError) -> Fa
         why="Goodall needs to read the eval config to know which eval this is and who you are in it.",
         what_to_do_next=(
             f"Check the permissions of {config_file} and the folders above it: this macOS user account must be "
-            "able to read them. Then run goodall status again."
+            "able to read them. Then run the same goodall command again."
         ),
     )
 
@@ -771,7 +771,9 @@ def schema_too_new_failure(config_file: Path, schema_version: int) -> Failure:
             "The eval config was written by a newer goodall, which may use keys this one does not know, "
             "so this goodall could misread it."
         ),
-        what_to_do_next="Upgrade goodall to the version the rest of the eval uses, then run goodall status again.",
+        what_to_do_next=(
+            "Upgrade goodall to the version the rest of the eval uses, then run the same goodall command again."
+        ),
     )
 
 

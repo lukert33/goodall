@@ -1391,6 +1391,40 @@ def test_every_secrets_manager_command_discards_its_output_or_is_a_value_free_li
         assert command.arguments[:3] in VALUE_FREE_OP_COMMANDS, f"`{command.as_typed}` kept its output"
 
 
+# Setups that make doctor report failures, warnings or unverified checks
+# whose words come from every module that builds them, including the
+# folder, local settings and eval config failures `goodall status` shares.
+REPORTED_SETUPS = {
+    "healthy": ("settings", "", ""),
+    "record repo missing": ("settings", "~/evals/goodall-pilot-records", "~/evals/not-cloned-yet"),
+    "log directory missing": ("settings", "LOG_DIRECTORY", "/Volumes/NotPluggedIn/goodall"),
+    "settings too new": ("settings", "schema_version = 1", "schema_version = 99"),
+    "eval config too new": ("eval_config", "schema_version = 1", "schema_version = 99"),
+    "raw value in the env file": ("env", "end", "ANTHROPIC_API_KEY_GTM=not-a-reference\n"),
+    "secret name in the shared env file": ("shared_env", "end", "OPENAI_API_KEY=x\n"),
+    "token in the shared env file": ("shared_env", "end", f"SOME_SETTING={PASTED_BASE64_TOKEN}\n"),
+    "variable in both env files": ("shared_env", "end", "ANTHROPIC_ADMIN_KEY=x\n"),
+}
+
+
+@pytest.mark.parametrize("setup", list(REPORTED_SETUPS))
+def test_doctor_s_words_cite_no_decision_records_and_name_no_other_command_to_rerun(
+    healthy_account: EvalAccount, setup: str
+) -> None:
+    # A researcher has not read goodall's ADRs, and a next step reused from
+    # goodall status must not send someone running doctor to a different command.
+    file_name, replace_from, replace_to = REPORTED_SETUPS[setup]
+    if replace_from != "":
+        put_secret_in_place(healthy_account, file_name, replace_from, replace_to)
+
+    _, standard_output, standard_error = run_goodall(["doctor"])
+    _, json_output, _ = run_goodall(["doctor", "--json"])
+
+    for printed in [standard_output, standard_error, json_output]:
+        assert "ADR" not in printed
+        assert "goodall status" not in printed
+
+
 # Every place in the files doctor reads where a person could paste a key by
 # mistake. Each case is: the synthetic secret, which file it goes in, the
 # text to replace in that file's valid form ("" puts the new text at the

@@ -71,7 +71,8 @@ def record_repo_missing_failure(settings: LocalSettings, problem: str) -> Failur
         ),
         what_to_do_next=(
             f"If the record repo is somewhere else on this Mac, correct record_repo in {settings.settings_file}. "
-            f"If it is not on this Mac yet, clone it to {settings.record_repo.path}. Then run goodall status again."
+            f"If it is not on this Mac yet, clone it to {settings.record_repo.path}. "
+            "Then run the same goodall command again."
         ),
     )
 
@@ -95,6 +96,6 @@ def log_directory_unreachable_failure(settings: LocalSettings, problem: str) -> 
         what_to_do_next=(
             "If the log directory is on an external drive, connect it. Otherwise create the folder, make sure "
             f"this macOS user account can write to it, or correct log_directory in {settings.settings_file}. "
-            "Then run goodall status again."
+            "Then run the same goodall command again."
         ),
     )
