@@ -1067,6 +1067,20 @@ def test_a_missing_shared_env_file_is_a_warning_with_a_next_step(healthy_account
     assert "Next: Run git pull in" in report_text
 
 
+def test_a_secret_reference_inside_a_shared_env_file_value_fails_like_one_on_its_own(
+    healthy_account: EvalAccount,
+) -> None:
+    # The same rule as the eval config's: a reference anywhere in a value counts.
+    healthy_account.shared_env_file.write_text(
+        VALID_SHARED_ENV_FILE_TEXT + 'OTEL_EXPORTER_OTLP_HEADERS="Authorization=op://RECOGNISABLEVAULT/otel/x"\n'
+    )
+
+    exit_code, document = doctor_json()
+
+    assert exit_code == exit_codes.ERROR
+    assert failure_kinds(document, "secrets.shared_env_file_holds_no_secrets") == ["shared_env_file_secret_reference"]
+
+
 def test_a_secret_reference_in_the_shared_env_file_fails_because_it_would_not_be_resolved(
     healthy_account: EvalAccount,
 ) -> None:

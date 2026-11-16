@@ -40,7 +40,9 @@ Rules a reader might otherwise reverse-engineer:
   lower-case hex token passes it, and a pasted key is a valid TOML key.
 
 This module imports only the standard library, because the prompt gate will
-read the eval config on every prompt (ADR 0005).
+read the eval config on every prompt (ADR 0005). It takes the rule for what
+looks like a secret reference from goodall.secrets_manager, so there is one
+rule; that module loads goodall.runner, which the hook path loads anyway.
 
 The file's shape is provisional by the owner's instruction (goodall-xes.8);
 `schema_version` is there so it can change.
@@ -54,6 +56,7 @@ from pathlib import Path
 
 from goodall.local_settings import LocalSettings, is_whole_number
 from goodall.quoting import can_show_name, toml_error_as_shown
+from goodall.secrets_manager import looks_like_a_secret_reference
 from goodall.terminal import Failure
 
 # The name of the eval config file at the top of the record repo.
@@ -102,10 +105,6 @@ REPOSITORY_PART_PATTERN = re.compile(r"[A-Za-z0-9._-]+")
 # Anything shaped like an email address. Deliberately broad: a false alarm
 # costs one edit, a missed address is published.
 EMAIL_ADDRESS_PATTERN = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+")
-
-# The start of a secret reference. 1Password's op:// is the one kind
-# supported today (ADR 0006); add a manager's prefix here when it is.
-SECRET_REFERENCE_PREFIXES = ["op://"]
 
 # Shown in "for example" advice, so a contributor sees a correct line. They
 # match the agreed example in goodall-xes.8.
@@ -533,9 +532,8 @@ def find_private_values(config_file: Path, value: object, where: str) -> list[Fa
     if isinstance(value, str):
         if EMAIL_ADDRESS_PATTERN.search(value) is not None:
             problems.append(contains_email_address_failure(config_file, where))
-        for prefix in SECRET_REFERENCE_PREFIXES:
-            if prefix in value:
-                problems.append(contains_secret_reference_failure(config_file, where))
+        if looks_like_a_secret_reference(value):
+            problems.append(contains_secret_reference_failure(config_file, where))
     elif isinstance(value, dict):
         for key, inner_value in value.items():
             if isinstance(inner_value, list) and all_tables(inner_value):

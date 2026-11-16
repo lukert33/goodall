@@ -981,6 +981,11 @@ def test_email_address_in_eval_config_is_rejected_without_being_echoed(
             'description = "op://Eval/anthropic-engineering/credential"',
         ),
         ('paths = ["**"]', 'paths = ["**", "op://Eval/anthropic-engineering/credential"]'),
+        # The same rule as the shared env file's: a scheme written in capitals counts.
+        (
+            'description = "Building a SaaS product to first recurring revenue with AI."',
+            'description = "Keys live at OP://Eval/anthropic-engineering/credential"',
+        ),
     ],
 )
 def test_secret_reference_in_eval_config_is_rejected_without_being_echoed(
