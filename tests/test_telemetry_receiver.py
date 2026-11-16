@@ -67,3 +67,51 @@ def test_claude_code_log_export_lands_verbatim_as_one_line(receiver: RunningRece
     assert status == 200
     assert json.loads(response_body) == {}
     assert (tmp_path / "logs.jsonl").read_bytes() == CLAUDE_CODE_LOGS_BODY + b"\n"
+
+
+@pytest.mark.parametrize(
+    ("path", "telemetry_file_name", "body"),
+    [
+        ("/v1/logs", "logs.jsonl", b'{"resourceLogs":[]}'),
+        ("/v1/metrics", "metrics.jsonl", b'{"resourceMetrics":[]}'),
+        ("/v1/traces", "traces.jsonl", b'{"resourceSpans":[]}'),
+    ],
+)
+def test_each_signal_is_stored_in_its_own_file(
+    receiver: RunningReceiver, tmp_path: Path, path: str, telemetry_file_name: str, body: bytes
+) -> None:
+    status, _ = post_like_claude_code(receiver.port, path, body)
+
+    assert status == 200
+    assert stored_lines(tmp_path / telemetry_file_name) == [body]
+    other_files = sorted(entry.name for entry in tmp_path.iterdir() if entry.name != telemetry_file_name)
+    assert other_files == []
+
+
+def test_two_requests_become_two_lines_in_the_order_received(receiver: RunningReceiver, tmp_path: Path) -> None:
+    first_body = b'{"resourceMetrics":[],"order":1}'
+    second_body = b'{"resourceMetrics":[],"order":2}'
+
+    post_like_claude_code(receiver.port, "/v1/metrics", first_body)
+    post_like_claude_code(receiver.port, "/v1/metrics", second_body)
+
+    assert stored_lines(tmp_path / "metrics.jsonl") == [first_body, second_body]
+
+
+def test_restart_appends_to_existing_files_instead_of_truncating(tmp_path: Path) -> None:
+    before_restart = b'{"resourceLogs":[],"run":"before"}'
+    after_restart = b'{"resourceLogs":[],"run":"after"}'
+
+    first_receiver = telemetry_receiver.start_receiver(tmp_path)
+    try:
+        post_like_claude_code(first_receiver.port, "/v1/logs", before_restart)
+    finally:
+        first_receiver.stop()
+
+    second_receiver = telemetry_receiver.start_receiver(tmp_path)
+    try:
+        post_like_claude_code(second_receiver.port, "/v1/logs", after_restart)
+    finally:
+        second_receiver.stop()
+
+    assert stored_lines(tmp_path / "logs.jsonl") == [before_restart, after_restart]
