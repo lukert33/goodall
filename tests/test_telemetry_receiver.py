@@ -396,13 +396,28 @@ def test_refusal_does_not_echo_the_body(receiver: RunningReceiver) -> None:
 
 @pytest.mark.parametrize("bind_address", ["0.0.0.0", "localhost", "::1", "192.168.1.10", ""])
 def test_receiver_refuses_to_start_on_any_address_but_loopback(tmp_path: Path, bind_address: str) -> None:
-    with pytest.raises(ValueError, match="only listens on 127.0.0.1"):
-        telemetry_receiver.start_receiver(tmp_path, bind_address=bind_address)
+    assert_refuses_to_start(ValueError, "only listens on 127.0.0.1", tmp_path, bind_address)
 
 
 def test_receiver_refuses_to_start_without_its_directory(tmp_path: Path) -> None:
-    with pytest.raises(FileNotFoundError, match="does not exist"):
-        telemetry_receiver.start_receiver(tmp_path / "missing")
+    assert_refuses_to_start(FileNotFoundError, "does not exist", tmp_path / "missing", "127.0.0.1")
+
+
+def assert_refuses_to_start(
+    expected_error: type[Exception], expected_message: str, telemetry_directory: Path, bind_address: str
+) -> None:
+    """Check start_receiver raises, and stop the receiver if it wrongly started.
+
+    Trap: a receiver that starts when it should not keeps a thread running,
+    and pytest then never exits instead of reporting the failure.
+    """
+    started_receiver = None
+    try:
+        with pytest.raises(expected_error, match=expected_message):
+            started_receiver = telemetry_receiver.start_receiver(telemetry_directory, bind_address=bind_address)
+    finally:
+        if started_receiver is not None:
+            started_receiver.stop()
 
 
 def test_telemetry_files_are_readable_by_their_owner_only(receiver: RunningReceiver, tmp_path: Path) -> None:
