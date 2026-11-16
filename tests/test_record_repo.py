@@ -249,3 +249,35 @@ def test_a_folder_inside_another_git_repository_is_not_taken_for_the_record_repo
     assert [failure.kind for failure in outcome.failures] == ["record_repo_not_git_repository"]
     assert list(folder.iterdir()) == []
     assert commit_subjects(outer_repository) == ["Start the record repo"]
+
+
+def test_only_the_record_is_committed_and_the_contributors_other_changes_are_left_as_they_were(tmp_path: Path) -> None:
+    record_repo = make_record_repo(tmp_path / "records")
+    (record_repo / "eval.toml").write_text('name = "renamed eval"\n')
+    git(record_repo, "add", "eval.toml")
+    (record_repo / "draft.md").write_text("Not ready yet.\n")
+
+    outcome = write_record(FakeRunner(), record_repo, journal_entry())
+
+    assert outcome.committed
+    committed_files = git(record_repo, "show", "--name-only", "--format=", "HEAD").splitlines()
+    assert committed_files == ["journal/20261116T093000Z-ada-lovelace-7f3a9c2e.md"]
+    assert git(record_repo, "status", "--porcelain").splitlines() == ["M  eval.toml", "?? draft.md"]
+
+
+def test_a_commit_refused_by_the_contributors_own_hook_leaves_the_record_written_and_says_so(tmp_path: Path) -> None:
+    record_repo = make_record_repo(tmp_path / "records")
+    hook = record_repo / ".git" / "hooks" / "pre-commit"
+    hook.write_text("#!/bin/sh\necho 'commits are frozen today' >&2\nexit 1\n")
+    hook.chmod(0o755)
+    commits_before = git(record_repo, "rev-list", "--count", "HEAD")
+
+    outcome = write_record(FakeRunner(), record_repo, journal_entry())
+
+    assert [failure.kind for failure in outcome.failures] == ["record_commit_failed"]
+    assert "commits are frozen today" in outcome.failures[0].what_happened
+    assert outcome.written
+    assert not outcome.committed
+    assert outcome.push_state == PushState.NOT_ATTEMPTED
+    assert outcome.path.exists()
+    assert git(record_repo, "rev-list", "--count", "HEAD") == commits_before

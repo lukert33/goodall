@@ -30,7 +30,7 @@ from enum import StrEnum
 from pathlib import Path
 
 from goodall import records
-from goodall.runner import Command, CommandOutcome, CommandResult, Runner
+from goodall.runner import DEFAULT_TIMEOUT_SECONDS, Command, CommandOutcome, CommandResult, Runner
 from goodall.terminal import Failure
 
 
@@ -74,6 +74,10 @@ class RecordWriteOutcome:
 # to the remote while a person waits.
 MAXIMUM_PUSH_RETRIES = 3
 
+# How long a commit may take. Longer than a short command's limit, because
+# the contributor's own hooks and commit signing run inside it.
+COMMIT_TIMEOUT_SECONDS = 60.0
+
 # The git settings that say who makes a commit. Both must be set.
 IDENTITY_SETTINGS = ["user.name", "user.email"]
 
@@ -114,8 +118,22 @@ def write_record(runner: Runner, record_repo: Path, record: records.Record) -> R
     except FileExistsError:
         return not_written(path, record_already_exists_failure(path))
 
-    run_git(runner, record_repo, ["add", "--", str(relative_path)])
-    run_git(runner, record_repo, ["commit", "--quiet", "-m", commit_message(record), "--", str(relative_path)])
+    # Stage and commit only this one file. Naming it after `--` makes the
+    # commit take that path alone (git's "--only"), so anything else the
+    # contributor has staged stays staged and out of goodall's commit.
+    # The contributor's own hooks and signing settings apply, as they would
+    # to any commit of theirs; goodall reports what they refuse.
+    add_result = run_git(runner, record_repo, ["add", "--", str(relative_path)])
+    if not add_result.succeeded:
+        return written_not_committed(path, record_commit_failed_failure(record_repo, path, add_result))
+    commit_result = run_git(
+        runner,
+        record_repo,
+        ["commit", "--quiet", "-m", commit_message(record), "--", str(relative_path)],
+        timeout_seconds=COMMIT_TIMEOUT_SECONDS,
+    )
+    if not commit_result.succeeded:
+        return written_not_committed(path, record_commit_failed_failure(record_repo, path, commit_result))
     push_outcome = push_pending(runner, record_repo)
     return RecordWriteOutcome(
         path=path,
@@ -415,6 +433,33 @@ def not_written(path: Path, failure: Failure) -> RecordWriteOutcome:
     )
 
 
+def written_not_committed(path: Path, failure: Failure) -> RecordWriteOutcome:
+    """The outcome for a record whose file was written but could not be committed."""
+    return RecordWriteOutcome(
+        path=path, written=True, committed=False, push_state=PushState.NOT_ATTEMPTED, failures=[failure]
+    )
+
+
+def record_commit_failed_failure(record_repo: Path, path: Path, result: CommandResult) -> Failure:
+    """The failure for a record that was written but that git would not commit.
+
+    The file is left where it is: it holds what the contributor recorded,
+    and goodall never deletes a record.
+    """
+    return Failure(
+        kind="record_commit_failed",
+        what_happened=f"The record was written to {path}, but git did not commit it: {result.problem}.",
+        why=(
+            "A record reaches other contributors only once it is committed and pushed. Your own git settings, "
+            "such as a hook or commit signing, can refuse a commit; goodall does not get round them."
+        ),
+        what_to_do_next=(
+            f"Fix what git complained about, then commit the file yourself: in {record_repo}, run git commit "
+            f'-m "Add record" -- {path.relative_to(record_repo)}. The record itself is safe on this Mac.'
+        ),
+    )
+
+
 def record_path_outside_record_repo_failure(record_repo: Path, path: Path) -> Failure:
     """The failure for a record whose folder is a link leading somewhere other than inside the record repo."""
     return Failure(
@@ -453,6 +498,8 @@ def commit_message(record: records.Record) -> str:
     return f"Add {record_type_name} {record.id}\n\nWritten by goodall for contributor {record.contributor}."
 
 
-def run_git(runner: Runner, record_repo: Path, arguments: list[str]) -> CommandResult:
+def run_git(
+    runner: Runner, record_repo: Path, arguments: list[str], timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS
+) -> CommandResult:
     """Run git with `arguments` in the record repo."""
-    return runner.run(Command(["git", *arguments], working_directory=record_repo))
+    return runner.run(Command(["git", *arguments], working_directory=record_repo, timeout_seconds=timeout_seconds))
