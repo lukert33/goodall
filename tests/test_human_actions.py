@@ -9,7 +9,13 @@ contributor's private prompts and must never be copied into fixtures.
 
 from pathlib import Path
 
-from goodall.human_actions import Interruption, ToolCallRejection, TypedPrompt, parse_human_actions
+from goodall.human_actions import (
+    Interruption,
+    ToolCallRejection,
+    TypedPrompt,
+    UnfamiliarEntry,
+    parse_human_actions,
+)
 
 FIXTURES = Path(__file__).parent / "fixtures" / "claude_code_transcripts"
 
@@ -31,6 +37,22 @@ def test_typed_prompts_are_found_with_their_entry_and_time() -> None:
             timestamp="2026-01-05T09:01:00.000Z",
             text="Here is a sketch of the layout I want.",
             image_count=1,
+        ),
+        # Lines 4 and 5: the harness put reminders in front of the typed text.
+        # The prompt is kept, and its text is only what the person typed.
+        TypedPrompt(
+            line_number=4,
+            entry_id="u-0004",
+            timestamp="2026-01-05T09:02:00.000Z",
+            text="Now add a farewell function too.",
+            image_count=0,
+        ),
+        TypedPrompt(
+            line_number=5,
+            entry_id="u-0005",
+            timestamp="2026-01-05T09:03:00.000Z",
+            text="And a test for each.",
+            image_count=0,
         ),
     ]
     assert result.unfamiliar_entries == []
@@ -113,6 +135,15 @@ def test_rejected_tool_calls_carry_the_call_id_and_any_feedback() -> None:
     assert result.unfamiliar_entries == []
 
 
+def test_a_prompt_typed_straight_after_a_rejection_is_still_counted() -> None:
+    # Only the interruption marker is folded into a rejection; anything else
+    # whose parent is the rejection entry is judged on its own.
+    result = parse_human_actions(FIXTURES / "prompt_after_rejection.jsonl")
+
+    kinds = [action.kind for action in result.actions]
+    assert kinds == ["tool_call_rejection", "typed_prompt"]
+
+
 def test_a_rejection_uses_inspects_decision_value() -> None:
     result = parse_human_actions(FIXTURES / "rejections.jsonl")
 
@@ -120,6 +151,25 @@ def test_a_rejection_uses_inspects_decision_value() -> None:
     assert isinstance(rejection, ToolCallRejection)
     assert rejection.decision == "reject"
     assert rejection.kind == "tool_call_rejection"
+
+
+def test_unfamiliar_and_malformed_entries_are_reported_and_parsing_continues() -> None:
+    result = parse_human_actions(FIXTURES / "unfamiliar_and_malformed.jsonl")
+
+    assert result.unfamiliar_entries == [
+        UnfamiliarEntry(line_number=2, entry_id=None, reason="line is not valid JSON"),
+        UnfamiliarEntry(line_number=4, entry_id=None, reason="line is JSON but not an object"),
+        UnfamiliarEntry(line_number=5, entry_id="x-0005", reason="unknown entry type 'example-future-entry'"),
+        UnfamiliarEntry(line_number=6, entry_id="x-0006", reason="entry has no type"),
+        UnfamiliarEntry(line_number=7, entry_id="u-0007", reason="user entry has no message content"),
+        UnfamiliarEntry(line_number=8, entry_id="u-0008", reason="unknown content block type 'example-future-block'"),
+        UnfamiliarEntry(line_number=9, entry_id="u-0009", reason="unknown origin kind 'example-future-origin'"),
+    ]
+    # The blank line 3 is not an entry and is skipped. The prompt on line 8 is
+    # still found despite its unfamiliar block; line 9 is not counted, because
+    # only an origin of "human" counts as the person.
+    prompt_lines = [action.line_number for action in result.actions]
+    assert prompt_lines == [1, 8, 10]
 
 
 def test_text_the_harness_wrote_is_not_a_human_action() -> None:
