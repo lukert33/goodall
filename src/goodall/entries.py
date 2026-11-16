@@ -28,7 +28,8 @@ from pathlib import Path
 
 from goodall import exit_codes, records
 from goodall.eval_config import EvalForThisAccount, read_eval_for_this_account
-from goodall.local_settings import read_local_settings
+from goodall.folders import describe_folder_problem, where_goodall_looked
+from goodall.local_settings import LocalSettings, read_local_settings
 from goodall.record_repo import RECORD_TYPE_NAMES, PushState, write_record
 from goodall.runner import Runner
 from goodall.terminal import Failure, Terminal
@@ -269,7 +270,30 @@ def find_eval_for_this_account() -> EvalForThisAccount | list[Failure]:
     settings_reading = read_local_settings()
     if isinstance(settings_reading, list):
         return settings_reading
+    # Checked first so a missing folder is reported as that, not as a
+    # missing eval config inside it. The log directory is not checked:
+    # these records go into the record repo, never the log directory.
+    record_repo_problem = describe_folder_problem(settings_reading.record_repo.path, needs_writing=True)
+    if record_repo_problem is not None:
+        return [record_repo_unusable_failure(settings_reading, record_repo_problem)]
     return read_eval_for_this_account(settings_reading)
+
+
+def record_repo_unusable_failure(settings: LocalSettings, problem: str) -> Failure:
+    """The failure for a record repo folder that is missing or cannot be written in."""
+    return Failure(
+        kind="record_repo_missing",
+        what_happened=(
+            f"The record repo folder {settings.record_repo.as_written} {problem}."
+            + where_goodall_looked(settings.record_repo)
+            + " Nothing was recorded."
+        ),
+        why="Journal entries and interventions are kept as files in the record repo, so goodall needs it.",
+        what_to_do_next=(
+            f"If the record repo is somewhere else on this Mac, correct record_repo in {settings.settings_file}. "
+            f"If it is not on this Mac yet, clone it to {settings.record_repo.path}. Then run the command again."
+        ),
+    )
 
 
 def show_result(terminal: Terminal, result: EntryResult, as_json: bool) -> None:

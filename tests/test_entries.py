@@ -320,3 +320,38 @@ def test_journal_with_a_pending_push_is_saved_on_this_mac_with_a_warning_and_exi
     assert document["push_state"] == "pending"
     assert [warning["kind"] for warning in document["warnings"]] == ["record_push_failed"]
     assert document["failures"] == []
+
+
+def test_journal_that_git_will_not_commit_exits_1_and_says_why(eval_account: EvalAccount) -> None:
+    hook = eval_account.record_repo / ".git" / "hooks" / "pre-commit"
+    hook.write_text("#!/bin/sh\necho 'commits are frozen today' >&2\nexit 1\n")
+    hook.chmod(0o755)
+
+    run = run_goodall(["journal", "Chose Postgres."])
+
+    assert run.exit_code == exit_codes.ERROR
+    assert run.standard_output == ""
+    assert run.standard_error.startswith("FAIL  The record was written to")
+    assert "commits are frozen today" in run.standard_error
+
+
+def test_journal_without_local_settings_exits_1_and_says_to_run_onboard(
+    eval_account: EvalAccount,
+) -> None:
+    (eval_account.config_directory / "local-settings.toml").unlink()
+
+    run = run_goodall(["journal", "Chose Postgres."])
+
+    assert run.exit_code == exit_codes.ERROR
+    assert run.standard_error.startswith("FAIL  No local settings were found.")
+    assert "goodall onboard" in run.standard_error
+
+
+def test_journal_with_the_record_repo_folder_missing_names_the_folder(eval_account: EvalAccount) -> None:
+    eval_account.record_repo.rename(eval_account.record_repo.with_name("moved-away"))
+
+    run = run_goodall(["journal", "Chose Postgres."])
+
+    assert run.exit_code == exit_codes.ERROR
+    assert run.standard_error.startswith("FAIL  The record repo folder ~/evals/goodall-pilot-records does not exist.")
+    assert "Nothing was recorded." in " ".join(run.standard_error.split())
