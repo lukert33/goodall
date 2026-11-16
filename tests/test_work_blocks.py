@@ -502,3 +502,77 @@ def test_a_marker_too_damaged_to_recover_is_kept_aside_and_the_person_is_told(ev
     assert stat.S_IMODE(kept.stat().st_mode) == 0o600
     assert eval_account.work_block_files() == []
     assert "Started a work block" in start.everything_printed
+
+
+# ---------------------------------------------------------------------------
+# An unreachable log directory, and an end that was interrupted
+# ---------------------------------------------------------------------------
+
+
+def test_start_with_the_log_directory_unreachable_says_not_recording_and_starts_nothing(
+    eval_account: EvalAccount,
+) -> None:
+    # An external drive holding the log directory has been unplugged.
+    unplugged = eval_account.log_directory.with_name("unplugged")
+    eval_account.log_directory.rename(unplugged)
+
+    start = run_goodall(eval_account, ["start"])
+
+    assert start.exit_code == exit_codes.ERROR
+    assert start.standard_error.startswith("FAIL  Not recording:")
+    assert not eval_account.log_directory.exists()
+    assert sorted(path for path in unplugged.rglob("*")) == []
+
+
+def test_a_work_block_whose_log_directory_is_unplugged_is_not_active_until_it_is_back(
+    eval_account: EvalAccount,
+) -> None:
+    run_goodall(eval_account, ["start"])
+    unplugged = eval_account.log_directory.with_name("unplugged")
+    eval_account.log_directory.rename(unplugged)
+
+    status = run_goodall(eval_account, ["status", "--json"])
+    stop = run_goodall(eval_account, ["stop"])
+
+    assert status.exit_code == exit_codes.ERROR
+    assert json.loads(status.standard_output)["work_block_active"] is False
+    assert work_blocks.active_work_block(eval_account.log_directory, eval_account.clock.now) is None
+    assert stop.exit_code == exit_codes.ERROR
+    assert stop.standard_error.startswith("FAIL  Not recording:")
+
+    unplugged.rename(eval_account.log_directory)
+    eval_account.clock.advance(timedelta(minutes=30))
+    assert run_goodall(eval_account, ["stop"]).exit_code == exit_codes.SUCCESS
+    [record] = eval_account.work_block_records()
+    assert record["end_state"] == "clean"
+
+
+def test_an_end_interrupted_after_its_record_was_saved_is_finished_by_the_next_command(
+    eval_account: EvalAccount,
+) -> None:
+    # goodall stop saved the ended record in the log directory, then the Mac
+    # lost power before the marker was removed.
+    run_goodall(eval_account, ["start"])
+    running = work_blocks.read_marker(eval_account.log_directory)
+    assert isinstance(running, work_blocks.RunningWorkBlock)
+    ended_at = MONDAY_MORNING + timedelta(hours=1)
+    ended = records.build_work_block_record(
+        "ada-lovelace",
+        "research",
+        MONDAY_MORNING,
+        running.record.machine,
+        ended_at=ended_at,
+        end_state="clean",
+        suffix=running.id[-8:],
+    )
+    assert work_blocks.save_unrecorded(eval_account.log_directory, ended)
+    assert work_blocks.active_work_block(eval_account.log_directory, ended_at) is None
+    eval_account.clock.advance(timedelta(hours=2))
+
+    status = run_goodall(eval_account, ["status"])
+
+    assert status.exit_code == exit_codes.ERROR
+    assert not marker_file(eval_account).exists()
+    [record] = eval_account.work_block_records()
+    assert record["ended_at"] == "2026-11-16T10:30:00Z"
+    assert record["end_state"] == "clean"

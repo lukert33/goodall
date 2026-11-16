@@ -255,6 +255,10 @@ def write_unrecorded_records(runner: Runner, eval_reading: EvalForThisAccount) -
     log_directory = eval_reading.local_settings.log_directory.path
     writes = []
     for waiting_file in work_blocks.unrecorded_files(log_directory):
+        # Trap: an end interrupted after its record was saved leaves the
+        # marker behind. It must go before the waiting record does, or the
+        # marker would look like a running work block again.
+        work_blocks.remove_marker(log_directory, waiting_file.stem)
         writes.append(write_one_unrecorded_record(runner, eval_reading, waiting_file))
     return writes
 
