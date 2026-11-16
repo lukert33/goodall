@@ -77,6 +77,8 @@ def run_start(terminal: Terminal, runner: Runner, clock: Clock, workstream: str 
 
     log_directory = eval_reading.local_settings.log_directory.path
     now = clock()
+    settling = settle(runner, eval_reading)
+    show_settling(terminal, settling)
     active = work_blocks.active_work_block(log_directory, now)
     if active is not None:
         return report_already_active(terminal, active, workstream)
@@ -160,19 +162,18 @@ def run_stop(terminal: Terminal, runner: Runner, clock: Clock) -> int:
         return exit_codes.ERROR
     log_directory = eval_reading.local_settings.log_directory.path
     now = clock()
+    settling = settle(runner, eval_reading)
+    show_settling(terminal, settling)
     active = work_blocks.active_work_block(log_directory, now)
     if active is None:
         terminal.show_failure(nothing_to_stop_failure())
         return exit_codes.ERROR
 
     ended_record = end_work_block(log_directory, active, now, "clean")
-    writes = write_unrecorded_records(runner, eval_reading)
-    write_of_this_block = find_write(writes, ended_record.id)
-    if write_of_this_block is None or not write_of_this_block.committed:
-        failures: list[Failure] = []
-        if write_of_this_block is not None:
-            failures = write_of_this_block.failures
-        terminal.show_failure(record_waiting_failure(ended_record, log_directory, failures))
+    waiting_file = work_blocks.WorkBlockFiles(log_directory).unrecorded_file(ended_record.id)
+    write_of_this_block = write_one_unrecorded_record(runner, eval_reading, waiting_file)
+    if not write_of_this_block.committed:
+        terminal.show_failure(record_waiting_failure(ended_record, waiting_file, write_of_this_block.failures))
         return exit_codes.ERROR
 
     terminal.show_paragraph(
@@ -283,6 +284,67 @@ def write_one_unrecorded_record(
     )
 
 
+@dataclass(frozen=True)
+class Settling:
+    """What settling did before a command's own work: work blocks it closed, and records it wrote.
+
+    `closings` are sentences for a person, one per work block goodall closed
+    itself (forgotten or damaged); `writes` are the waiting records it tried
+    to write into the record repo.
+    """
+
+    closings: list[str] = field(default_factory=list)
+    writes: list[UnrecordedWrite] = field(default_factory=list)
+
+    @property
+    def warnings(self) -> list[Failure]:
+        """A failure for each record still waiting in the log directory, to show as a warning."""
+        warnings = []
+        for write in self.writes:
+            if write.committed:
+                continue
+            if write.record is None:
+                warnings.extend(write.failures)
+            else:
+                warnings.append(record_waiting_failure(write.record, write.waiting_file, write.failures))
+        return warnings
+
+    @property
+    def paragraphs(self) -> list[str]:
+        """What a person reads about settling: each closing, then each record written."""
+        paragraphs = list(self.closings)
+        for write in self.writes:
+            if write.committed and write.record is not None:
+                paragraphs.append(
+                    f"Recorded your work block on {write.record.workstream}, which ran from "
+                    f"{describe_moment(write.record.started_at)} to {describe_ended_at(write.record)}. "
+                    + where_the_record_went(write.push_state)
+                )
+        return paragraphs
+
+
+def settle(runner: Runner, eval_reading: EvalForThisAccount) -> Settling:
+    """Tidy up what earlier work blocks left behind, before start, stop or status does its own work.
+
+    Writes every ended work block's record still waiting in the log
+    directory into the record repo.
+    """
+    return Settling(writes=write_unrecorded_records(runner, eval_reading))
+
+
+def show_settling(terminal: Terminal, settling: Settling) -> None:
+    """Show what settling did: what was closed and recorded as paragraphs, records still waiting as warnings."""
+    for paragraph in settling.paragraphs:
+        terminal.show_paragraph(paragraph)
+    terminal.show_warnings(settling.warnings)
+
+
+def describe_ended_at(record: records.WorkBlockRecord) -> str:
+    """When an ended work block ended, for a person."""
+    assert record.ended_at is not None
+    return describe_moment(record.ended_at)
+
+
 def find_write(writes: list[UnrecordedWrite], work_block_id: str) -> UnrecordedWrite | None:
     """The write of one work block's record among `writes`, or None when it was not attempted."""
     for write in writes:
@@ -324,20 +386,19 @@ def nothing_to_stop_failure() -> Failure:
 
 
 def record_waiting_failure(
-    ended_record: records.WorkBlockRecord, log_directory: Path, failures: list[Failure]
+    ended_record: records.WorkBlockRecord, waiting_file: Path, failures: list[Failure]
 ) -> Failure:
     """The failure for a work block that has ended but whose record could not be written to the record repo yet.
 
     It says plainly that the work block did end, that nothing is lost, where
-    the record waits, and what went wrong, in the record repo module's own
-    words.
+    the record waits (`waiting_file`), and what went wrong, in the record
+    repo module's own words.
     """
     reasons = []
     next_steps = []
     for failure in failures:
         reasons.append(failure.what_happened)
         next_steps.append(failure.what_to_do_next)
-    waiting_file = work_blocks.WorkBlockFiles(log_directory).unrecorded_file(ended_record.id)
     what_to_do_next = " ".join(next_steps)
     if what_to_do_next == "":
         what_to_do_next = "Run goodall doctor to see what is wrong with the record repo."

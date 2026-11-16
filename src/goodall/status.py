@@ -39,7 +39,7 @@ from goodall.folders import describe_folder_problem, log_directory_unreachable_f
 from goodall.local_settings import read_local_settings
 from goodall.runner import Runner
 from goodall.terminal import Failure, Terminal
-from goodall.work_block_commands import Clock, describe_moment
+from goodall.work_block_commands import Clock, describe_moment, settle, show_settling
 
 
 def run_status(terminal: Terminal, runner: Runner, clock: Clock, as_json: bool) -> int:
@@ -64,6 +64,9 @@ def run_status(terminal: Terminal, runner: Runner, clock: Clock, as_json: bool) 
     eval_reading = read_eval_for_this_account(settings)
     if isinstance(eval_reading, list):
         return report_failures(terminal, eval_reading, as_json)
+    settling = settle(runner, eval_reading)
+    if not as_json:
+        show_settling(terminal, settling)
     active = work_blocks.active_work_block(settings.log_directory.path, clock())
     if active is not None:
         return report_active_work_block(terminal, eval_reading, active)

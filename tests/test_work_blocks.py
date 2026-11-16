@@ -336,3 +336,35 @@ def test_stop_with_no_work_block_active_says_so_and_exits_1(eval_account: EvalAc
     assert stop.standard_error.startswith("FAIL  No work block is active, so there was nothing to stop.")
     assert "goodall start" in stop.standard_error
     assert eval_account.work_block_files() == []
+
+
+def test_stop_whose_record_cannot_be_written_keeps_it_says_so_and_the_next_command_writes_it(
+    eval_account: EvalAccount,
+) -> None:
+    run_goodall(eval_account, ["start"])
+    # git has no name or email to commit with, so the record repo cannot take the record.
+    git(eval_account.record_repo, "config", "--unset", "user.name")
+    eval_account.clock.advance(timedelta(hours=1))
+
+    stop = run_goodall(eval_account, ["stop"])
+
+    assert stop.exit_code == exit_codes.ERROR
+    assert stop.standard_output == ""
+    assert "Your work block on research has ended, so goodall is no longer recording" in stop.everything_printed
+    assert "Nothing is lost" in stop.everything_printed
+    assert "git config --global user.name" in stop.everything_printed
+    assert eval_account.work_block_files() == []
+    [waiting_file] = (eval_account.log_directory / "work-blocks" / "unrecorded").glob("*.json")
+    assert str(waiting_file) in stop.everything_printed
+    assert not marker_file(eval_account).exists()
+
+    git(eval_account.record_repo, "config", "user.name", "Ada Lovelace")
+    eval_account.clock.advance(timedelta(minutes=5))
+    status = run_goodall(eval_account, ["status"])
+
+    assert status.exit_code == exit_codes.ERROR
+    assert "Recorded your work block on research" in status.everything_printed
+    [record] = eval_account.work_block_records()
+    assert record["end_state"] == "clean"
+    assert record["ended_at"] == "2026-11-16T10:30:00Z"
+    assert not waiting_file.exists()
