@@ -66,7 +66,7 @@ def test_status_without_local_settings_names_where_it_looked(empty_config_direct
     _, _, standard_error = run_goodall(["status"])
 
     # The path is never split across lines, so a contributor can copy it.
-    expected_settings_file = empty_config_directory / "settings.toml"
+    expected_settings_file = empty_config_directory / "local-settings.toml"
     assert str(expected_settings_file) in standard_error
     assert "GOODALL_CONFIG_DIR" in standard_error
 
@@ -85,7 +85,7 @@ def test_status_without_override_looks_in_home_folder(tmp_path: Path, monkeypatc
     exit_code, _, standard_error = run_goodall(["status"])
 
     assert exit_code == exit_codes.ERROR
-    assert str(home_folder / ".config" / "goodall" / "settings.toml") in standard_error
+    assert str(home_folder / ".config" / "goodall" / "local-settings.toml") in standard_error
     assert "home folder" in standard_error
     assert files_under(home_folder) == []
 
@@ -101,7 +101,7 @@ def test_empty_override_counts_as_unset(tmp_path: Path, monkeypatch: pytest.Monk
 
     _, _, standard_error = run_goodall(["status"])
 
-    assert str(home_folder / ".config" / "goodall" / "settings.toml") in standard_error
+    assert str(home_folder / ".config" / "goodall" / "local-settings.toml") in standard_error
 
 
 def test_relative_override_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -129,7 +129,7 @@ def test_status_json_reports_the_same_failure_on_standard_output(empty_config_di
     document = json.loads(json_output)
     failure = document["failure"]
     assert failure["kind"] == "local_settings_missing"
-    assert str(empty_config_directory / "settings.toml") in failure["what_happened"]
+    assert str(empty_config_directory / "local-settings.toml") in failure["what_happened"]
     assert "goodall onboard" in failure["what_to_do_next"]
     assert set(failure) == {"kind", "what_happened", "why", "what_to_do_next"}
 
@@ -154,7 +154,7 @@ def test_status_without_local_settings_uses_no_colour_when_not_a_terminal(empty_
 def test_status_with_local_settings_present_says_reading_them_is_not_built(empty_config_directory: Path) -> None:
     # Reading local settings comes in the next ticket. Until then, finding the
     # file must not be mistaken for "everything is fine".
-    settings_file = empty_config_directory / "settings.toml"
+    settings_file = empty_config_directory / "local-settings.toml"
     settings_file.write_text("schema_version = 1\n")
 
     exit_code, standard_output, standard_error = run_goodall(["status"])

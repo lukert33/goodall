@@ -9,12 +9,12 @@ when imported.
 
 Where goodall looks:
 
-- Normally `~/.config/goodall/settings.toml`, a fixed place in the account's
+- Normally `~/.config/goodall/local-settings.toml`, a fixed place in the account's
   home folder. A fixed place, rather than searching upward from the current
   folder, because commands and hooks run inside whatever repository the work
   is in, which is rarely the record repo.
 - If the environment variable GOODALL_CONFIG_DIR names a folder, goodall
-  looks for `settings.toml` there instead. This exists so tests and
+  looks for `local-settings.toml` there instead. This exists so tests and
   goodall's own development never touch a real home folder. It must be an
   absolute path: a relative one would be looked up from whichever folder a
   command or hook happened to start in, so two commands could find two
@@ -40,7 +40,7 @@ CONFIG_DIRECTORY_VARIABLE = "GOODALL_CONFIG_DIR"
 DEFAULT_CONFIG_DIRECTORY_IN_HOME = Path(".config") / "goodall"
 
 # The name of the local settings file inside the settings folder.
-LOCAL_SETTINGS_FILE_NAME = "settings.toml"
+LOCAL_SETTINGS_FILE_NAME = "local-settings.toml"
 
 
 @dataclass(frozen=True)
