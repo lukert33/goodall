@@ -6,11 +6,13 @@ the check context (goodall.runner), so a test decides what each program
 does, and git runs for real.
 """
 
+from dataclasses import dataclass
 from pathlib import Path
 
-from goodall.checks import Check, CheckContext, CheckOutcome, passed
+from goodall.checks import Check, CheckContext, CheckOutcome, failed, passed
 from goodall.runner import Command
 from goodall.settings_checks import LOCAL_SETTINGS_VALID, RECORD_REPO_FOUND, valid_local_settings
+from goodall.terminal import Failure
 
 TOOLS_GROUP = "Tools"
 EVAL_ACCOUNT_GROUP = "Eval account"
@@ -26,22 +28,96 @@ RECORD_REPO_IS_GIT_REPOSITORY = "record_repo.is_git_repository"
 ACCOUNT_GROUPS_COMMAND = ["/usr/bin/id", "-Gn"]
 
 
+@dataclass(frozen=True)
+class RequiredProgram:
+    """A program goodall needs, and what to tell a contributor when it is missing.
+
+    - `name` is the command, as found on the PATH.
+    - `described` names it for a person, such as "gh, GitHub's command-line tool".
+    - `why` says what goodall uses it for.
+    - `how_to_install` says where to get it, as the end of a sentence.
+    """
+
+    name: str
+    described: str
+    why: str
+    how_to_install: str
+
+
+GIT = RequiredProgram(
+    name="git",
+    described="git",
+    why="Goodall keeps the eval's records in the record repo with git, and commits and pushes them.",
+    how_to_install="with Apple's Command Line Tools, by running xcode-select --install in Terminal",
+)
+
+GH = RequiredProgram(
+    name="gh",
+    described="gh, GitHub's command-line tool,",
+    why=("Goodall asks gh about the record repo on GitHub, so that goodall itself never holds a GitHub token."),
+    how_to_install="from https://cli.github.com",
+)
+
+# The command of each secrets manager local settings can name. Local
+# settings accept only these (goodall.local_settings), so a lookup cannot
+# miss. This moves into the secrets manager module (ADR 0011) once that
+# module exists.
+SECRETS_MANAGER_PROGRAMS = {
+    "1password": RequiredProgram(
+        name="op",
+        described="op, 1Password's command-line tool,",
+        why=(
+            "This eval's secrets are kept in 1Password, and goodall reaches them only through op: op checks "
+            "that each secret reference points at a real item, and launches programs with the secrets they need."
+        ),
+        how_to_install="following https://developer.1password.com/docs/cli/get-started/",
+    ),
+}
+
+
+def check_program_installed(context: CheckContext, program: RequiredProgram) -> CheckOutcome:
+    """`program` is on this macOS user account's PATH.
+
+    It is only looked for, never run, so the answer does not depend on the
+    program working; checks that run it say so when it does not.
+    """
+    if context.runner.find_program(program.name) is not None:
+        return passed()
+    return failed([program_missing_failure(program)])
+
+
+def program_missing_failure(program: RequiredProgram) -> Failure:
+    """The failure for a required program that is not installed.
+
+    The next step is for the owner of the Mac, not the contributor: an eval
+    account is a standard account, which cannot install software.
+    """
+    return Failure(
+        kind="program_missing",
+        what_happened=f"{program.described} is not installed for this macOS user account (it is not on the PATH).",
+        why=program.why,
+        what_to_do_next=(
+            f"Ask the owner of this Mac to install {program.name} {program.how_to_install}, from an "
+            "administrator account, because a standard account cannot install software. Then run goodall "
+            "doctor again."
+        ),
+    )
+
+
 def check_git_installed(context: CheckContext) -> CheckOutcome:
     """git is installed."""
-    context.runner.find_program("git")
-    return passed()
+    return check_program_installed(context, GIT)
 
 
 def check_gh_installed(context: CheckContext) -> CheckOutcome:
     """gh is installed."""
-    context.runner.find_program("gh")
-    return passed()
+    return check_program_installed(context, GH)
 
 
 def check_secrets_manager_installed(context: CheckContext) -> CheckOutcome:
-    """The secrets manager's command is installed."""
-    context.runner.find_program("op")
-    return passed()
+    """The command of the secrets manager that local settings name is installed."""
+    local_settings = valid_local_settings(context)
+    return check_program_installed(context, SECRETS_MANAGER_PROGRAMS[local_settings.secrets_manager])
 
 
 def check_standard_account(context: CheckContext) -> CheckOutcome:

@@ -504,3 +504,70 @@ def test_doctor_changes_nothing_when_local_settings_are_missing(
     run_goodall(["doctor", "--json"])
 
     assert snapshot_of_every_file(tmp_path) == before
+
+
+def check_document(document: dict[str, object], check_id: str) -> dict[str, object]:
+    """The one check with this id from a `goodall doctor --json` document."""
+    checks = document["checks"]
+    assert isinstance(checks, list)
+    for check in checks:
+        if check["id"] == check_id:
+            assert isinstance(check, dict)
+            return check
+    raise AssertionError(f"No check {check_id} in the document.")
+
+
+def test_missing_gh_is_one_failure_naming_it_and_saying_the_owner_of_the_mac_installs_it(
+    healthy_account: EvalAccount,
+) -> None:
+    runner = healthy_runner()
+    runner.installed_programs.remove("gh")
+
+    exit_code, standard_output, _ = run_goodall(["doctor", "--json"], runner)
+
+    assert exit_code == exit_codes.ERROR
+    document = json.loads(standard_output)
+    assert document["summary"] == {"passed": 11, "warned": 0, "failed": 1, "skipped": 0}
+    gh_check = check_document(document, "tools.gh_installed")
+    assert gh_check["status"] == "fail"
+    assert isinstance(gh_check["detail"], str)
+    assert "gh" in gh_check["detail"]
+    assert isinstance(gh_check["next_step"], str)
+    # On an eval account the contributor cannot install software, so the
+    # next step goes to whoever administers the Mac.
+    assert "owner of this Mac" in gh_check["next_step"]
+    assert "administrator account" in gh_check["next_step"]
+    assert "https://cli.github.com" in gh_check["next_step"]
+
+
+def test_missing_git_is_one_failure_and_the_record_repo_check_waits_for_it(healthy_account: EvalAccount) -> None:
+    runner = healthy_runner()
+    runner.installed_programs.remove("git")
+
+    exit_code, standard_output, _ = run_goodall(["doctor", "--json"], runner)
+
+    assert exit_code == exit_codes.ERROR
+    document = json.loads(standard_output)
+    assert document["summary"] == {"passed": 10, "warned": 0, "failed": 1, "skipped": 1}
+    git_check = check_document(document, "tools.git_installed")
+    assert git_check["status"] == "fail"
+    assert isinstance(git_check["next_step"], str)
+    assert "xcode-select --install" in git_check["next_step"]
+    assert check_document(document, "record_repo.is_git_repository")["waiting_for"] == "tools.git_installed"
+
+
+def test_missing_op_fails_the_secrets_manager_check_naming_1password(healthy_account: EvalAccount) -> None:
+    runner = healthy_runner()
+    runner.installed_programs.remove("op")
+
+    exit_code, standard_output, _ = run_goodall(["doctor", "--json"], runner)
+
+    assert exit_code == exit_codes.ERROR
+    document = json.loads(standard_output)
+    assert document["summary"] == {"passed": 11, "warned": 0, "failed": 1, "skipped": 0}
+    secrets_manager_check = check_document(document, "tools.secrets_manager_installed")
+    assert secrets_manager_check["status"] == "fail"
+    assert isinstance(secrets_manager_check["detail"], str)
+    assert "op, 1Password's command-line tool," in secrets_manager_check["detail"]
+    assert isinstance(secrets_manager_check["next_step"], str)
+    assert "https://developer.1password.com/docs/cli/get-started/" in secrets_manager_check["next_step"]
