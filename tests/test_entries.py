@@ -499,3 +499,29 @@ def test_intervene_without_a_category_as_json_names_the_categories_too(eval_acco
     [failure] = document["failures"]
     assert failure["kind"] == "intervention_category_missing"
     assert "agent-limitation" in failure["what_to_do_next"]
+
+
+@pytest.mark.parametrize("decision_arguments", [[], ["--decision", "overrode"], ["--decision", "Modify"]])
+def test_intervene_without_a_known_decision_explains_each_decision(
+    eval_account: EvalAccount, decision_arguments: list[str]
+) -> None:
+    run = run_goodall(["intervene", "--category", "agent-limitation", *decision_arguments, "Stopped it."])
+
+    assert run.exit_code == exit_codes.USAGE_ERROR
+    flattened_error = " ".join(run.standard_error.split())
+    for decision in ["approve", "modify", "reject", "escalate", "terminate"]:
+        assert decision in flattened_error
+    # Each decision is explained, so a person can choose without the schema document.
+    assert "stopped the agent's work on the task altogether" in flattened_error
+    assert eval_account.intervention_files() == []
+
+
+def test_intervene_missing_both_category_and_decision_reports_both_at_once(eval_account: EvalAccount) -> None:
+    run = run_goodall(["intervene", "--json", "Stopped it."])
+
+    document = json.loads(run.standard_output)
+    assert run.exit_code == exit_codes.USAGE_ERROR
+    assert [failure["kind"] for failure in document["failures"]] == [
+        "intervention_category_missing",
+        "intervention_decision_missing",
+    ]

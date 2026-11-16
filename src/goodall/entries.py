@@ -129,9 +129,18 @@ def add_intervention(
     eval_reading = find_eval_for_this_account()
     if isinstance(eval_reading, list):
         return stopped(record_type, exit_codes.ERROR, eval_reading)
+    # Both are checked before either is reported, so a person who left out
+    # both learns about both at once.
+    usage_failures = []
     category_failure = check_category(details.category, eval_reading)
     if category_failure is not None:
-        return stopped(record_type, exit_codes.USAGE_ERROR, [category_failure])
+        usage_failures.append(category_failure)
+    decision_failure = check_decision(details.decision)
+    if decision_failure is not None:
+        usage_failures.append(decision_failure)
+    if usage_failures:
+        return stopped(record_type, exit_codes.USAGE_ERROR, usage_failures)
+    # The checks above guarantee these; the assert tells the type checker.
     assert details.category is not None and details.decision is not None
     now = datetime.now(UTC)
     intervention = records.build_intervention(
@@ -186,6 +195,42 @@ def check_category(category: str | None, eval_for_this_account: EvalForThisAccou
             commands_to_try=commands_to_try,
         )
     return None
+
+
+# What each decision means for a person working beside an agent, in the
+# words of docs/record-schemas.md. The decisions themselves are Inspect's
+# (records.DECISIONS); `goodall intervene --help` shows this list too.
+DECISION_MEANINGS = {
+    "approve": "you reviewed what the agent was about to do and let it go ahead",
+    "modify": "you changed what the agent did or was about to do",
+    "reject": "you refused one action, and the agent carried on otherwise",
+    "escalate": "you took a step over because the agent could not, or handed it on",
+    "terminate": "you stopped the agent's work on the task altogether",
+}
+
+
+def check_decision(decision: str | None) -> Failure | None:
+    """Say what is wrong with the --decision given, or None when it is one of the five decisions."""
+    if decision in records.DECISIONS:
+        return None
+    meanings = []
+    for known_decision in records.DECISIONS:
+        meanings.append(f"{known_decision} ({DECISION_MEANINGS[known_decision]})")
+    why = "Each intervention records what the person decided, in one of five words shared with Inspect."
+    what_to_do_next = f"Add --decision with one of: {'; '.join(meanings)}."
+    if decision is None:
+        return Failure(
+            kind="intervention_decision_missing",
+            what_happened="No --decision was given for the intervention. Nothing was recorded.",
+            why=why,
+            what_to_do_next=what_to_do_next,
+        )
+    return Failure(
+        kind="intervention_decision_unknown",
+        what_happened="The --decision given is not one of the five decisions. Nothing was recorded.",
+        why=why + " They are matched exactly, in lowercase.",
+        what_to_do_next=what_to_do_next,
+    )
 
 
 def current_work_block_id() -> str | None:

@@ -31,7 +31,7 @@ from pathlib import Path
 
 from goodall import exit_codes
 from goodall.doctor import run_doctor
-from goodall.entries import EntryRequest, InterventionDetails, run_intervene, run_journal
+from goodall.entries import DECISION_MEANINGS, EntryRequest, InterventionDetails, run_intervene, run_journal
 from goodall.runner import RealRunner, Runner
 from goodall.status import run_status
 from goodall.terminal import Failure, Terminal
@@ -99,6 +99,11 @@ def build_parser() -> argparse.ArgumentParser:
     add_entry_text_arguments(journal, "What was decided or done, and by whom.")
     journal.set_defaults(command_name="journal")
 
+    # The decisions' meanings come from goodall.entries, so help and failure
+    # messages explain them in the same words.
+    decision_lines = []
+    for decision, meaning in DECISION_MEANINGS.items():
+        decision_lines.append(f"  {decision.ljust(10)} {meaning}")
     intervene = commands.add_parser(
         "intervene",
         help="Add an intervention to the record repo: a moment you stepped in for or over an agent.",
@@ -113,12 +118,7 @@ def build_parser() -> argparse.ArgumentParser:
             "  pbpaste | goodall intervene --category infrastructure --decision escalate\n"
             "  goodall intervene --category policy-mandated --decision approve --file ~/Desktop/review.txt\n"
             "\n"
-            "decisions:\n"
-            "  approve    you reviewed what the agent was about to do and let it go ahead\n"
-            "  modify     you changed what the agent did or was about to do\n"
-            "  reject     you refused one action, and the agent carried on otherwise\n"
-            "  escalate   you took a step over because the agent could not, or handed it on\n"
-            "  terminate  you stopped the agent's work on the task altogether"
+            "decisions:\n" + "\n".join(decision_lines)
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
