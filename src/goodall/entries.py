@@ -43,15 +43,18 @@ class EntryRequest:
 
 def run_journal(terminal: Terminal, runner: Runner, request: EntryRequest) -> int:
     """Add a journal entry to the record repo and return the exit code."""
+    text = request.text
+    if text is None:
+        text = terminal.read_piped_text()
     eval_reading = find_eval_for_this_account()
     if isinstance(eval_reading, list):
         terminal.show_failures(eval_reading)
         return exit_codes.ERROR
-    assert request.text is not None
+    assert text is not None
     entry = records.build_journal_entry(
         contributor=eval_reading.contributor.id,
         written_at=datetime.now(UTC),
-        body=request.text,
+        body=text,
     )
     outcome = write_record(runner, eval_reading.local_settings.record_repo.path, entry)
     return report_outcome(terminal, "journal entry", outcome)

@@ -300,6 +300,19 @@ class Terminal:
         # next block knows to start with a blank line.
         self.output_started = False
 
+    def read_piped_text(self) -> str | None:
+        """Return everything piped to standard input, or None when nothing can be piped.
+
+        This is not a question: it reads text that was sent with the command
+        (`pbpaste | goodall journal`), never what a person types in answer to
+        a prompt. So when standard input is a terminal, which means a person
+        at the keyboard and nothing piped, it returns None at once instead of
+        waiting for them to type.
+        """
+        if self.standard_input is None or self.standard_input.isatty():
+            return None
+        return self.standard_input.read()
+
     def show_facts(self, facts: list[tuple[str, str]]) -> None:
         """Write labelled facts to standard output, one per line, values lined up in one column.
 

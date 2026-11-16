@@ -167,3 +167,13 @@ def test_journal_records_the_text_given_as_an_argument_and_commits_it(eval_accou
     assert git(eval_account.record_repo, "status", "--porcelain") == ""
     assert "journal entry" in run.standard_output
     assert str(entry_file) in run.standard_output
+
+
+def test_journal_reads_several_lines_piped_to_standard_input(eval_account: EvalAccount) -> None:
+    piped_text = "# Chose Postgres\n\nThe agent proposed it; I agreed.\nDecided by me.\n"
+
+    run = run_goodall(["journal"], standard_input=io.StringIO(piped_text))
+
+    assert run.exit_code == exit_codes.SUCCESS, run.standard_error
+    [entry_file] = eval_account.journal_files()
+    assert entry_file.read_text().endswith("+++\n\n# Chose Postgres\n\nThe agent proposed it; I agreed.\nDecided by me.\n")
