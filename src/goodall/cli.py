@@ -5,8 +5,9 @@ Called by the `goodall` console script (see pyproject.toml) and by
 directly with a captured terminal and a fake runner, and check the returned
 exit code, so `main` returns a number instead of calling `sys.exit` itself.
 
-`goodall status` (goodall.status) and `goodall doctor` (goodall.doctor)
-are built. Every other subcommand is still a stub: it reports that it is not
+`goodall status` (goodall.status), `goodall doctor` (goodall.doctor), and
+`goodall journal` and `goodall intervene` (goodall.entries) are built.
+Every other subcommand is still a stub: it reports that it is not
 built yet and returns `ERROR` (1), not `USAGE_ERROR` (2), because the
 command line was valid and the feature is missing.
 

@@ -9,8 +9,10 @@ and reads back exactly what a contributor would have seen.
 Rules this module keeps (ADR 0012, and "Command-line conventions" in
 AGENTS.md):
 
-- It never asks a question. There is deliberately no input method here; the
-  setup page is the only place goodall asks a person anything.
+- It never asks a question. There is deliberately no prompting method here;
+  the setup page is the only place goodall asks a person anything. The one
+  thing it reads is text piped in with a command (`read_piped_text`), and
+  it never waits on a keyboard for it.
 - Results go to standard output and failures go to standard error, so a
   contributor can redirect results to a file and still see problems. In
   `--json` mode standard output carries exactly one JSON document and

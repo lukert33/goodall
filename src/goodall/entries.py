@@ -5,21 +5,32 @@ Called by `cli.main`. A contributor, or an agent working for one, runs
 --category ... --decision ... "..."` to add an intervention. Both commands
 do the same five things, in this order:
 
-1. Get the text: from the argument, or from standard input when text is
-   piped in. Goodall never asks a question in the terminal (ADR 0012), so
-   with no text and a person at the keyboard it fails at once and shows how
-   to pass the text, instead of sitting waiting for typing.
+1. Get the text: from the argument, from a plain text file (`--file`, for
+   someone who would rather write in TextEdit), or from standard input when
+   text is piped in (`pbpaste | goodall journal`). Goodall never asks a
+   question in the terminal (ADR 0012), so with no text and a person at
+   the keyboard it fails at once and shows how to pass the text, instead
+   of sitting waiting for typing. Empty text, and text over
+   MAXIMUM_TEXT_CHARACTERS, are refused.
 2. Find this account's eval: local settings, the record repo folder, the
    eval config, and this account's contributor in its roster.
-3. Build the record (goodall.records), stamped with the contributor and the
-   current UTC time, and check it against the eval config.
+3. Build the record (goodall.records), stamped with the contributor, the
+   current UTC time and the current work block (`current_work_block_id`),
+   and check it against the eval config. Nothing a person writes is
+   refused except what the records module refuses: email addresses and
+   secrets. No failure ever repeats the text.
 4. Write it through goodall.record_repo, which writes the file, commits it
    and pushes it.
 5. Say what was recorded and where, as text or as one JSON document.
 
 Exit codes: 0 once the record is committed, because from then on it is
 safe, even if the push is still pending (that is shown as a warning); 1 when
-it was not committed; 2 for a mistake in how the command was run.
+it was not committed; 2 for a mistake in how the command was run, including
+the text and every option, so nothing was attempted.
+
+Open question, deliberately not settled here: an agent can run these
+commands too, and the record then names the contributor with nothing saying
+an agent wrote the words. Every choice in this module is provisional.
 """
 
 import re
