@@ -654,3 +654,20 @@ def test_a_journal_entry_written_during_a_work_block_names_it_and_one_after_does
         entries_by_text[entry_text.rsplit("+++", 1)[1].strip()] = entry_text
     assert f'work_block = "{running.id}"' in entries_by_text["Chose Postgres; I decided."]
     assert "work_block" not in entries_by_text["Wrote up the day."]
+
+
+def test_an_intervention_that_happened_before_the_active_work_block_began_names_no_work_block(
+    eval_account: EvalAccount,
+) -> None:
+    eval_account.clock.now = datetime.now(UTC)
+    run_goodall(eval_account, ["start"])
+    an_hour_ago = (eval_account.clock.now - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    intervene = run_goodall(
+        eval_account,
+        ["intervene", "--category", "infrastructure", "--decision", "escalate", "--occurred-at", an_hour_ago, "VPN."],
+    )
+
+    assert intervene.exit_code == exit_codes.SUCCESS, intervene.standard_error
+    [intervention_file] = (eval_account.record_repo / "interventions").glob("*.md")
+    assert "work_block" not in intervention_file.read_text()
