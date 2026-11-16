@@ -39,7 +39,42 @@ src = ["src", "tests"]
 [tool.ruff.lint]
 # E/F: errors and unused names. I: import order. B: likely bugs.
 # UP: outdated syntax for the Python version we require.
-select = ["E", "F", "I", "B", "UP"]
+select = ["E", "F", "I", "B", "UP", "TID251"]
+
+# TID251, "banned API": only the runner (src/goodall/runner.py) starts other
+# programs (AGENTS.md invariant 9, ADR 0011). Every other way Python offers
+# to start one is banned everywhere else, so a new caller has to go through
+# the runner and its fake.
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"subprocess".msg = "Start programs through goodall.runner, the one gateway (ADR 0011)."
+"os.system".msg = "Start programs through goodall.runner, the one gateway (ADR 0011)."
+"os.popen".msg = "Start programs through goodall.runner, the one gateway (ADR 0011)."
+"os.posix_spawn".msg = "Start programs through goodall.runner, the one gateway (ADR 0011)."
+"os.posix_spawnp".msg = "Start programs through goodall.runner, the one gateway (ADR 0011)."
+"os.spawnv".msg = "Start programs through goodall.runner, the one gateway (ADR 0011)."
+"os.spawnvp".msg = "Start programs through goodall.runner, the one gateway (ADR 0011)."
+"os.spawnl".msg = "Start programs through goodall.runner, the one gateway (ADR 0011)."
+"os.spawnlp".msg = "Start programs through goodall.runner, the one gateway (ADR 0011)."
+"os.execv".msg = "Start programs through goodall.runner, the one gateway (ADR 0011)."
+"os.execvp".msg = "Start programs through goodall.runner, the one gateway (ADR 0011)."
+"os.execve".msg = "Start programs through goodall.runner, the one gateway (ADR 0011)."
+"os.execl".msg = "Start programs through goodall.runner, the one gateway (ADR 0011)."
+"os.execlp".msg = "Start programs through goodall.runner, the one gateway (ADR 0011)."
+"pty.spawn".msg = "Start programs through goodall.runner, the one gateway (ADR 0011)."
+"asyncio.create_subprocess_exec".msg = "Start programs through goodall.runner, the one gateway (ADR 0011)."
+"asyncio.create_subprocess_shell".msg = "Start programs through goodall.runner, the one gateway (ADR 0011)."
+
+[tool.ruff.lint.per-file-ignores]
+# The runner is the one module allowed to start programs.
+"src/goodall/runner.py" = ["TID251"]
+# Tests set up real git repositories and start fresh interpreters to prove
+# what the hook path imports; they are not goodall, so they may start
+# programs directly.
+"tests/**" = ["TID251"]
+# Repository tooling, not part of the goodall package: a Claude Code hook
+# for this repo's contributors. It must run with nothing but the standard
+# library and without goodall installed, so it cannot import the runner.
+".claude/hooks/branch_merge_status.py" = ["TID251"]
 
 [tool.mypy]
 strict = true

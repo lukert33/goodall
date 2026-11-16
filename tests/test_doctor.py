@@ -670,6 +670,17 @@ def test_a_record_repo_check_whose_git_never_finishes_says_so(healthy_account: E
     assert "`git rev-parse --show-toplevel` timed out after 10 s" in git_repository_check["detail"]
 
 
+def test_a_command_the_fake_runner_was_not_told_about_fails_the_test_and_names_it(
+    healthy_account: EvalAccount,
+) -> None:
+    # Every program is installed, but the account check's command was
+    # never scripted: the test must fail loudly rather than run it.
+    runner = FakeRunner(installed_programs=["git", "gh", "op"])
+
+    with pytest.raises(AssertionError, match="`/usr/bin/id -Gn`"):
+        run_goodall(["doctor"], runner)
+
+
 def test_an_account_check_that_never_finishes_is_reported_as_timed_out_and_doctor_still_completes(
     healthy_account: EvalAccount,
 ) -> None:
