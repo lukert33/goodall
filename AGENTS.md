@@ -1,51 +1,141 @@
-# Agent Instructions
+# AGENTS.md
 
-This project uses **bd** (beads) for issue tracking. Run `bd prime` for full workflow context.
+Goodall is an open-source tool for instrumenting open-world evals: it records
+what a human and their AI agents each did while doing real work together, so
+the record can be analysed and published. It is being rebuilt from scratch;
+most of what is described below does not exist in code yet.
 
-> **Architecture in one line:** Issues live in a local Dolt database
-> (`.beads/dolt/`); cross-machine sync uses `bd dolt push/pull` (a
-> git-compatible protocol), stored under `refs/dolt/data` on your git
-> remote — separate from `refs/heads/*` where your code lives.
-> `.beads/issues.jsonl` is a passive export, not the wire protocol.
->
-> See [sync-concepts](https://github.com/gastownhall/beads/blob/main/docs/core-concepts/sync-concepts.md)
-> for the one-screen overview and anti-patterns (don't treat JSONL as the
-> source of truth; don't `bd import` during normal operation; don't
-> reach for third-party Dolt hosting before trying the default).
+This file is the single source of guidance for every agent and human
+contributor.
 
-## Quick Reference
+## Where guidance lives
 
-```bash
-bd ready              # Find available work
-bd show <id>          # View issue details
-bd update <id> --claim  # Claim work atomically
-bd close <id>         # Complete work
-bd dolt push          # Push beads data to remote
-```
+- **Conventions and invariants**: this file. A subdirectory that needs its own
+  guidance gets its own `AGENTS.md`.
+- **`CLAUDE.md` is a pointer.** In every directory it contains only an
+  `@AGENTS.md` import. Put new guidance in `AGENTS.md`.
+- **Decisions and their reasoning**: `bd memories DECISION`. Read the relevant
+  entry before changing anything a decision covers; record a new decision with
+  `bd remember "DECISION <date> (<topic>): ..."`.
+- **Tasks**: `bd` (see the Beads sections below).
 
-## Non-Interactive Shell Commands
+## Two kinds of machine account
 
-**ALWAYS use non-interactive flags** with file operations to avoid hanging on confirmation prompts.
+Goodall imposes strict rules on an **eval account**: a standard (non-admin)
+macOS account used only for one eval. Those rules are product behaviour, to be
+enforced by `goodall doctor` and `goodall onboard`.
 
-Shell commands like `cp`, `mv`, and `rm` may be aliased to include `-i` (interactive) mode on some systems, causing the agent to hang indefinitely waiting for y/n input.
+Developing goodall happens in an ordinary **development account** and is
+outside any eval. Eval-account restrictions apply to what goodall checks, and
+the sections below are what apply to you while building it.
 
-**Use these forms instead:**
-```bash
-# Force overwrite without prompting
-cp -f source dest           # NOT: cp source dest
-mv -f source dest           # NOT: mv source dest
-rm -f file                  # NOT: rm file
+## Invariants
 
-# For recursive operations
-rm -rf directory            # NOT: rm -r directory
-cp -rf source dest          # NOT: cp -r source dest
-```
+Each of these is a contract. A change that breaks one needs a new decision
+first.
 
-**Other commands that may prompt:**
-- `scp` - use `-o BatchMode=yes` for non-interactive
-- `ssh` - use `-o BatchMode=yes` to fail instead of prompting
-- `apt-get` - use `-y` flag
-- `brew` - use `HOMEBREW_NO_AUTO_UPDATE=1` env var
+1. **Goodall holds no instance data.** An eval's config, construct, journal
+   and intervention log live in that eval's record repo; raw logs live in its
+   log directory.
+2. **Raw records stay verbatim.** Captured transcripts and collector output
+   are copied, kept in their original layout, and left unmodified. Everything
+   computed from them (labels, a Scout database) is derived and regenerable.
+3. **Labels come from versioned rules.** Actor labels (`human`, `ai`,
+   `harness`) are computed from raw data by documented rules that carry a
+   version.
+4. **Secrets stay in the secrets manager.** Files hold `op://` references
+   only; raw secret values given as input are rejected.
+5. **Diagnostics are read-only.** `goodall doctor` and its checks leave files,
+   credentials and remote state untouched.
+6. **Goodall operates git, people administer it.** Goodall commits and pushes
+   to the record repo; creating remote repos and setting their visibility is
+   the researcher's job.
+7. **The hook path is standard library only.** Code run by a Claude Code hook
+   imports nothing third-party, because the prompt gate runs on every prompt.
+8. **Capture is independent of analysis.** `inspect-ai` and `inspect-scout`
+   are an optional extra, imported only by export code.
+9. **One gateway each.** All subprocess and network calls go through one
+   runner module with a fake for tests; all terminal input and output goes
+   through one UI module.
+
+## Command-line conventions
+
+- One command, `goodall`, with subcommands.
+- Commands that agents call offer `--json` with a stable shape.
+- Exit codes: `0` success, `1` error, `2` usage error, `3` the session gate is
+  closed.
+- Every failure message says what to do next.
+
+## Code style
+
+The reader is a researcher who writes analysis scripts and has never shipped
+production software. They should be able to read any file top to bottom and
+understand why each function exists.
+
+- Plain loops over dense one-liners; a comprehension only when it has a single
+  simple clause.
+- Names written out in full: `command_result`, `exit_code`,
+  `for check in checks`. Accepted short forms are `id`, `url`, `api`, `env`,
+  `yml`.
+- Module docstring first: what the file is for, who calls it, and any design
+  decision a reader would otherwise reverse-engineer.
+- Docstrings and comments give the reason and the trap, and are updated in the
+  same edit as the behaviour they describe.
+- Type hints on every signature, `@dataclass` for records, `pathlib.Path` for
+  paths, `yaml.safe_load` for YAML.
+- One obvious path: add an abstraction when a second real case exists.
+
+## Testing
+
+- **Test first, outside-in.** Begin every change with a failing test, starting
+  from the outside: first a test that drives `goodall` the way a person or a
+  hook would, then a failing unit test for each piece needed to make it pass.
+  Run each test and watch it fail for the right reason before writing the code
+  that satisfies it. This is the project owner's strong preference for every
+  agent.
+- The quality gates, all of which pass before a change is handed over:
+  `uv run pytest`, `uv run ruff check .`, `uv run ruff format --check .`,
+  `uv run mypy`.
+- Tests use the fake runner and `tmp_path`; the real network, the real `op`
+  session and the user's real files stay out of reach.
+- Real `git` is used in tests, because git behaviour is what they verify.
+- Test names state the behaviour protected:
+  `test_tracked_env_fails_even_when_ignored`.
+- A bug fix arrives with a test that fails without it.
+
+## Dependencies
+
+Standard library first. To add a package, give the human a request containing
+its maintainer, repository, advisory history, licence and dependency count,
+each checked live today, plus anything you could not verify. Add it only after
+approval, together with its row in `docs/DEPENDENCIES.md` and the updated
+`uv.lock`. A recommendation from a model is a lead to check, and the checked
+facts are the provenance.
+
+## Git
+
+- **Commit freely in a git context you own.** An agent working on a branch or
+  in a worktree created for its own task commits there without asking. This
+  repository rule takes precedence over the default in the Beads sections
+  below. Pushing, opening a pull request, and committing to `main` or to a
+  branch someone else is working on still wait for the owner's go-ahead.
+- Prefer smaller commits: one logical change each, made as soon as that change
+  passes the quality gates. Imperative subject; the body gives the reason.
+- AI-authored commits keep their `Co-Authored-By` trailer, and branches are
+  merged with merge commits so authorship survives.
+- Pull request descriptions fill in every heading of
+  `.github/pull_request_template.md`.
+
+## Upstream contributions
+
+`inspect_ai` and `inspect_scout` close pull requests that lack a
+maintainer-accepted issue. Open the issue first, and write code intended for
+upstream in their style from the start.
+
+## Shell
+
+Pass non-interactive flags (`cp -f`, `mv -f`, `rm -f`, `ssh -o BatchMode=yes`)
+so a command never waits on a prompt.
 
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:46cd31e7 -->
 ## Beads Issue Tracker
