@@ -892,6 +892,33 @@ def test_a_raw_key_pasted_into_the_env_file_fails_names_the_line_and_is_never_sh
     ]
 
 
+# A synthetic base64 token. Base64 is letters and digits, so a pasted token
+# reads as a variable name, and its = padding as the = after the name.
+PASTED_BASE64_TOKEN = "SYNTHETICsyntheticSYNTHETIC0123456789x9"
+
+
+@pytest.mark.parametrize("padding", ["=", "=="])
+def test_a_pasted_base64_token_is_never_shown_and_neither_env_file_passes_it(
+    healthy_account: EvalAccount, padding: str
+) -> None:
+    pasted_line = f"{PASTED_BASE64_TOKEN}{padding}\n"
+    healthy_account.env_file.write_text(VALID_ENV_FILE_TEXT + pasted_line)
+    healthy_account.shared_env_file.write_text(VALID_SHARED_ENV_FILE_TEXT + pasted_line)
+
+    exit_code, standard_output, standard_error = run_goodall(["doctor"])
+    _, json_output, json_error = run_goodall(["doctor", "--json"])
+
+    assert exit_code == exit_codes.ERROR
+    for printed in [standard_output, standard_error, json_output, json_error]:
+        assert "SYNTHETICsynthetic" not in printed
+    document = json.loads(json_output)
+    assert statuses(document)["secrets.env_file_holds_only_references"] == "fail"
+    assert statuses(document)["secrets.shared_env_file_holds_no_secrets"] != "pass"
+    env_file_check = check_document(document, "secrets.env_file_holds_only_references")
+    assert isinstance(env_file_check["detail"], str)
+    assert "line 6" in " ".join(env_file_check["detail"].split()).lower()
+
+
 def failure_kinds(document: dict[str, object], check_id: str) -> list[str]:
     """The kind of each failure of one check in a `goodall doctor --json` document."""
     failures = check_document(document, check_id)["failures"]

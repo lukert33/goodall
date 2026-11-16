@@ -18,6 +18,8 @@ HOOK_PATH_MODULES = [
     "goodall.eval_config",
     # Imported by goodall.local_settings for its Failure record.
     "goodall.terminal",
+    # Decides which names a failure may show; the readers above call it.
+    "goodall.quoting",
     # The prompt gate will run git through it.
     "goodall.runner",
 ]

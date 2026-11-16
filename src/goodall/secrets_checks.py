@@ -22,12 +22,16 @@ Two further judgements, beyond what ADR 0010 settles:
   able to read it is a warning, not a failure (`check_env_file_private`).
 - In the shared env file, a value that is a secret reference fails, because
   nothing would resolve it; a value shaped like a key or token only warns,
-  because that is a guess (`looks_like_a_random_token`).
+  because that is a guess (goodall.quoting.looks_like_a_random_token).
+  The same goes for a variable name shaped like a key or token: a base64
+  token pasted with its = padding reads as a name.
 
 The most important rule in this module: no value from either file ever
 appears in a message, because any of them could be a key pasted by mistake,
 and goodall's output can end up in a terminal history or a transcript an
-agent reads (ADR 0006). Messages name the variable and the line instead.
+agent reads (ADR 0006). Messages name the variable and the line instead,
+and leave out the variable's name too when it could itself be a secret
+(goodall.env_files.variable_as_shown).
 Lines the reader could not read are reported by goodall.env_files under the
 same rule.
 
@@ -43,15 +47,15 @@ The dependency edges:
   an eval with no secrets needs no secrets manager (ADR 0006).
 """
 
-import re
 import shlex
 import stat
 from pathlib import Path
 
 from goodall.checks import Check, CheckContext, CheckOutcome, could_not_verify, failed, passed, warned
-from goodall.env_files import EnvEntry, EnvFileNotRead, EnvLineProblem, read_env_file
+from goodall.env_files import EnvEntry, EnvFileNotRead, EnvLineProblem, read_env_file, variable_as_shown
 from goodall.local_settings import LocalSettings
 from goodall.program_checks import SECRETS_MANAGER_INSTALLED
+from goodall.quoting import looks_like_a_random_token
 from goodall.runner import looks_like_a_secret_name
 from goodall.secrets_manager import (
     DISPLAY_NAMES,
@@ -80,15 +84,6 @@ NO_VARIABLE_IN_BOTH_ENV_FILES = "secrets.no_variable_in_both_env_files"
 SECRETS_MANAGER_SIGNED_IN = "secrets.secrets_manager_signed_in"
 REFERENCED_ITEMS_EXIST = "secrets.referenced_items_exist"
 REFERENCED_FIELDS_EXIST = "secrets.referenced_fields_exist"
-
-# A run of characters that API keys and tokens are made of: letters, digits,
-# and the -, _ and + that their encodings use. See `looks_like_a_random_token`.
-TOKEN_CHARACTERS_RUN = re.compile(r"[A-Za-z0-9_\-+]+")
-
-# How long a run of token characters must be to look like a token. Real API
-# keys are 20 characters or more (AWS access key ids are exactly 20); words
-# and settings rarely are.
-SHORTEST_TOKEN_LENGTH = 20
 
 # The permission bits that let accounts other than the file's owner read,
 # change or run a file: everything for the group and for everyone else.
@@ -181,6 +176,7 @@ def env_file_value_not_a_reference_failure(
     in a file on disk, it may have been copied anywhere.
     """
     secrets_manager = local_settings.secrets_manager
+    name = variable_as_shown(name)
     return Failure(
         kind="env_file_value_not_a_reference",
         what_happened=(
@@ -267,6 +263,8 @@ def check_shared_env_file_holds_no_secrets(context: CheckContext) -> CheckOutcom
             problems.append(
                 shared_env_file_secret_reference_failure(shared_env_file, entry.name, entry.line_number, local_settings)
             )
+        elif looks_like_a_random_token(entry.name):
+            suspicions.append(shared_env_file_name_looks_secret_failure(shared_env_file, entry.line_number))
         elif looks_like_a_random_token(entry.value):
             suspicions.append(
                 shared_env_file_value_looks_secret_failure(
@@ -280,29 +278,6 @@ def check_shared_env_file_holds_no_secrets(context: CheckContext) -> CheckOutcom
     if suspicions:
         return warned(suspicions)
     return passed()
-
-
-def looks_like_a_random_token(value: str) -> bool:
-    """True when `value` contains something shaped like an API key or token.
-
-    That is: a run of at least SHORTEST_TOKEN_LENGTH letters, digits, -, _
-    and +, holding both letters and digits. It catches keys such as
-    sk-ant-..., ghp_..., AKIA... and a bearer token inside a header value,
-    and passes ordinary settings such as "otlp", "http/json" and URLs.
-
-    It is a guess, which is why a match is a warning rather than a failure:
-    a long identifier such as a UUID or a git commit id matches too, and
-    the shared env file has no fixed list of safe variables to consult (its
-    contents are a guideline, by the owner's instruction).
-    """
-    for run in TOKEN_CHARACTERS_RUN.findall(value):
-        if len(run) < SHORTEST_TOKEN_LENGTH:
-            continue
-        has_letter = any(character.isalpha() for character in run)
-        has_digit = any(character.isdigit() for character in run)
-        if has_letter and has_digit:
-            return True
-    return False
 
 
 def shared_env_file_missing_failure(local_settings: LocalSettings, shared_env_file: Path) -> Failure:
@@ -367,6 +342,7 @@ def shared_env_file_secret_name_failure(
     """
     env_file = env_file_path(local_settings)
     reference_form = REFERENCE_FORMS[local_settings.secrets_manager]
+    name = variable_as_shown(name)
     return Failure(
         kind="shared_env_file_secret_name",
         what_happened=(
@@ -396,6 +372,7 @@ def shared_env_file_secret_reference_failure(
     would publish the names of a contributor's vault and item.
     """
     env_file = env_file_path(local_settings)
+    name = variable_as_shown(name)
     return Failure(
         kind="shared_env_file_secret_reference",
         what_happened=(
@@ -419,6 +396,7 @@ def shared_env_file_value_looks_secret_failure(
     """The warning for a shared env file value shaped like a key or token (see `looks_like_a_random_token`)."""
     env_file = env_file_path(local_settings)
     reference_form = REFERENCE_FORMS[local_settings.secrets_manager]
+    name = variable_as_shown(name)
     return Failure(
         kind="shared_env_file_value_looks_secret",
         what_happened=(
@@ -435,6 +413,30 @@ def shared_env_file_value_looks_secret_failure(
             f"{shared_env_file}, add {name} to {env_file} with its secret reference, of the form "
             f"{reference_form}, and change the secret with whoever issued it, because it may already have been "
             "committed. If it is not a secret, this warning can be ignored."
+        ),
+    )
+
+
+def shared_env_file_name_looks_secret_failure(shared_env_file: Path, line_number: int) -> Failure:
+    """The warning for a shared env file variable whose name is shaped like a key or token.
+
+    A base64 token pasted on a line of its own reads as a name followed by
+    its = padding, so the name may be the secret. It is never shown.
+    """
+    return Failure(
+        kind="shared_env_file_name_looks_secret",
+        what_happened=(
+            f"Line {line_number} of the shared env file at {shared_env_file} sets a variable whose name is a long "
+            "run of letters and digits that looks like a key or token. Goodall does not show it, in case it is one."
+        ),
+        why=(
+            "The shared env file is committed to the record repo, which every contributor can read and which "
+            "may be published, so it must never hold a secret."
+        ),
+        what_to_do_next=(
+            f"If line {line_number} is a key or token pasted by mistake, delete it from {shared_env_file}, and "
+            "change the secret with whoever issued it, because it may already have been committed. If it is a "
+            "real variable name, this warning can be ignored."
         ),
     )
 
@@ -481,7 +483,7 @@ def variable_in_both_env_files_failure(
     """
     env_file = env_file_path(local_settings)
     shared_env_file = shared_env_file_path(local_settings)
-    name = env_entry.name
+    name = variable_as_shown(env_entry.name)
     return Failure(
         kind="variable_in_both_env_files",
         what_happened=(
@@ -618,7 +620,7 @@ def referenced_fields_not_verified_failure(local_settings: LocalSettings, entrie
     display_name = DISPLAY_NAMES[local_settings.secrets_manager]
     variables = []
     for entry in entries:
-        variables.append(f"{entry.name} (line {entry.line_number})")
+        variables.append(f"{variable_as_shown(entry.name)} (line {entry.line_number})")
     return Failure(
         kind="secret_reference_field_not_verified",
         what_happened=(
@@ -647,21 +649,22 @@ def referenced_item_not_verified_failure(local_settings: LocalSettings, entry: E
     """
     display_name = DISPLAY_NAMES[local_settings.secrets_manager]
     where_to_find = WHERE_TO_FIND_A_REFERENCE[local_settings.secrets_manager]
+    name = variable_as_shown(entry.name)
     if answer.state == ItemState.AMBIGUOUS:
         what_to_do_next = (
-            f"{where_to_find}, and paste it as the value of {entry.name} on line {entry.line_number}; if the name "
+            f"{where_to_find}, and paste it as the value of {name} on line {entry.line_number}; if the name "
             f"is shared, {display_name} puts the item's id in the reference instead of its name, which settles it. "
             "Or rename one of the items. Then run goodall doctor again."
         )
     else:
         what_to_do_next = (
             f"Run goodall doctor again. If it still cannot check, open {display_name} and confirm that the item "
-            f"the reference for {entry.name} names is there."
+            f"the reference for {name} names is there."
         )
     return Failure(
         kind="secret_reference_not_verified",
         what_happened=(
-            f"Goodall could not check the item that {entry.name} (line {entry.line_number}) of the env file refers "
+            f"Goodall could not check the item that {name} (line {entry.line_number}) of the env file refers "
             f"to, because {answer.reason}."
         ),
         why=(
@@ -676,7 +679,8 @@ def referenced_item_missing_failure(local_settings: LocalSettings, entry: EnvEnt
     """The failure for a secret reference whose item, or whose vault, the secrets manager does not have."""
     display_name = DISPLAY_NAMES[local_settings.secrets_manager]
     env_file = env_file_path(local_settings)
-    where = f"{entry.name}, on line {entry.line_number} of the env file at {env_file}"
+    name = variable_as_shown(entry.name)
+    where = f"{name}, on line {entry.line_number} of the env file at {env_file}"
     if answer.state == ItemState.VAULT_MISSING:
         kind = "secret_reference_vault_missing"
         what_happened = (
@@ -693,12 +697,12 @@ def referenced_item_missing_failure(local_settings: LocalSettings, entry: EnvEnt
         kind=kind,
         what_happened=what_happened,
         why=(
-            f"A program launched with {entry.name} would get no secret, because {display_name} cannot find "
+            f"A program launched with {name} would get no secret, because {display_name} cannot find "
             "what the reference points at."
         ),
         what_to_do_next=(
             f"{WHERE_TO_FIND_A_REFERENCE[local_settings.secrets_manager]}, and paste it as the value of "
-            f"{entry.name} on line {entry.line_number}. If the item was deleted, archived or moved to a vault "
+            f"{name} on line {entry.line_number}. If the item was deleted, archived or moved to a vault "
             "this account cannot see, restore it or ask whoever shares the vault for access. Then run goodall "
             "doctor again."
         ),
