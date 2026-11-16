@@ -9,7 +9,7 @@ contributor's private prompts and must never be copied into fixtures.
 
 from pathlib import Path
 
-from goodall.human_actions import TypedPrompt, parse_human_actions
+from goodall.human_actions import Interruption, TypedPrompt, parse_human_actions
 
 FIXTURES = Path(__file__).parent / "fixtures" / "claude_code_transcripts"
 
@@ -33,6 +33,43 @@ def test_typed_prompts_are_found_with_their_entry_and_time() -> None:
             image_count=1,
         ),
     ]
+    assert result.unfamiliar_entries == []
+
+
+def test_interruptions_say_what_was_interrupted() -> None:
+    result = parse_human_actions(FIXTURES / "interruptions.jsonl")
+
+    interruptions = [action for action in result.actions if isinstance(action, Interruption)]
+    assert interruptions == [
+        # Stopped while the model was writing its reply.
+        Interruption(
+            line_number=3,
+            entry_id="u-0003",
+            timestamp="2026-01-07T11:00:04.000Z",
+            interrupted="generate",
+            interrupted_tool_call_id=None,
+        ),
+        # Stopped a running tool; the cancelled tool result names the call.
+        Interruption(
+            line_number=6,
+            entry_id="u-0006",
+            timestamp="2026-01-07T11:01:30.000Z",
+            interrupted="tool_call",
+            interrupted_tool_call_id="toolu_example_03",
+        ),
+        # Stopped during a tool call, recorded only by the marker text, which
+        # does not name the call.
+        Interruption(
+            line_number=9,
+            entry_id="u-0009",
+            timestamp="2026-01-07T11:02:10.000Z",
+            interrupted="tool_call",
+            interrupted_tool_call_id=None,
+        ),
+    ]
+    # The three prompts are still found, and the markers are not prompts.
+    prompt_lines = [action.line_number for action in result.actions if isinstance(action, TypedPrompt)]
+    assert prompt_lines == [1, 4, 7]
     assert result.unfamiliar_entries == []
 
 

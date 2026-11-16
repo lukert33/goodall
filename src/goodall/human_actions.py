@@ -26,7 +26,7 @@ Design decisions a reader would otherwise reverse-engineer:
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 # Raise this whenever a detection rule changes, so derived records say which
 # rules produced them (ADR 0004).
@@ -45,11 +45,22 @@ class ClaudeCodeMarkers:
     # Text prefixes that mark a "user" entry as written by the harness rather
     # than typed by the person.
     harness_text_prefixes: tuple[str, ...]
+    # The whole text of the entry Claude Code writes when the person presses
+    # Escape while the model is replying.
+    interrupted_during_generation: str
+    # The whole text of the entry Claude Code writes when the person stops the
+    # agent during a tool call.
+    interrupted_during_tool_call: str
+    # How a tool result begins when the person stopped that tool while it ran.
+    cancelled_tool_result_prefix: str
 
 
 def claude_code_markers() -> ClaudeCodeMarkers:
     """Return every fixed string the detection rules depend on, in one place."""
     return ClaudeCodeMarkers(
+        interrupted_during_generation="[Request interrupted by user]",
+        interrupted_during_tool_call="[Request interrupted by user for tool use]",
+        cancelled_tool_result_prefix="The user doesn't want to take this action right now",
         harness_text_prefixes=(
             "<system-reminder>",
             "<command-name>",
@@ -77,7 +88,25 @@ class TypedPrompt:
     kind: str = field(default="typed_prompt", init=False)
 
 
-HumanAction = TypedPrompt
+@dataclass(frozen=True)
+class Interruption:
+    """The person stopped the agent part-way through.
+
+    `interrupted` uses Inspect's InterruptEvent values: "generate" (the model
+    was replying) or "tool_call" (a tool was running or about to run).
+    Inspect's third value, "between_turns", is never produced: a transcript
+    records nothing when the person stops an agent that is not working.
+    """
+
+    line_number: int
+    entry_id: str | None
+    timestamp: str | None
+    interrupted: Literal["generate", "tool_call", "between_turns"]
+    interrupted_tool_call_id: str | None
+    kind: str = field(default="interruption", init=False)
+
+
+HumanAction = TypedPrompt | Interruption
 
 
 @dataclass(frozen=True)
@@ -100,45 +129,135 @@ class ParseResult:
 
 def parse_human_actions(transcript_path: Path) -> ParseResult:
     """Read one transcript and return the person's actions, in order."""
+    markers = claude_code_markers()
     result = ParseResult(actions=[], unfamiliar_entries=[])
     with transcript_path.open(encoding="utf-8", errors="replace") as transcript_file:
         for line_number, line in enumerate(transcript_file, start=1):
             entry = json.loads(line)
             if entry.get("type") == "user":
-                result.actions.extend(actions_from_user_entry(entry, line_number))
+                result.actions.extend(actions_from_user_entry(entry, line_number, markers))
     return result
 
 
-def actions_from_user_entry(entry: dict[str, Any], line_number: int) -> list[HumanAction]:
-    """Return the human actions in one "user" entry."""
-    markers = claude_code_markers()
+@dataclass
+class UserContent:
+    """The parts of a "user" entry's message that the rules look at."""
+
+    text: str
+    image_count: int
+    tool_results: list[dict[str, Any]]
+
+
+def read_user_content(entry: dict[str, Any]) -> UserContent:
+    """Collect the text, image count and tool results of a "user" entry.
+
+    The message content is either one string or a list of blocks; both forms
+    occur for typed prompts.
+    """
     content = entry["message"]["content"]
     if isinstance(content, str):
-        text = content
-        image_count = 0
-        has_tool_result = False
-    else:
-        texts = []
-        image_count = 0
-        has_tool_result = False
+        return UserContent(text=content, image_count=0, tool_results=[])
+    texts = []
+    image_count = 0
+    tool_results = []
+    for block in content:
+        if block["type"] == "text":
+            texts.append(block["text"])
+        elif block["type"] == "image":
+            image_count += 1
+        elif block["type"] == "tool_result":
+            tool_results.append(block)
+    return UserContent(text="\n".join(texts), image_count=image_count, tool_results=tool_results)
+
+
+def tool_result_text(tool_result: dict[str, Any]) -> str:
+    """Return a tool result's text, whether stored as a string or as blocks."""
+    content = tool_result.get("content")
+    if isinstance(content, str):
+        return content
+    texts = []
+    if isinstance(content, list):
         for block in content:
-            if block["type"] == "text":
+            if isinstance(block, dict) and isinstance(block.get("text"), str):
                 texts.append(block["text"])
-            elif block["type"] == "image":
-                image_count += 1
-            elif block["type"] == "tool_result":
-                has_tool_result = True
-        text = "\n".join(texts)
-    if has_tool_result or not is_typed_prompt(entry, text, markers):
-        return []
-    prompt = TypedPrompt(
+    return "\n".join(texts)
+
+
+def actions_from_user_entry(entry: dict[str, Any], line_number: int, markers: ClaudeCodeMarkers) -> list[HumanAction]:
+    """Return the human actions in one "user" entry, by applying each rule."""
+    content = read_user_content(entry)
+
+    # An entry carrying tool results is the harness reporting back to the
+    # model. It is a human action only when the result shows the person
+    # stepped in.
+    if content.tool_results:
+        actions: list[HumanAction] = []
+        for tool_result in content.tool_results:
+            interruption = interruption_from_tool_result(entry, line_number, tool_result, markers)
+            if interruption is not None:
+                actions.append(interruption)
+        return actions
+
+    interruption = interruption_from_marker(entry, line_number, content.text, markers)
+    if interruption is not None:
+        return [interruption]
+
+    if is_typed_prompt(entry, content.text, markers):
+        prompt = TypedPrompt(
+            line_number=line_number,
+            entry_id=entry.get("uuid"),
+            timestamp=entry.get("timestamp"),
+            text=content.text,
+            image_count=content.image_count,
+        )
+        return [prompt]
+    return []
+
+
+def interruption_from_marker(
+    entry: dict[str, Any], line_number: int, text: str, markers: ClaudeCodeMarkers
+) -> Interruption | None:
+    """Rule: an entry whose whole text is an interruption marker is an interruption.
+
+    The marker does not name the tool call that was stopped, so the id is left
+    empty. The whole text must match: a prompt that merely quotes the marker
+    is still a prompt.
+    """
+    if text == markers.interrupted_during_generation:
+        interrupted: Literal["generate", "tool_call"] = "generate"
+    elif text == markers.interrupted_during_tool_call:
+        interrupted = "tool_call"
+    else:
+        return None
+    return Interruption(
         line_number=line_number,
         entry_id=entry.get("uuid"),
         timestamp=entry.get("timestamp"),
-        text=text,
-        image_count=image_count,
+        interrupted=interrupted,
+        interrupted_tool_call_id=None,
     )
-    return [prompt]
+
+
+def interruption_from_tool_result(
+    entry: dict[str, Any], line_number: int, tool_result: dict[str, Any], markers: ClaudeCodeMarkers
+) -> Interruption | None:
+    """Rule: an error tool result with the cancellation text is an interruption.
+
+    When the person stops a running tool, Claude Code writes the tool's result
+    as an error beginning with fixed text, and writes no separate marker. The
+    result names the call it answers, so the interrupted call is known.
+    """
+    if tool_result.get("is_error") is not True:
+        return None
+    if not tool_result_text(tool_result).startswith(markers.cancelled_tool_result_prefix):
+        return None
+    return Interruption(
+        line_number=line_number,
+        entry_id=entry.get("uuid"),
+        timestamp=entry.get("timestamp"),
+        interrupted="tool_call",
+        interrupted_tool_call_id=tool_result.get("tool_use_id"),
+    )
 
 
 def is_typed_prompt(entry: dict[str, Any], text: str, markers: ClaudeCodeMarkers) -> bool:
