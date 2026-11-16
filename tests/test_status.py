@@ -468,7 +468,45 @@ def test_relative_folder_setting_is_reported(eval_account: EvalAccount) -> None:
     _, _, standard_error = run_goodall(["status"])
 
     assert "record_repo" in standard_error
-    assert "evals/goodall-pilot-records" in standard_error
+    assert "full path" in standard_error
+    assert failure_kinds() == ["local_settings_value_invalid"]
+
+
+def test_a_folder_setting_that_is_not_a_path_is_never_echoed(eval_account: EvalAccount) -> None:
+    # A value that is not a full path may be a key pasted into the wrong
+    # setting, so it is shown only once it is known to be a path.
+    pasted_secret = "sk-ant-api03-SYNTHETICsyntheticSYNTHETIC"
+    eval_account.write_settings(
+        eval_account.valid_settings_text().replace('"~/evals/goodall-pilot-records"', f'"{pasted_secret}"')
+    )
+
+    printed = everything_goodall_printed()
+
+    assert "SYNTHETICsynthetic" not in printed
+    assert "record_repo" in printed
+    assert failure_kinds() == ["local_settings_value_invalid"]
+
+
+@pytest.mark.parametrize("setting_name", ["record_repo", "log_directory"])
+def test_a_folder_setting_with_a_null_character_is_a_failure_not_a_crash(
+    eval_account: EvalAccount, setting_name: str
+) -> None:
+    # TOML can hold a null character (written \u0000), which no path on macOS
+    # can contain; asking the disk about such a path raises ValueError.
+    settings_lines = []
+    for line in eval_account.valid_settings_text().splitlines():
+        if line.startswith(setting_name):
+            line = f'{setting_name} = "/Users/SYNTHETICsynthetic\\u0000/records"'
+        settings_lines.append(line)
+    eval_account.write_settings("\n".join(settings_lines) + "\n")
+    eval_account.write_eval_config(VALID_EVAL_CONFIG_TEXT)
+
+    exit_code, _, standard_error = run_goodall(["status"])
+
+    assert exit_code == exit_codes.ERROR
+    assert standard_error.startswith("FAIL")
+    assert setting_name in standard_error
+    assert "SYNTHETICsynthetic" not in everything_goodall_printed()
     assert failure_kinds() == ["local_settings_value_invalid"]
 
 

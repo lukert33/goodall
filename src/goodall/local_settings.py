@@ -31,11 +31,12 @@ the contributor can fix them all in one edit, with one exception: settings
 written for a newer schema version get only "upgrade goodall", because every
 other complaint about a newer layout would be noise.
 
-Failures never quote a setting's value back, except a folder, which the
-contributor needs to see as written. Terminal output in an eval account can
-end up in a transcript an agent reads, and a value in the wrong place may be
-a secret pasted by mistake (ADR 0006), so goodall names the setting and
-shows a correct example line instead.
+Failures never quote a setting's value back, except a folder once it is
+known to be a full path, which the contributor needs to see as written.
+Terminal output in an eval account can end up in a transcript an agent
+reads, and a value in the wrong place may be a secret pasted by mistake
+(ADR 0006), so goodall names the setting and shows a correct example line
+instead.
 
 The failures are built here, beside the rule that finds each problem, so
 `goodall status`, `goodall doctor` and the prompt gate all word a problem the
@@ -274,14 +275,27 @@ def check_settings_table(settings_file: Path, settings_table: dict[str, object])
         if setting_name not in text_values:
             continue
         as_written = text_values[setting_name]
+        # Trap: the value is not shown here, because until it is known to be
+        # a full path it may be a key pasted into the wrong setting.
         path = expand_home_folder(as_written)
         if not path.is_absolute():
             problems.append(
                 value_invalid_failure(
                     settings_file,
                     setting_name,
-                    f'is set to "{as_written}", which is not a full path. A full path starts with / or with ~/, '
-                    "which means your home folder",
+                    "is not a full path. A full path starts with / or with ~/, which means your home folder",
+                    f'{setting_name} = "{EXAMPLE_VALUES[setting_name]}"',
+                )
+            )
+            continue
+        # A null character (\u0000 in TOML) cannot be in any path, and asking
+        # the disk about a path holding one raises ValueError.
+        if "\x00" in as_written:
+            problems.append(
+                value_invalid_failure(
+                    settings_file,
+                    setting_name,
+                    "contains a null character (written \\u0000), which no path can contain",
                     f'{setting_name} = "{EXAMPLE_VALUES[setting_name]}"',
                 )
             )
