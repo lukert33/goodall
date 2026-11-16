@@ -11,7 +11,10 @@ headers a well-behaved client never would (a wrong Host, no Content-Length).
 
 import http.client
 import json
+import signal
 import socket
+import subprocess
+import sys
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -479,3 +482,62 @@ def test_escaped_line_break_inside_a_string_is_stored_unchanged(receiver: Runnin
     post_like_claude_code(receiver.port, "/v1/logs", body)
 
     assert stored_lines(tmp_path / "logs.jsonl") == [body]
+
+
+@dataclass
+class ReceiverProcess:
+    """A receiver running as a separate process, and the port it listens on."""
+
+    process: subprocess.Popen[bytes]
+    port: int
+
+
+@pytest.fixture
+def receiver_process(tmp_path: Path) -> Iterator[ReceiverProcess]:
+    """Run a receiver as its own process, as goodall will, and always end it afterwards."""
+    process = subprocess.Popen(
+        [sys.executable, "-m", "goodall.telemetry_receiver", str(tmp_path)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    try:
+        assert process.stdout is not None
+        # The receiver prints one JSON line naming its port once it is listening.
+        ready_line = process.stdout.readline()
+        port = json.loads(ready_line)["port"]
+        yield ReceiverProcess(process=process, port=port)
+    finally:
+        if process.poll() is None:
+            process.kill()
+        process.wait(timeout=10)
+        if process.stdout is not None:
+            process.stdout.close()
+        if process.stderr is not None:
+            process.stderr.close()
+
+
+def test_killed_receiver_keeps_every_acknowledged_line(receiver_process: ReceiverProcess, tmp_path: Path) -> None:
+    acknowledged_bodies = []
+    for request_number in range(25):
+        body = b'{"resourceLogs":[],"request":' + str(request_number).encode() + b"}"
+        status, _ = post_like_claude_code(receiver_process.port, "/v1/logs", body)
+        assert status == 200
+        acknowledged_bodies.append(body)
+
+    # SIGKILL gives the receiver no chance to flush or clean up.
+    receiver_process.process.send_signal(signal.SIGKILL)
+    receiver_process.process.wait(timeout=10)
+
+    assert stored_lines(tmp_path / "logs.jsonl") == acknowledged_bodies
+
+
+def test_receiver_process_stops_cleanly_on_sigterm(receiver_process: ReceiverProcess, tmp_path: Path) -> None:
+    post_like_claude_code(receiver_process.port, "/v1/metrics", b'{"resourceMetrics":[]}')
+
+    receiver_process.process.send_signal(signal.SIGTERM)
+    exit_code = receiver_process.process.wait(timeout=10)
+
+    assert exit_code == 0
+    assert stored_lines(tmp_path / "metrics.jsonl") == [b'{"resourceMetrics":[]}']
+    assert receiver_process.process.stderr is not None
+    assert receiver_process.process.stderr.read() == b""

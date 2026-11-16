@@ -50,13 +50,19 @@ could reach. So the receiver:
   link planted at one of them, and creates them readable by their owner only.
 """
 
+import argparse
 import fcntl
 import json
 import os
+import signal
+import sys
 import threading
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from types import FrameType
+
+from goodall import exit_codes
 
 # The only address the receiver listens on.
 LOOPBACK_ADDRESS = "127.0.0.1"
@@ -433,3 +439,49 @@ def start_receiver(telemetry_directory: Path, port: int = 0, bind_address: str =
         server=server,
         serving_thread=serving_thread,
     )
+
+
+def main(arguments: list[str] | None = None) -> int:
+    """Run a receiver as its own process until it receives SIGTERM or SIGINT.
+
+    Once listening, it prints exactly one line to standard output, a JSON
+    object such as {"port": 49152}, so whoever started it can read the port
+    chosen. It prints nothing else while running. Stopping it with SIGTERM
+    waits for any request in progress; SIGKILL loses nothing acknowledged.
+
+    Output goes straight to standard output and error here rather than
+    through a UI module (AGENTS.md invariant 9) because this process is
+    driven by programs, not people, and no UI module exists yet.
+    """
+    parser = argparse.ArgumentParser(
+        prog="python -m goodall.telemetry_receiver",
+        description="Receive Claude Code's OTLP http/json telemetry on 127.0.0.1 and append it to JSON Lines files.",
+    )
+    parser.add_argument("telemetry_directory", type=Path, help="Existing directory to write the telemetry files in.")
+    parser.add_argument("--port", type=int, default=0, help="Port to listen on; 0 (the default) picks a free one.")
+    parsed_arguments = parser.parse_args(arguments)
+
+    stop_requested = threading.Event()
+
+    def request_stop(signal_number: int, frame: FrameType | None) -> None:
+        stop_requested.set()
+
+    signal.signal(signal.SIGTERM, request_stop)
+    signal.signal(signal.SIGINT, request_stop)
+
+    try:
+        running_receiver = start_receiver(parsed_arguments.telemetry_directory, port=parsed_arguments.port)
+    except (OSError, ValueError) as start_error:
+        print(f"The telemetry receiver did not start: {start_error}", file=sys.stderr)
+        return exit_codes.ERROR
+
+    print(json.dumps({"port": running_receiver.port}), flush=True)
+    # Waiting in short steps lets the signal handler's flag be seen promptly.
+    while not stop_requested.wait(timeout=0.5):
+        pass
+    running_receiver.stop()
+    return exit_codes.SUCCESS
+
+
+if __name__ == "__main__":
+    sys.exit(main())
