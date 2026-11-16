@@ -22,6 +22,12 @@ HOOK_PATH_MODULES = [
     "goodall.quoting",
     # The prompt gate will run git through it.
     "goodall.runner",
+    # The prompt gate will check the record repo and log directory folders.
+    "goodall.folders",
+    # The prompt gate exits with PROMPT_GATE_CLOSED from here.
+    "goodall.exit_codes",
+    # goodall.eval_config takes its rule for secret references from here.
+    "goodall.secrets_manager",
 ]
 
 # Runs inside the fresh interpreter: import the modules, then print every
