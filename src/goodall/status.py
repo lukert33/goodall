@@ -4,142 +4,170 @@ Called by `cli.main` when someone runs `goodall status` or
 `goodall status --json`. Agents use the exit code and the JSON document to
 decide whether to proceed, so both are part of goodall's stable contract.
 
-What is built so far: goodall finds where local settings should be and, if
-there are none, fails with what happened, why, and what to do next. Reading
-the local settings and the eval config comes next; until then, finding the
-file is also reported as a failure, so that "found a file" is never mistaken
-for "everything is fine".
+What is built so far, in the order goodall checks:
+
+1. Local settings are found, read and checked (goodall.local_settings).
+   Everything wrong with the file is reported at once.
+2. The record repo folder exists, and the log directory can be written to.
+   An unreachable log directory is reported as "not recording" (ADR 0008):
+   when goodall cannot write raw records, no work block can be active, so
+   "cannot write records" and "not recording" are the same observable state.
+3. The eval config is not read yet (the next ticket). Until it is, valid
+   settings still end in a failure, so that "the settings are fine" is never
+   mistaken for "a work block is active".
 
 Each failure is built once as a `Failure` record and then shown either as
 text on standard error or as one JSON document on standard output, so the two
-renderings cannot drift apart.
+renderings cannot drift apart. The JSON document always has the keys
+`work_block_active` and `failures`.
+
+The folder checks live here, not in goodall.local_settings, because they ask
+about the machine rather than the file; move them when a second command
+(goodall doctor, or the prompt gate) needs them.
 """
 
+import os
+import stat
+from pathlib import Path
+
 from goodall import exit_codes
-from goodall.local_settings import (
-    CONFIG_DIRECTORY_VARIABLE,
-    LocalSettingsLocation,
-    RelativeConfigDirectoryError,
-    find_local_settings_location,
-)
+from goodall.local_settings import FolderSetting, LocalSettings, read_local_settings
 from goodall.terminal import Failure, Terminal
 
 
 def run_status(terminal: Terminal, as_json: bool) -> int:
     """Report the state of this macOS user account's eval and return the exit code."""
-    try:
-        location = find_local_settings_location()
-    except RelativeConfigDirectoryError as relative_directory_error:
-        return report_failure(terminal, relative_config_directory_failure(relative_directory_error.value), as_json)
+    settings_reading = read_local_settings()
+    if isinstance(settings_reading, list):
+        return report_failures(terminal, settings_reading, as_json)
+    settings = settings_reading
 
-    # Opening the file is how goodall learns whether it exists. Trap: asking
-    # first with Path.exists() raises PermissionError when the folder cannot
-    # be searched, so the question "is it there?" would crash goodall.
-    try:
-        location.settings_file.read_bytes()
-    except FileNotFoundError:
-        return report_failure(terminal, local_settings_missing_failure(location), as_json)
-    except OSError as read_error:
-        return report_failure(terminal, local_settings_unreadable_failure(location, read_error), as_json)
+    # The two folders do not depend on each other, so both are checked and
+    # both problems shown at once.
+    folder_failures: list[Failure] = []
+    record_repo_problem = describe_folder_problem(settings.record_repo.path, needs_writing=False)
+    if record_repo_problem is not None:
+        folder_failures.append(record_repo_missing_failure(settings, record_repo_problem))
+    log_directory_problem = describe_folder_problem(settings.log_directory.path, needs_writing=True)
+    if log_directory_problem is not None:
+        folder_failures.append(log_directory_unreachable_failure(settings, log_directory_problem))
+    if folder_failures:
+        return report_failures(terminal, folder_failures, as_json)
 
-    return report_failure(terminal, local_settings_not_read_yet_failure(location), as_json)
+    return report_failures(terminal, [eval_config_not_read_yet_failure(settings)], as_json)
 
 
-def report_failure(terminal: Terminal, failure: Failure, as_json: bool) -> int:
-    """Show `failure` as text or as JSON, and return the error exit code.
+def report_failures(terminal: Terminal, failures: list[Failure], as_json: bool) -> int:
+    """Show `failures` as text or as JSON, and return the error exit code.
 
     The JSON document has the same keys whatever went wrong. No work block
     can be active while goodall is failing, so `work_block_active` is false.
     """
     if as_json:
-        terminal.write_json({"work_block_active": False, "failures": [failure.as_json()]})
+        failure_documents = []
+        for failure in failures:
+            failure_documents.append(failure.as_json())
+        terminal.write_json({"work_block_active": False, "failures": failure_documents})
     else:
-        terminal.show_failure(failure)
+        terminal.show_failures(failures)
     return exit_codes.ERROR
 
 
-def local_settings_missing_failure(location: LocalSettingsLocation) -> Failure:
-    """The failure for a macOS user account where goodall has never been set up.
+def describe_folder_problem(folder: Path, needs_writing: bool) -> str | None:
+    """Say what is wrong with `folder`, as the end of a sentence, or return None if nothing is.
 
-    When GOODALL_CONFIG_DIR chose the folder, the message says so and offers
-    unsetting it, because a variable left over from testing is the likeliest
-    reason settings that exist in the home folder were not found. Otherwise it
-    does not mention the variable: it is for tests and goodall's own
-    development, and ADR 0008 rejected it as the way contributors find their
-    eval.
+    Only looks; nothing is created or changed. Trap: Path.exists() and
+    Path.is_dir() raise PermissionError when a folder above cannot be
+    searched, so this asks with stat() and turns every error into words.
     """
-    if location.chosen_by_override:
-        where_goodall_looked = f"in the folder that {CONFIG_DIRECTORY_VARIABLE} names"
-        what_to_do_next = (
-            "Run goodall onboard to set up this eval account, "
-            f"or unset {CONFIG_DIRECTORY_VARIABLE} if your local settings are in your home folder."
-        )
-    else:
-        where_goodall_looked = "the usual place in this macOS user account's home folder"
-        what_to_do_next = "Run goodall onboard to set up this eval account."
+    try:
+        folder_status = folder.stat()
+    except (FileNotFoundError, NotADirectoryError):
+        return "does not exist"
+    except OSError as stat_error:
+        return f"cannot be reached: {stat_error.strerror}"
 
+    if not stat.S_ISDIR(folder_status.st_mode):
+        return "is a file, not a folder"
+    if needs_writing and not os.access(folder, os.W_OK | os.X_OK):
+        return "cannot be written to by this macOS user account"
+    return None
+
+
+def where_goodall_looked(folder_setting: FolderSetting) -> str:
+    """A sentence naming the full path goodall used, or nothing when it is exactly what was written.
+
+    Messages name a folder as written first, because that is what the
+    contributor will search for in the file; this adds the expanded path
+    when a leading ~ made the two differ.
+    """
+    if folder_setting.as_written == str(folder_setting.path):
+        return ""
+    return f" Goodall looked for {folder_setting.path}."
+
+
+def record_repo_missing_failure(settings: LocalSettings, problem: str) -> Failure:
+    """The failure for a record repo folder that is not there."""
     return Failure(
-        kind="local_settings_missing",
+        kind="record_repo_missing",
         what_happened=(
-            f"No local settings were found. Goodall looked for {location.settings_file}, {where_goodall_looked}."
+            f"The record repo folder {settings.record_repo.as_written} {problem}."
+            + where_goodall_looked(settings.record_repo)
         ),
         why=(
-            "Local settings tell goodall which eval this macOS user account belongs to: where its record repo "
-            "and log directory are and which contributor you are. Without them goodall cannot find the eval, "
-            "so nothing can be recorded."
+            "The record repo holds this eval's eval config and its records, "
+            "so goodall cannot tell whether a work block is active without it."
         ),
-        what_to_do_next=what_to_do_next,
+        what_to_do_next=(
+            f"If the record repo is somewhere else on this Mac, correct record_repo in {settings.settings_file}. "
+            f"If it is not on this Mac yet, clone it to {settings.record_repo.path}. Then run goodall status again."
+        ),
     )
 
 
-def local_settings_unreadable_failure(location: LocalSettingsLocation, read_error: OSError) -> Failure:
-    """The failure for local settings that exist, or may exist, but cannot be opened.
+def log_directory_unreachable_failure(settings: LocalSettings, problem: str) -> Failure:
+    """The failure for a log directory goodall cannot write raw records to.
 
-    The operating system's own reason (for example "Permission denied") is
-    quoted, because it is the most precise clue there is.
+    Worded as "not recording", not as an error in goodall, because an
+    unplugged drive is an everyday event (ADR 0008).
     """
     return Failure(
-        kind="local_settings_unreadable",
-        what_happened=(f"Local settings at {location.settings_file} could not be read: {read_error.strerror}."),
+        kind="log_directory_unreachable",
+        what_happened=(
+            f"Not recording: the log directory {settings.log_directory.as_written} {problem}, "
+            "so no work block can be active." + where_goodall_looked(settings.log_directory)
+        ),
         why=(
-            "Goodall needs to read local settings to find this macOS user account's eval, "
+            "Raw records are written to the log directory. When goodall cannot write there it records "
+            "nothing, and says so rather than lose records without telling you."
+        ),
+        what_to_do_next=(
+            "If the log directory is on an external drive, connect it. Otherwise create the folder, make sure "
+            f"this macOS user account can write to it, or correct log_directory in {settings.settings_file}. "
+            "Then run goodall status again."
+        ),
+    )
+
+
+def eval_config_not_read_yet_failure(settings: LocalSettings) -> Failure:
+    """The failure for valid local settings, until goodall can read the eval config.
+
+    Temporary: replaced when goodall learns to read the eval config
+    (goodall-yjt.9.3). It is a failure, not a success, because without the
+    eval config goodall cannot tell whether a work block is active, and must
+    not suggest the setup is complete.
+    """
+    return Failure(
+        kind="eval_config_not_read_yet",
+        what_happened=(
+            "Local settings are valid, but this version of goodall cannot read the eval config yet, "
             "so it cannot tell whether a work block is active."
         ),
-        what_to_do_next=(
-            f"Check the permissions of {location.settings_file} and the folders above it: "
-            "this macOS user account must be able to read them. Then run goodall status again."
-        ),
-    )
-
-
-def relative_config_directory_failure(value: str) -> Failure:
-    """The failure for a GOODALL_CONFIG_DIR that is not an absolute path."""
-    return Failure(
-        kind="config_directory_not_absolute",
-        what_happened=f"{CONFIG_DIRECTORY_VARIABLE} is set to {value}, which is not an absolute path.",
         why=(
-            "Goodall would look for local settings relative to whichever folder a command started in, "
-            "so two commands could find two different evals."
+            f"The eval config, in the record repo at {settings.record_repo.path}, names the eval's contributors "
+            "and workstreams. Goodall must read it before it can record anything, and reading it is not built yet."
         ),
         what_to_do_next=(
-            f"Set {CONFIG_DIRECTORY_VARIABLE} to a path starting with / or ~, "
-            "or unset it to use local settings in your home folder."
+            "Nothing in your local settings needs fixing. Check bd ready in the goodall repo for progress."
         ),
-    )
-
-
-def local_settings_not_read_yet_failure(location: LocalSettingsLocation) -> Failure:
-    """The placeholder failure for when local settings exist.
-
-    Temporary: replaced when goodall learns to read local settings
-    (goodall-yjt.9.2). It is a failure, not a success, because goodall has
-    not checked anything yet and must not suggest the setup is fine.
-    """
-    return Failure(
-        kind="local_settings_not_read",
-        what_happened=(
-            f"Local settings were found at {location.settings_file}, but this version of goodall cannot read them yet."
-        ),
-        why="Reading local settings is not built yet, so goodall cannot tell whether a work block is active.",
-        what_to_do_next="Check bd ready in the goodall repo for progress.",
     )
