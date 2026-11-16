@@ -26,6 +26,16 @@ Design decisions a reader might otherwise reverse-engineer:
   which is one reason ADR 0002 chose this receiver instead.
 - Files are opened for appending, never truncated, so restarting the
   receiver against the same directory keeps everything already captured.
+- A body is stored byte for byte, except that a raw line break (which in
+  valid JSON can only be meaningless whitespace) becomes a space, so each
+  request stays on one line. `as_one_line` explains why that keeps the raw
+  record verbatim in every sense a reader can observe.
+
+What it does not do: choose a port for Claude Code, start with a work
+block, or notice that Claude Code has nobody to send to. A receiver that is
+not running loses telemetry silently (spike goodall-fs9.2), and another
+program already listening on a fixed port would receive it instead, so the
+code that starts the receiver must check it is the one listening.
 
 Security. The receiver runs on a machine that holds credentials, and the
 telemetry it receives carries the person's email address on every record
@@ -38,7 +48,8 @@ could reach. So the receiver:
 - refuses a request whose Host header is not exactly 127.0.0.1:<its port>,
   which defeats DNS rebinding (a web page reaching 127.0.0.1 under its own
   domain name), and refuses any request carrying an Origin header, which
-  browsers add and Claude Code's exporter does not;
+  browsers add and Node's HTTP client (used by Claude Code's exporter) does
+  not; this last point is not yet checked against a real Claude Code;
 - sends no CORS headers, so a browser never shows a web page the answer;
 - requires a declared Content-Length no larger than MAXIMUM_BODY_BYTES, and
   refuses chunked bodies, so it never reads an unbounded amount;

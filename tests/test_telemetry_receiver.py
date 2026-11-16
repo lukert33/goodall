@@ -15,6 +15,7 @@ import signal
 import socket
 import subprocess
 import sys
+import threading
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -571,3 +572,23 @@ def test_receiver_imports_only_the_standard_library() -> None:
         if module_name != "goodall" and module_name not in sys.stdlib_module_names:
             outside_standard_library.append(module_name)
     assert outside_standard_library == []
+
+
+def test_concurrent_requests_each_become_one_whole_line(receiver: RunningReceiver, tmp_path: Path) -> None:
+    # Claude Code exports logs, metrics and traces independently, so requests
+    # can overlap; no two may interleave inside a line.
+    sent_bodies = []
+    for request_number in range(40):
+        sent_bodies.append(
+            b'{"resourceLogs":[],"padding":"' + b"x" * 50000 + b'","n":' + str(request_number).encode() + b"}"
+        )
+
+    threads = []
+    for body in sent_bodies:
+        thread = threading.Thread(target=post_like_claude_code, args=(receiver.port, "/v1/logs", body))
+        threads.append(thread)
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=30)
+
+    assert sorted(stored_lines(tmp_path / "logs.jsonl")) == sorted(sent_bodies)
