@@ -627,3 +627,30 @@ def test_status_json_reports_a_work_block_it_closed_and_recorded(eval_account: E
     assert ended["end_state"] == "inferred"
     assert ended["ended_at"] == "2026-11-16T09:30:00Z"
     assert ended["recorded"] is True
+
+
+# ---------------------------------------------------------------------------
+# Journal entries and interventions name the work block they fall in
+# ---------------------------------------------------------------------------
+
+
+def test_a_journal_entry_written_during_a_work_block_names_it_and_one_after_does_not(
+    eval_account: EvalAccount,
+) -> None:
+    # goodall journal reads the real clock, so the work block starts now.
+    eval_account.clock.now = datetime.now(UTC)
+    run_goodall(eval_account, ["start"])
+    running = work_blocks.read_marker(eval_account.log_directory)
+    assert isinstance(running, work_blocks.RunningWorkBlock)
+
+    during = run_goodall(eval_account, ["journal", "Chose Postgres; I decided."])
+    run_goodall(eval_account, ["stop"])
+    after = run_goodall(eval_account, ["journal", "Wrote up the day."])
+
+    assert during.exit_code == after.exit_code == exit_codes.SUCCESS
+    entries_by_text = {}
+    for entry_file in (eval_account.record_repo / "journal").glob("*.md"):
+        entry_text = entry_file.read_text()
+        entries_by_text[entry_text.rsplit("+++", 1)[1].strip()] = entry_text
+    assert f'work_block = "{running.id}"' in entries_by_text["Chose Postgres; I decided."]
+    assert "work_block" not in entries_by_text["Wrote up the day."]
