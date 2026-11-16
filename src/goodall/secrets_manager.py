@@ -2,12 +2,32 @@
 
 ADR 0011 makes this the one purpose-built module over the runner: adding a
 second secrets manager should mean changing this module and nothing else.
-Today it answers one question, without running anything: is a value a
-well-formed secret reference for a given secrets manager? `goodall doctor`
-asks it of every value in the env file (goodall.secrets_checks), and the
-setup page will apply the same rule (ADR 0012). Checking that a referenced
-item exists, and launching a program with secrets in its environment, will
-be added here, through the runner.
+Every public function takes the secrets manager's name, as local settings
+write it, and answers for that manager; callers never build a secrets
+manager command line themselves. Today it answers:
+
+- is a value a well-formed secret reference? (`is_well_formed_secret_reference`,
+  which runs nothing). `goodall doctor` asks it of every value in the env
+  file (goodall.secrets_checks), and the setup page will apply the same rule
+  (ADR 0012).
+- is the secrets manager signed in and usable in this macOS user account?
+  (`check_signed_in`)
+
+Launching a program with secrets in its environment will be added here too.
+
+The rule every question that runs the secrets manager keeps: no secret
+value may ever enter goodall's process (ADR 0010). An answer that is in the
+exit code alone is asked with the runner's discard output mode, so nothing
+the secrets manager prints reaches goodall at all.
+
+1Password, the one secrets manager today (ADR 0006), is asked through its
+command, op. `op whoami` "Returns the currently active account or service
+account" and "returns an error if no accounts are currently authenticated"
+(https://www.1password.dev/cli/reference/commands/whoami/, read
+2026-11-16). It prints who is signed in, never a secret, and goodall
+discards even that. 1Password's staff recommend it for checking a session
+without setting off a Touch ID prompt, which matters because doctor must
+not ask a person anything.
 
 Why only the form is checked, and why strictly: every value in the env file
 must be a reference (ADR 0010), so anything that is not one is treated as a
@@ -39,8 +59,10 @@ launches programs will use it, as the hook path may.
 """
 
 import re
+from dataclasses import dataclass
+from enum import StrEnum
 
-from goodall.runner import RequiredProgram
+from goodall.runner import Command, CommandOutcome, OutputMode, RequiredProgram, Runner
 
 # One part of a 1Password reference: allowed characters only, and no space
 # at either end. A single character is allowed, since a vault can be called "a".
@@ -87,6 +109,60 @@ SECRETS_MANAGER_PROGRAMS = {
         how_to_install="following https://developer.1password.com/docs/cli/get-started/",
     ),
 }
+
+# How a contributor signs in to each secrets manager, as a next step.
+SIGN_IN_STEPS = {
+    "1password": (
+        "Open the 1Password app and unlock it. If you use the app to sign in op (Settings, then Developer, then "
+        "Integrate with 1Password CLI), run op signin in Terminal and approve the request; otherwise run "
+        "eval $(op signin) in Terminal and run goodall doctor from that same window. If it still fails, run "
+        "op whoami in Terminal to see what op says"
+    ),
+}
+
+# The command that answers "is 1Password signed in?" by its exit code alone.
+ONE_PASSWORD_SIGNED_IN_COMMAND = ["op", "whoami"]
+
+
+class SignInState(StrEnum):
+    """Whether the secrets manager can be used in this macOS user account right now."""
+
+    SIGNED_IN = "signed_in"
+    # It answered, and said it is not signed in.
+    SIGNED_OUT = "signed_out"
+    # It did not answer at all: it timed out, or could not be started.
+    NO_ANSWER = "no_answer"
+
+
+@dataclass(frozen=True)
+class SignInAnswer:
+    """The secrets manager's answer to "are you signed in?".
+
+    `problem` is set when the state is not SIGNED_IN: a one-line description
+    of what happened, such as "`op whoami` timed out after 10 s", safe to
+    show, because it holds nothing the secrets manager printed.
+    """
+
+    state: SignInState
+    problem: str | None = None
+
+
+def check_signed_in(secrets_manager: str, runner: Runner) -> SignInAnswer:
+    """Ask `secrets_manager` whether it is signed in, without bringing any of its output into goodall.
+
+    Raises ValueError for a secrets manager this module does not know,
+    because local settings accept only the ones it does, so that would be a
+    mistake in goodall's own code.
+    """
+    if secrets_manager != "1password":
+        raise ValueError(f"goodall.secrets_manager does not know the secrets manager {secrets_manager!r}.")
+    result = runner.run(Command(ONE_PASSWORD_SIGNED_IN_COMMAND, output=OutputMode.DISCARD))
+    if result.succeeded:
+        return SignInAnswer(state=SignInState.SIGNED_IN)
+    # The output was discarded, so `problem` quotes nothing op printed.
+    if result.outcome == CommandOutcome.COMPLETED:
+        return SignInAnswer(state=SignInState.SIGNED_OUT, problem=result.problem)
+    return SignInAnswer(state=SignInState.NO_ANSWER, problem=result.problem)
 
 
 def is_well_formed_secret_reference(secrets_manager: str, value: str) -> bool:

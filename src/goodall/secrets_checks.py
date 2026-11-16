@@ -1,7 +1,11 @@
 """The diagnostic checks for the env file and the shared env file, under the heading "Secrets".
 
-`goodall doctor` runs `SECRETS_CHECKS` last (goodall.doctor). They only read
-files; no program is run. ADR 0010 is the governing decision:
+`goodall doctor` runs `SECRETS_CHECKS` last (goodall.doctor). The env file
+checks only read files. The checks that ask the secrets manager something
+(is it signed in? does each referenced item exist?) do so only through
+goodall.secrets_manager, which never lets a secret value into goodall; no
+code here builds a secrets manager command line. ADR 0010 is the governing
+decision:
 
 - The env file, `.env` beside local settings, maps variable names to secret
   references and holds nothing else. Any other value is treated as a
@@ -34,6 +38,9 @@ The dependency edges:
 - The shared env file check needs only the record repo folder.
 - The check for a name in both files needs both files' checks to have
   passed or warned, because it compares what they read.
+- The sign-in check needs the secrets manager's command installed and the
+  env file read, because it asks only when the env file refers to a secret:
+  an eval with no secrets needs no secrets manager (ADR 0006).
 """
 
 import re
@@ -44,11 +51,16 @@ from pathlib import Path
 from goodall.checks import Check, CheckContext, CheckOutcome, failed, passed, warned
 from goodall.env_files import EnvEntry, EnvFileNotRead, EnvLineProblem, read_env_file
 from goodall.local_settings import LocalSettings
+from goodall.program_checks import SECRETS_MANAGER_INSTALLED
 from goodall.runner import looks_like_a_secret_name
 from goodall.secrets_manager import (
     DISPLAY_NAMES,
     REFERENCE_FORMS,
+    SIGN_IN_STEPS,
     WHERE_TO_FIND_A_REFERENCE,
+    SignInAnswer,
+    SignInState,
+    check_signed_in,
     is_well_formed_secret_reference,
     looks_like_a_secret_reference,
 )
@@ -61,6 +73,7 @@ ENV_FILE_HOLDS_ONLY_REFERENCES = "secrets.env_file_holds_only_references"
 ENV_FILE_PRIVATE = "secrets.env_file_private"
 SHARED_ENV_FILE_HOLDS_NO_SECRETS = "secrets.shared_env_file_holds_no_secrets"
 NO_VARIABLE_IN_BOTH_ENV_FILES = "secrets.no_variable_in_both_env_files"
+SECRETS_MANAGER_SIGNED_IN = "secrets.secrets_manager_signed_in"
 
 # A run of characters that API keys and tokens are made of: letters, digits,
 # and the -, _ and + that their encodings use. See `looks_like_a_random_token`.
@@ -481,6 +494,59 @@ def variable_in_both_env_files_failure(
     )
 
 
+def check_secrets_manager_signed_in(context: CheckContext) -> CheckOutcome:
+    """The secrets manager that local settings name is signed in, when the env file refers to any secret.
+
+    With no secret references there is nothing to ask the secrets manager
+    for, so it is not asked: an eval with no secrets needs no secrets
+    manager (ADR 0006), and asking could only fail such an eval for nothing.
+
+    A secrets manager that does not answer in time fails too, rather than
+    counting as unknown: goodall cannot launch a program with its secrets
+    through a secrets manager that does not answer, and failing here spares
+    every reference check a timeout of its own.
+    """
+    local_settings = valid_local_settings(context)
+    secrets_manager = local_settings.secrets_manager
+    if not context.env_file_entries:
+        return passed(
+            note=(
+                f"The env file refers to no secrets, so goodall did not ask {DISPLAY_NAMES[secrets_manager]} "
+                "whether it is signed in."
+            )
+        )
+    answer = check_signed_in(secrets_manager, context.runner)
+    if answer.state == SignInState.SIGNED_IN:
+        return passed()
+    return failed([secrets_manager_not_signed_in_failure(local_settings, answer)])
+
+
+def secrets_manager_not_signed_in_failure(local_settings: LocalSettings, answer: SignInAnswer) -> Failure:
+    """The failure for a secrets manager that is signed out, or did not answer."""
+    display_name = DISPLAY_NAMES[local_settings.secrets_manager]
+    sign_in_step = SIGN_IN_STEPS[local_settings.secrets_manager]
+    if answer.state == SignInState.NO_ANSWER:
+        return Failure(
+            kind="secrets_manager_did_not_answer",
+            what_happened=(
+                f"Goodall could not tell whether {display_name} is signed in, because it did not answer: "
+                f"{answer.problem}. If {display_name} showed a request to approve access, it may have been "
+                "waiting for you."
+            ),
+            why=f"Programs goodall launches get their secrets from {display_name}, so it must answer promptly.",
+            what_to_do_next=f"{sign_in_step}. Then run goodall doctor again.",
+        )
+    return Failure(
+        kind="secrets_manager_signed_out",
+        what_happened=f"{display_name} is not signed in for this macOS user account: {answer.problem}.",
+        why=(
+            f"Programs goodall launches get their secrets from {display_name}, and goodall checks that each "
+            f"secret reference points at a real item, so {display_name} must be signed in."
+        ),
+        what_to_do_next=f"{sign_in_step}. Then run goodall doctor again.",
+    )
+
+
 SECRETS_CHECKS = [
     Check(
         id=ENV_FILE_HOLDS_ONLY_REFERENCES,
@@ -509,5 +575,12 @@ SECRETS_CHECKS = [
         summary="No variable is set in both the env file and the shared env file",
         prerequisites=[ENV_FILE_HOLDS_ONLY_REFERENCES, SHARED_ENV_FILE_HOLDS_NO_SECRETS],
         run=check_no_variable_in_both_env_files,
+    ),
+    Check(
+        id=SECRETS_MANAGER_SIGNED_IN,
+        group=GROUP,
+        summary="The secrets manager is signed in",
+        prerequisites=[SECRETS_MANAGER_INSTALLED, ENV_FILE_HOLDS_ONLY_REFERENCES],
+        run=check_secrets_manager_signed_in,
     ),
 ]

@@ -29,6 +29,11 @@ ACCOUNT_GROUPS_COMMAND = ["/usr/bin/id", "-Gn"]
 # The groups a standard macOS user account belongs to.
 STANDARD_ACCOUNT_GROUPS = "staff everyone localaccounts _appserverusr com.apple.sharepoint.group.1\n"
 
+# The command that asks 1Password's op whether it is signed in. Its exit code
+# is the whole answer; what it prints (the account's email address) is
+# discarded (see goodall.secrets_manager).
+OP_WHOAMI = ["op", "whoami"]
+
 
 def healthy_runner() -> FakeRunner:
     """A fake runner for a Mac where every program is installed and the account is a standard one.
@@ -38,6 +43,7 @@ def healthy_runner() -> FakeRunner:
     """
     runner = FakeRunner(installed_programs=["git", "gh", "op"])
     runner.answer(ACCOUNT_GROUPS_COMMAND, standard_output=STANDARD_ACCOUNT_GROUPS)
+    runner.answer(OP_WHOAMI)
     return runner
 
 
@@ -181,8 +187,9 @@ Secrets
   pass  Only this macOS user account can read the env file
   pass  The shared env file holds no secrets
   pass  No variable is set in both the env file and the shared env file
+  pass  The secrets manager is signed in
 
-16 passed, 0 warned, 0 failed, 0 skipped
+17 passed, 0 warned, 0 failed, 0 skipped
 """
 
 
@@ -243,8 +250,10 @@ Secrets
         Waiting for: Local settings are found
   skip  No variable is set in both the env file and the shared env file
         Waiting for: Local settings are found
+  skip  The secrets manager is signed in
+        Waiting for: Local settings are found
 
-3 passed, 0 warned, 1 failed, 12 skipped
+3 passed, 0 warned, 1 failed, 13 skipped
 """
 
 
@@ -262,9 +271,12 @@ def test_missing_local_settings_is_one_failure_and_every_other_check_waits_for_i
     assert exit_code == exit_codes.ERROR
 
 
-def doctor_json() -> tuple[int, dict[str, object]]:
-    """Run `goodall doctor --json`; return the exit code and the parsed document."""
-    exit_code, standard_output, standard_error = run_goodall(["doctor", "--json"])
+def doctor_json(runner: FakeRunner | None = None) -> tuple[int, dict[str, object]]:
+    """Run `goodall doctor --json`; return the exit code and the parsed document.
+
+    Without a `runner`, goodall gets `healthy_runner()`.
+    """
+    exit_code, standard_output, standard_error = run_goodall(["doctor", "--json"], runner)
     assert standard_error == ""
     # json.loads rejects trailing text, so this also proves standard output
     # holds exactly one document.
@@ -298,6 +310,7 @@ ALL_CHECK_IDS = [
     "secrets.env_file_private",
     "secrets.shared_env_file_holds_no_secrets",
     "secrets.no_variable_in_both_env_files",
+    "secrets.secrets_manager_signed_in",
 ]
 
 
@@ -306,7 +319,7 @@ def test_healthy_setup_as_json_gives_the_same_results(healthy_account: EvalAccou
 
     assert exit_code == exit_codes.SUCCESS
     assert document["schema_version"] == 1
-    assert document["summary"] == {"passed": 16, "warned": 0, "failed": 0, "skipped": 0}
+    assert document["summary"] == {"passed": 17, "warned": 0, "failed": 0, "skipped": 0}
     checks = document["checks"]
     assert isinstance(checks, list)
     assert checks[0] == {
@@ -330,7 +343,7 @@ def test_missing_local_settings_as_json_names_what_each_skip_waited_for(settings
     exit_code, document = doctor_json()
 
     assert exit_code == exit_codes.ERROR
-    assert document["summary"] == {"passed": 3, "warned": 0, "failed": 1, "skipped": 12}
+    assert document["summary"] == {"passed": 3, "warned": 0, "failed": 1, "skipped": 13}
     checks = document["checks"]
     assert isinstance(checks, list)
     failed_check = checks[0]
@@ -364,7 +377,7 @@ def test_invalid_local_settings_fail_once_and_name_every_problem(healthy_account
     assert "favourite_colour" in standard_output
     assert standard_output.count("        Next: ") == 2
     assert "Waiting for: Local settings are valid" in standard_output
-    assert standard_output.endswith("4 passed, 0 warned, 1 failed, 11 skipped\n")
+    assert standard_output.endswith("4 passed, 0 warned, 1 failed, 12 skipped\n")
 
 
 def test_relative_settings_folder_override_fails_the_found_check(
@@ -406,6 +419,7 @@ def test_missing_record_repo_skips_the_eval_config_but_still_checks_the_log_dire
         "secrets.env_file_private": "pass",
         "secrets.shared_env_file_holds_no_secrets": "skip",
         "secrets.no_variable_in_both_env_files": "skip",
+        "secrets.secrets_manager_signed_in": "pass",
     }
     checks = document["checks"]
     assert isinstance(checks, list)
@@ -427,7 +441,7 @@ def test_unreachable_log_directory_is_a_warning_with_a_next_step_and_exits_0(hea
     assert exit_code == exit_codes.SUCCESS
     assert "  warn  The log directory can be written to\n        Not recording:" in standard_output
     assert "        Next: If the log directory is on an external drive, connect it." in standard_output
-    assert standard_output.endswith("15 passed, 1 warned, 0 failed, 0 skipped\n")
+    assert standard_output.endswith("16 passed, 1 warned, 0 failed, 0 skipped\n")
 
     json_exit_code, document = doctor_json()
     assert json_exit_code == exit_code
@@ -454,7 +468,7 @@ def test_contributor_and_main_workstream_are_reported_as_separate_checks(healthy
     exit_code, document = doctor_json()
 
     assert exit_code == exit_codes.ERROR
-    assert document["summary"] == {"passed": 14, "warned": 0, "failed": 2, "skipped": 0}
+    assert document["summary"] == {"passed": 15, "warned": 0, "failed": 2, "skipped": 0}
     checks = document["checks"]
     assert isinstance(checks, list)
     assert [failure["kind"] for failure in checks[5]["failures"]] == ["contributor_not_in_roster"]
@@ -607,7 +621,7 @@ def test_missing_gh_is_one_failure_naming_it_and_saying_the_owner_of_the_mac_ins
 
     assert exit_code == exit_codes.ERROR
     document = json.loads(standard_output)
-    assert document["summary"] == {"passed": 15, "warned": 0, "failed": 1, "skipped": 0}
+    assert document["summary"] == {"passed": 16, "warned": 0, "failed": 1, "skipped": 0}
     gh_check = check_document(document, "tools.gh_installed")
     assert gh_check["status"] == "fail"
     assert isinstance(gh_check["detail"], str)
@@ -628,7 +642,7 @@ def test_missing_git_is_one_failure_and_the_record_repo_check_waits_for_it(healt
 
     assert exit_code == exit_codes.ERROR
     document = json.loads(standard_output)
-    assert document["summary"] == {"passed": 14, "warned": 0, "failed": 1, "skipped": 1}
+    assert document["summary"] == {"passed": 15, "warned": 0, "failed": 1, "skipped": 1}
     git_check = check_document(document, "tools.git_installed")
     assert git_check["status"] == "fail"
     assert isinstance(git_check["next_step"], str)
@@ -644,7 +658,7 @@ def test_missing_op_fails_the_secrets_manager_check_naming_1password(healthy_acc
 
     assert exit_code == exit_codes.ERROR
     document = json.loads(standard_output)
-    assert document["summary"] == {"passed": 15, "warned": 0, "failed": 1, "skipped": 0}
+    assert document["summary"] == {"passed": 15, "warned": 0, "failed": 1, "skipped": 1}
     secrets_manager_check = check_document(document, "tools.secrets_manager_installed")
     assert secrets_manager_check["status"] == "fail"
     assert isinstance(secrets_manager_check["detail"], str)
@@ -672,7 +686,7 @@ def test_an_administrator_account_fails_with_why_a_standard_account_is_required(
     # The reason, so a researcher does not wave it away as fussiness.
     assert "cannot reach other accounts' files or install software" in report_text
     assert "safe to hand to an agent" in report_text
-    assert standard_output.endswith("15 passed, 0 warned, 1 failed, 0 skipped\n")
+    assert standard_output.endswith("16 passed, 0 warned, 1 failed, 0 skipped\n")
 
 
 @pytest.mark.parametrize(
@@ -706,7 +720,7 @@ def test_a_record_repo_folder_that_is_not_a_git_repository_fails(healthy_account
 
     assert exit_code == exit_codes.ERROR
     document = json.loads(standard_output)
-    assert document["summary"] == {"passed": 15, "warned": 0, "failed": 1, "skipped": 0}
+    assert document["summary"] == {"passed": 16, "warned": 0, "failed": 1, "skipped": 0}
     git_repository_check = check_document(document, "record_repo.is_git_repository")
     assert git_repository_check["status"] == "fail"
     assert isinstance(git_repository_check["detail"], str)
@@ -778,7 +792,7 @@ def test_an_account_check_that_never_finishes_is_reported_as_timed_out_and_docto
     assert isinstance(account_check["detail"], str)
     assert "`/usr/bin/id -Gn` timed out after 10 s" in account_check["detail"]
     # Every other check still ran.
-    assert document["summary"] == {"passed": 15, "warned": 0, "failed": 1, "skipped": 0}
+    assert document["summary"] == {"passed": 16, "warned": 0, "failed": 1, "skipped": 0}
 
 
 # A recognisable fake key. If any part of it shows up in goodall's output,
@@ -1017,3 +1031,54 @@ def test_the_check_for_a_variable_in_both_files_waits_for_a_broken_env_file(heal
     both_check = check_document(json.loads(standard_output), "secrets.no_variable_in_both_env_files")
     assert both_check["status"] == "skip"
     assert both_check["waiting_for"] == "secrets.env_file_holds_only_references"
+
+
+def test_a_signed_out_secrets_manager_is_one_failure_with_the_sign_in_step(healthy_account: EvalAccount) -> None:
+    runner = healthy_runner()
+    runner.answer(OP_WHOAMI, exit_code=1, standard_error="[ERROR] account is not signed in\n")
+
+    exit_code, standard_output, _ = run_goodall(["doctor"], runner)
+
+    assert exit_code == exit_codes.ERROR
+    assert "  FAIL  The secrets manager is signed in\n" in standard_output
+    report_text = " ".join(standard_output.split())
+    assert "1Password is not signed in for this macOS user account: `op whoami` exited with code 1." in report_text
+    assert "Next: Open the 1Password app and unlock it." in report_text
+    assert "op signin" in report_text
+    # What op printed was discarded unread, so it cannot be repeated.
+    assert "account is not signed in" not in report_text
+
+
+def test_a_secrets_manager_that_never_answers_fails_within_its_timeout(healthy_account: EvalAccount) -> None:
+    runner = healthy_runner()
+    runner.answer_timed_out(OP_WHOAMI)
+
+    exit_code, document = doctor_json(runner)
+
+    assert exit_code == exit_codes.ERROR
+    signed_in_check = check_document(document, "secrets.secrets_manager_signed_in")
+    assert signed_in_check["status"] == "fail"
+    assert failure_kinds(document, "secrets.secrets_manager_signed_in") == ["secrets_manager_did_not_answer"]
+    assert isinstance(signed_in_check["detail"], str)
+    assert "`op whoami` timed out after 10 s" in signed_in_check["detail"]
+
+
+def test_an_env_file_with_no_references_does_not_ask_the_secrets_manager_anything(
+    healthy_account: EvalAccount,
+) -> None:
+    # An eval with no secrets needs no secrets manager (ADR 0006), so a
+    # signed-out one must not fail it.
+    healthy_account.env_file.unlink()
+    runner = healthy_runner()
+    runner.answer(OP_WHOAMI, exit_code=1)
+
+    exit_code, document = doctor_json(runner)
+
+    assert exit_code == exit_codes.SUCCESS
+    signed_in_check = check_document(document, "secrets.secrets_manager_signed_in")
+    assert signed_in_check["status"] == "pass"
+    assert signed_in_check["note"] == (
+        "The env file refers to no secrets, so goodall did not ask 1Password whether it is signed in."
+    )
+    for command in runner.calls:
+        assert command.arguments[0] != "op"
