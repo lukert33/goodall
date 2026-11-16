@@ -467,3 +467,35 @@ def test_intervene_records_the_category_decision_and_text_and_commits_it(eval_ac
     assert run.standard_output.startswith("Recorded your intervention.")
     assert "Category  agent-limitation" in run.standard_output
     assert "Decision  modify" in run.standard_output
+
+
+@pytest.mark.parametrize(
+    "category_arguments",
+    [
+        [],
+        ["--category", "agent_limitation"],
+        ["--category", "Agent-Limitation"],
+        ["--category", ""],
+    ],
+)
+def test_intervene_without_a_known_category_lists_the_eval_s_categories(
+    eval_account: EvalAccount, category_arguments: list[str]
+) -> None:
+    run = run_goodall(["intervene", *category_arguments, "--decision", "modify", "Stopped it."])
+
+    assert run.exit_code == exit_codes.USAGE_ERROR
+    assert run.standard_output == ""
+    flattened_error = " ".join(run.standard_error.split())
+    assert "policy-mandated, infrastructure, agent-limitation, freely-delegable" in flattened_error
+    assert "intervention_categories" in flattened_error
+    assert eval_account.intervention_files() == []
+
+
+def test_intervene_without_a_category_as_json_names_the_categories_too(eval_account: EvalAccount) -> None:
+    run = run_goodall(["intervene", "--json", "--decision", "modify", "Stopped it."])
+
+    assert run.exit_code == exit_codes.USAGE_ERROR
+    document = json.loads(run.standard_output)
+    [failure] = document["failures"]
+    assert failure["kind"] == "intervention_category_missing"
+    assert "agent-limitation" in failure["what_to_do_next"]

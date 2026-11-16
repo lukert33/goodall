@@ -129,6 +129,9 @@ def add_intervention(
     eval_reading = find_eval_for_this_account()
     if isinstance(eval_reading, list):
         return stopped(record_type, exit_codes.ERROR, eval_reading)
+    category_failure = check_category(details.category, eval_reading)
+    if category_failure is not None:
+        return stopped(record_type, exit_codes.USAGE_ERROR, [category_failure])
     assert details.category is not None and details.decision is not None
     now = datetime.now(UTC)
     intervention = records.build_intervention(
@@ -142,6 +145,47 @@ def add_intervention(
     )
     facts = [("Category", details.category), ("Decision", details.decision)]
     return check_and_write(runner, eval_reading, intervention, facts)
+
+
+def check_category(category: str | None, eval_for_this_account: EvalForThisAccount) -> Failure | None:
+    """Say what is wrong with the --category given, or None when it is one of this eval's categories.
+
+    Checked here, after the eval config is read, rather than by argparse,
+    because the valid categories are the eval's own, so the failure can list
+    them. The value given is not repeated back: it is matched exactly, and
+    the list shows the right spelling.
+    """
+    eval_config = eval_for_this_account.eval_config
+    categories = ", ".join(eval_config.intervention_categories)
+    first_category = eval_config.intervention_categories[0]
+    commands_to_try = (f'goodall intervene --category {first_category} --decision modify "What happened and why"',)
+    where_listed = f"the intervention_categories in {eval_config.config_file}"
+    if category is None:
+        return Failure(
+            kind="intervention_category_missing",
+            what_happened="No --category was given for the intervention. Nothing was recorded.",
+            why=(
+                "Every intervention is sorted into one of the eval's categories, so the researcher can compare "
+                "like with like."
+            ),
+            what_to_do_next=f"Add --category with one of: {categories}. They are listed in {where_listed}.",
+            commands_to_try=commands_to_try,
+        )
+    if category not in eval_config.intervention_categories:
+        return Failure(
+            kind="intervention_category_unknown",
+            what_happened="The --category given is not one of this eval's categories. Nothing was recorded.",
+            why=(
+                "Every intervention is sorted into one of the eval's own categories, spelled exactly as listed, "
+                "so the researcher can compare like with like."
+            ),
+            what_to_do_next=(
+                f"Use one of: {categories}, spelled exactly so. They are listed in {where_listed}; to add a new "
+                "one, ask whoever runs the eval."
+            ),
+            commands_to_try=commands_to_try,
+        )
+    return None
 
 
 def current_work_block_id() -> str | None:
