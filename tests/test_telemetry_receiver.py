@@ -541,3 +541,33 @@ def test_receiver_process_stops_cleanly_on_sigterm(receiver_process: ReceiverPro
     assert stored_lines(tmp_path / "metrics.jsonl") == [b'{"resourceMetrics":[]}']
     assert receiver_process.process.stderr is not None
     assert receiver_process.process.stderr.read() == b""
+
+
+# Run in a fresh interpreter, so modules pytest itself loaded do not count.
+# Prints every module the import added, one top-level name per line.
+LIST_MODULES_LOADED_BY_IMPORT = """
+import sys
+modules_before = set(sys.modules)
+import goodall.telemetry_receiver
+for module_name in sorted(set(sys.modules) - modules_before):
+    print(module_name.split(".")[0])
+"""
+
+
+def test_receiver_imports_only_the_standard_library() -> None:
+    # ADR 0005: capture code must start even when third-party packages are
+    # missing or broken. -I keeps the current directory and user packages out.
+    completed = subprocess.run(
+        [sys.executable, "-I", "-c", LIST_MODULES_LOADED_BY_IMPORT],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    loaded_top_level_names = set(completed.stdout.split())
+
+    assert "goodall" in loaded_top_level_names, "the check did not actually import the receiver"
+    outside_standard_library = []
+    for module_name in sorted(loaded_top_level_names):
+        if module_name != "goodall" and module_name not in sys.stdlib_module_names:
+            outside_standard_library.append(module_name)
+    assert outside_standard_library == []
