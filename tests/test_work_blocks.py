@@ -368,3 +368,64 @@ def test_stop_whose_record_cannot_be_written_keeps_it_says_so_and_the_next_comma
     assert record["end_state"] == "clean"
     assert record["ended_at"] == "2026-11-16T10:30:00Z"
     assert not waiting_file.exists()
+
+
+# ---------------------------------------------------------------------------
+# A work block nobody stopped: the inferred end
+# ---------------------------------------------------------------------------
+
+
+def test_a_forgotten_work_block_is_closed_at_its_last_heartbeat_by_the_next_start(
+    eval_account: EvalAccount,
+) -> None:
+    run_goodall(eval_account, ["start"])
+    # A day of work with Claude Code: a heartbeat every half hour, in two
+    # Claude sessions, the last at 17:55.
+    heartbeat_at = MONDAY_MORNING
+    while heartbeat_at < datetime(2026, 11, 16, 17, 30, tzinfo=UTC):
+        heartbeat_at = heartbeat_at + timedelta(minutes=30)
+        work_blocks.record_heartbeat(eval_account.log_directory, heartbeat_at, CLAUDE_SESSION)
+    last_heartbeat = datetime(2026, 11, 16, 17, 55, tzinfo=UTC)
+    assert work_blocks.record_heartbeat(eval_account.log_directory, last_heartbeat, OTHER_CLAUDE_SESSION) is not None
+    # Nobody ran goodall stop. The next morning:
+    eval_account.clock.now = datetime(2026, 11, 17, 9, 0, tzinfo=UTC)
+
+    start = run_goodall(eval_account, ["start"])
+
+    assert start.exit_code == exit_codes.SUCCESS, start.standard_error
+    assert "was left running" in start.everything_printed
+    assert "closed it at its last heartbeat, Mon 16 Nov 2026, 17:55 GMT" in start.everything_printed
+    assert "Started a work block on research at Tue 17 Nov 2026, 09:00 GMT" in start.everything_printed
+    [record] = eval_account.work_block_records()
+    assert record["started_at"] == "2026-11-16T09:30:00Z"
+    assert record["ended_at"] == "2026-11-16T17:55:00Z"
+    assert record["end_state"] == "inferred"
+    assert record["claude_sessions"] == [CLAUDE_SESSION, OTHER_CLAUDE_SESSION]
+    assert json.loads(marker_file(eval_account).read_text())["started_at"] == "2026-11-17T09:00:00Z"
+
+
+def test_a_heartbeat_never_revives_a_forgotten_work_block(eval_account: EvalAccount) -> None:
+    run_goodall(eval_account, ["start"])
+    the_next_morning = datetime(2026, 11, 17, 8, 45, tzinfo=UTC)
+
+    # A hook fires before anyone has run goodall start again.
+    assert work_blocks.record_heartbeat(eval_account.log_directory, the_next_morning, CLAUDE_SESSION) is None
+
+    eval_account.clock.now = the_next_morning
+    status = run_goodall(eval_account, ["status"])
+    assert status.exit_code == exit_codes.ERROR
+    assert "No work block is active" in status.everything_printed
+    [record] = eval_account.work_block_records()
+    assert record["end_state"] == "inferred"
+    assert record["ended_at"] == "2026-11-16T09:30:00Z"
+    assert record["claude_sessions"] == []
+
+
+def test_a_work_block_idle_for_less_than_the_idle_limit_is_still_active(eval_account: EvalAccount) -> None:
+    run_goodall(eval_account, ["start"])
+    eval_account.clock.advance(work_blocks.IDLE_LIMIT - timedelta(minutes=1))
+
+    status = run_goodall(eval_account, ["status"])
+
+    assert status.exit_code == exit_codes.SUCCESS
+    assert eval_account.work_block_files() == []

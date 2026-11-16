@@ -42,7 +42,7 @@ import re
 import socket
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import goodall
@@ -77,7 +77,7 @@ def run_start(terminal: Terminal, runner: Runner, clock: Clock, workstream: str 
 
     log_directory = eval_reading.local_settings.log_directory.path
     now = clock()
-    settling = settle(runner, eval_reading)
+    settling = settle(runner, eval_reading, now)
     show_settling(terminal, settling)
     active = work_blocks.active_work_block(log_directory, now)
     if active is not None:
@@ -96,6 +96,11 @@ def run_start(terminal: Terminal, runner: Runner, clock: Clock, workstream: str 
         winner = work_blocks.active_work_block(log_directory, now)
         if winner is not None:
             return report_already_active(terminal, winner, workstream)
+        # A marker is there that is not an active work block: another
+        # goodall is settling it at this very moment. Never claim a start
+        # that did not happen.
+        terminal.show_failure(marker_in_the_way_failure())
+        return exit_codes.ERROR
     work_blocks.record_heartbeat(log_directory, now)
     terminal.show_paragraph(
         f"Started a work block on {workstream} at {describe_moment(running_record.started_at)}. "
@@ -162,7 +167,7 @@ def run_stop(terminal: Terminal, runner: Runner, clock: Clock) -> int:
         return exit_codes.ERROR
     log_directory = eval_reading.local_settings.log_directory.path
     now = clock()
-    settling = settle(runner, eval_reading)
+    settling = settle(runner, eval_reading, now)
     show_settling(terminal, settling)
     active = work_blocks.active_work_block(log_directory, now)
     if active is None:
@@ -323,13 +328,28 @@ class Settling:
         return paragraphs
 
 
-def settle(runner: Runner, eval_reading: EvalForThisAccount) -> Settling:
+def settle(runner: Runner, eval_reading: EvalForThisAccount, now: datetime) -> Settling:
     """Tidy up what earlier work blocks left behind, before start, stop or status does its own work.
 
-    Writes every ended work block's record still waiting in the log
-    directory into the record repo.
+    1. A work block that is overdue (no heartbeat for longer than
+       work_blocks.IDLE_LIMIT) was forgotten: it is closed at its last
+       heartbeat, with the end state `inferred`, so a forgotten goodall stop
+       does not count the night as work.
+    2. Every ended work block's record still waiting in the log directory
+       is written into the record repo.
     """
-    return Settling(writes=write_unrecorded_records(runner, eval_reading))
+    log_directory = eval_reading.local_settings.log_directory.path
+    closings = []
+    marker = work_blocks.read_marker(log_directory)
+    if isinstance(marker, work_blocks.RunningWorkBlock) and marker.is_overdue(now):
+        end_work_block(log_directory, marker, marker.last_heartbeat_at, "inferred")
+        closings.append(
+            f"Your work block on {marker.record.workstream}, started {describe_moment(marker.record.started_at)}, "
+            f"was left running: nobody ran goodall stop, and nothing happened in it for more than "
+            f"{describe_duration(work_blocks.IDLE_LIMIT)}. Goodall closed it at its last heartbeat, "
+            f"{describe_moment(marker.last_heartbeat_at)}, so the time after that is not counted as work."
+        )
+    return Settling(closings=closings, writes=write_unrecorded_records(runner, eval_reading))
 
 
 def show_settling(terminal: Terminal, settling: Settling) -> None:
@@ -368,11 +388,28 @@ def where_the_record_went(push_state: PushState) -> str:
 def describe_length(record: records.WorkBlockRecord) -> str:
     """How long an ended work block ran, as `2 h 5 min`."""
     assert record.ended_at is not None
-    total_minutes = int((record.ended_at - record.started_at).total_seconds() // 60)
+    return describe_duration(record.ended_at - record.started_at)
+
+
+def describe_duration(duration: timedelta) -> str:
+    """A length of time for a person, in whole minutes: `2 h 5 min`, `40 min`."""
+    total_minutes = int(duration.total_seconds() // 60)
     hours, minutes = divmod(total_minutes, 60)
+    if minutes == 0 and hours > 0:
+        return f"{hours} h"
     if hours == 0:
         return f"{minutes} min"
     return f"{hours} h {minutes} min"
+
+
+def marker_in_the_way_failure() -> Failure:
+    """The failure for a start that found a work block marker it could neither use nor replace."""
+    return Failure(
+        kind="work_block_marker_in_the_way",
+        what_happened="No work block was started: another goodall command was tidying up the last one just now.",
+        why="Goodall keeps one work block at a time, and will not start a new one until the last is closed.",
+        what_to_do_next="Run goodall start again. If this keeps happening, run goodall status to see what it says.",
+    )
 
 
 def nothing_to_stop_failure() -> Failure:

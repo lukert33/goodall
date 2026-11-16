@@ -64,7 +64,7 @@ def run_status(terminal: Terminal, runner: Runner, clock: Clock, as_json: bool) 
     eval_reading = read_eval_for_this_account(settings)
     if isinstance(eval_reading, list):
         return report_failures(terminal, eval_reading, as_json)
-    settling = settle(runner, eval_reading)
+    settling = settle(runner, eval_reading, clock())
     if not as_json:
         show_settling(terminal, settling)
     active = work_blocks.active_work_block(settings.log_directory.path, clock())
