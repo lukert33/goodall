@@ -50,6 +50,12 @@ ONE_PASSWORD_REFERENCE_PATTERN = re.compile(
     rf"(?:/{ONE_PASSWORD_REFERENCE_PART})?/{ONE_PASSWORD_REFERENCE_PART}"
 )
 
+# Each secrets manager's name as a person writes it, for messages; local
+# settings name it in lower case.
+DISPLAY_NAMES = {
+    "1password": "1Password",
+}
+
 # What a well-formed reference looks like, for each secrets manager, said so
 # a person can copy it. Messages show these instead of the value written,
 # which is never repeated. The example is the agreed one from goodall-xes.3.

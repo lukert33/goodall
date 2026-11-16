@@ -38,6 +38,7 @@ machine (ADR 0012), so no check may create, change or delete a file.
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
+from goodall.env_files import EnvEntry
 from goodall.eval_config import EvalConfig
 from goodall.local_settings import LocalSettings
 from goodall.runner import Runner
@@ -60,12 +61,19 @@ class CheckContext:
       whether the file was found, the next whether it was valid.
     - `local_settings` is set once local settings are known to be valid.
     - `eval_config` is set once the eval config is known to be valid.
+    - `env_file_entries` is set once the env file is known to hold only
+      secret references: its entries, or an empty list when there is no
+      env file.
+    - `shared_env_file_entries` is the same for the shared env file, once
+      it is known to hold no secrets.
     """
 
     runner: Runner
     local_settings_reading: LocalSettings | list[Failure] | None = None
     local_settings: LocalSettings | None = None
     eval_config: EvalConfig | None = None
+    env_file_entries: list[EnvEntry] | None = None
+    shared_env_file_entries: list[EnvEntry] | None = None
 
 
 @dataclass(frozen=True)

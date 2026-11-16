@@ -72,6 +72,26 @@ paths = ["**"]
 """
 
 
+# The agreed shape of an env file (goodall-xes.3): a comment, a blank line,
+# a quoted reference with a section, and unquoted references.
+VALID_ENV_FILE_TEXT = """\
+# Secret references for this eval account. Values are never secrets.
+
+ANTHROPIC_API_KEY_ENGINEERING="op://Eval/anthropic-engineering/credential"
+ANTHROPIC_API_KEY_RESEARCH='op://Eval/anthropic research/API keys/credential'
+ANTHROPIC_ADMIN_KEY=op://Eval/anthropic-admin/credential
+"""
+
+# The agreed starting content of a shared env file (goodall-yjt.9).
+VALID_SHARED_ENV_FILE_TEXT = """\
+# Non-secret settings for every contributor's launched programs.
+CLAUDE_CODE_ENABLE_TELEMETRY=1
+OTEL_LOGS_EXPORTER=otlp
+OTEL_METRICS_EXPORTER=otlp
+OTEL_EXPORTER_OTLP_PROTOCOL=http/json
+"""
+
+
 @dataclass
 class EvalAccount:
     """A pretend eval account inside tmp_path, with every file goodall doctor reads."""
@@ -88,6 +108,14 @@ class EvalAccount:
     @property
     def eval_config_file(self) -> Path:
         return self.record_repo / "eval.toml"
+
+    @property
+    def env_file(self) -> Path:
+        return self.config_directory / ".env"
+
+    @property
+    def shared_env_file(self) -> Path:
+        return self.record_repo / ".env.shared"
 
     def settings_text(self, main_workstream: str = "research") -> str:
         return (
@@ -114,6 +142,10 @@ def healthy_account(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> EvalAcco
         folder.mkdir(parents=True)
     account.settings_file.write_text(account.settings_text())
     account.eval_config_file.write_text(VALID_EVAL_CONFIG_TEXT)
+    account.env_file.write_text(VALID_ENV_FILE_TEXT)
+    # Readable by this account alone, as an env file should be.
+    account.env_file.chmod(0o600)
+    account.shared_env_file.write_text(VALID_SHARED_ENV_FILE_TEXT)
     # The record repo is a real git repository, because real git checks it.
     subprocess.run(["git", "init", "--quiet", str(account.record_repo)], check=True, capture_output=True)
     monkeypatch.setenv("HOME", str(home_folder))
@@ -144,7 +176,13 @@ Eval account
 Record repo
   pass  The record repo folder is a git repository
 
-12 passed, 0 warned, 0 failed, 0 skipped
+Secrets
+  pass  The env file holds only secret references
+  pass  Only this macOS user account can read the env file
+  pass  The shared env file holds no secrets
+  pass  No variable is set in both the env file and the shared env file
+
+16 passed, 0 warned, 0 failed, 0 skipped
 """
 
 
@@ -196,7 +234,17 @@ Record repo
   skip  The record repo folder is a git repository
         Waiting for: Local settings are found
 
-3 passed, 0 warned, 1 failed, 8 skipped
+Secrets
+  skip  The env file holds only secret references
+        Waiting for: Local settings are found
+  skip  Only this macOS user account can read the env file
+        Waiting for: Local settings are found
+  skip  The shared env file holds no secrets
+        Waiting for: Local settings are found
+  skip  No variable is set in both the env file and the shared env file
+        Waiting for: Local settings are found
+
+3 passed, 0 warned, 1 failed, 12 skipped
 """
 
 
@@ -246,6 +294,10 @@ ALL_CHECK_IDS = [
     "tools.secrets_manager_installed",
     "eval_account.standard_account",
     "record_repo.is_git_repository",
+    "secrets.env_file_holds_only_references",
+    "secrets.env_file_private",
+    "secrets.shared_env_file_holds_no_secrets",
+    "secrets.no_variable_in_both_env_files",
 ]
 
 
@@ -254,7 +306,7 @@ def test_healthy_setup_as_json_gives_the_same_results(healthy_account: EvalAccou
 
     assert exit_code == exit_codes.SUCCESS
     assert document["schema_version"] == 1
-    assert document["summary"] == {"passed": 12, "warned": 0, "failed": 0, "skipped": 0}
+    assert document["summary"] == {"passed": 16, "warned": 0, "failed": 0, "skipped": 0}
     checks = document["checks"]
     assert isinstance(checks, list)
     assert checks[0] == {
@@ -278,7 +330,7 @@ def test_missing_local_settings_as_json_names_what_each_skip_waited_for(settings
     exit_code, document = doctor_json()
 
     assert exit_code == exit_codes.ERROR
-    assert document["summary"] == {"passed": 3, "warned": 0, "failed": 1, "skipped": 8}
+    assert document["summary"] == {"passed": 3, "warned": 0, "failed": 1, "skipped": 12}
     checks = document["checks"]
     assert isinstance(checks, list)
     failed_check = checks[0]
@@ -312,7 +364,7 @@ def test_invalid_local_settings_fail_once_and_name_every_problem(healthy_account
     assert "favourite_colour" in standard_output
     assert standard_output.count("        Next: ") == 2
     assert "Waiting for: Local settings are valid" in standard_output
-    assert standard_output.endswith("4 passed, 0 warned, 1 failed, 7 skipped\n")
+    assert standard_output.endswith("4 passed, 0 warned, 1 failed, 11 skipped\n")
 
 
 def test_relative_settings_folder_override_fails_the_found_check(
@@ -350,6 +402,10 @@ def test_missing_record_repo_skips_the_eval_config_but_still_checks_the_log_dire
         "tools.secrets_manager_installed": "pass",
         "eval_account.standard_account": "pass",
         "record_repo.is_git_repository": "skip",
+        "secrets.env_file_holds_only_references": "pass",
+        "secrets.env_file_private": "pass",
+        "secrets.shared_env_file_holds_no_secrets": "skip",
+        "secrets.no_variable_in_both_env_files": "skip",
     }
     checks = document["checks"]
     assert isinstance(checks, list)
@@ -371,7 +427,7 @@ def test_unreachable_log_directory_is_a_warning_with_a_next_step_and_exits_0(hea
     assert exit_code == exit_codes.SUCCESS
     assert "  warn  The log directory can be written to\n        Not recording:" in standard_output
     assert "        Next: If the log directory is on an external drive, connect it." in standard_output
-    assert standard_output.endswith("11 passed, 1 warned, 0 failed, 0 skipped\n")
+    assert standard_output.endswith("15 passed, 1 warned, 0 failed, 0 skipped\n")
 
     json_exit_code, document = doctor_json()
     assert json_exit_code == exit_code
@@ -398,7 +454,7 @@ def test_contributor_and_main_workstream_are_reported_as_separate_checks(healthy
     exit_code, document = doctor_json()
 
     assert exit_code == exit_codes.ERROR
-    assert document["summary"] == {"passed": 10, "warned": 0, "failed": 2, "skipped": 0}
+    assert document["summary"] == {"passed": 14, "warned": 0, "failed": 2, "skipped": 0}
     checks = document["checks"]
     assert isinstance(checks, list)
     assert [failure["kind"] for failure in checks[5]["failures"]] == ["contributor_not_in_roster"]
@@ -414,6 +470,11 @@ def test_contributor_and_main_workstream_are_reported_as_separate_checks(healthy
         "unplug log directory",
         "break eval config",
         "unknown contributor",
+        "paste a key into the env file",
+        "let other accounts read the env file",
+        "put a secret in the shared env file",
+        "remove the shared env file",
+        "set a variable in both env files",
     ],
 )
 def test_every_failure_and_warning_has_a_next_step_and_exit_codes_agree(
@@ -429,6 +490,19 @@ def test_every_failure_and_warning_has_a_next_step_and_exit_codes_agree(
         healthy_account.log_directory.rmdir()
     elif break_setup == "break eval config":
         healthy_account.eval_config_file.write_text("schema_version = 1\n")
+    elif break_setup == "paste a key into the env file":
+        healthy_account.env_file.write_text("ANTHROPIC_API_KEY=sk-ant-api03-not-a-reference\nnot a line\n")
+    elif break_setup == "let other accounts read the env file":
+        healthy_account.env_file.chmod(0o644)
+    elif break_setup == "put a secret in the shared env file":
+        healthy_account.shared_env_file.write_text(
+            "GITHUB_TOKEN=abc\nID=op://Eval/item/field\nX=AKIA0123456789ABCDEFGH\n"
+        )
+    elif break_setup == "remove the shared env file":
+        healthy_account.shared_env_file.unlink()
+    elif break_setup == "set a variable in both env files":
+        healthy_account.shared_env_file.write_text("DEFAULT_MODEL=opus\n")
+        healthy_account.env_file.write_text("DEFAULT_MODEL=op://Eval/item/field\n")
     else:
         healthy_account.eval_config_file.write_text(VALID_EVAL_CONFIG_TEXT.replace("ada-lovelace", "grace-hopper"))
 
@@ -482,6 +556,11 @@ def test_doctor_changes_nothing_on_a_broken_setup(healthy_account: EvalAccount, 
     healthy_account.log_directory.rmdir()
     healthy_account.eval_config_file.write_text(VALID_EVAL_CONFIG_TEXT.replace("ada-lovelace", "grace-hopper"))
     healthy_account.settings_file.write_text(healthy_account.settings_text(main_workstream="sales"))
+    # And both env files broken, with an env file other accounts can read
+    # (goodall must not chmod it).
+    healthy_account.env_file.write_text(f"ANTHROPIC_API_KEY={PASTED_KEY}\n")
+    healthy_account.env_file.chmod(0o644)
+    healthy_account.shared_env_file.write_text("GITHUB_TOKEN=abc\n")
     before = snapshot_of_every_file(tmp_path)
 
     exit_code, _, _ = run_goodall(["doctor"])
@@ -528,7 +607,7 @@ def test_missing_gh_is_one_failure_naming_it_and_saying_the_owner_of_the_mac_ins
 
     assert exit_code == exit_codes.ERROR
     document = json.loads(standard_output)
-    assert document["summary"] == {"passed": 11, "warned": 0, "failed": 1, "skipped": 0}
+    assert document["summary"] == {"passed": 15, "warned": 0, "failed": 1, "skipped": 0}
     gh_check = check_document(document, "tools.gh_installed")
     assert gh_check["status"] == "fail"
     assert isinstance(gh_check["detail"], str)
@@ -549,7 +628,7 @@ def test_missing_git_is_one_failure_and_the_record_repo_check_waits_for_it(healt
 
     assert exit_code == exit_codes.ERROR
     document = json.loads(standard_output)
-    assert document["summary"] == {"passed": 10, "warned": 0, "failed": 1, "skipped": 1}
+    assert document["summary"] == {"passed": 14, "warned": 0, "failed": 1, "skipped": 1}
     git_check = check_document(document, "tools.git_installed")
     assert git_check["status"] == "fail"
     assert isinstance(git_check["next_step"], str)
@@ -565,7 +644,7 @@ def test_missing_op_fails_the_secrets_manager_check_naming_1password(healthy_acc
 
     assert exit_code == exit_codes.ERROR
     document = json.loads(standard_output)
-    assert document["summary"] == {"passed": 11, "warned": 0, "failed": 1, "skipped": 0}
+    assert document["summary"] == {"passed": 15, "warned": 0, "failed": 1, "skipped": 0}
     secrets_manager_check = check_document(document, "tools.secrets_manager_installed")
     assert secrets_manager_check["status"] == "fail"
     assert isinstance(secrets_manager_check["detail"], str)
@@ -593,7 +672,7 @@ def test_an_administrator_account_fails_with_why_a_standard_account_is_required(
     # The reason, so a researcher does not wave it away as fussiness.
     assert "cannot reach other accounts' files or install software" in report_text
     assert "safe to hand to an agent" in report_text
-    assert standard_output.endswith("11 passed, 0 warned, 1 failed, 0 skipped\n")
+    assert standard_output.endswith("15 passed, 0 warned, 1 failed, 0 skipped\n")
 
 
 @pytest.mark.parametrize(
@@ -627,7 +706,7 @@ def test_a_record_repo_folder_that_is_not_a_git_repository_fails(healthy_account
 
     assert exit_code == exit_codes.ERROR
     document = json.loads(standard_output)
-    assert document["summary"] == {"passed": 11, "warned": 0, "failed": 1, "skipped": 0}
+    assert document["summary"] == {"passed": 15, "warned": 0, "failed": 1, "skipped": 0}
     git_repository_check = check_document(document, "record_repo.is_git_repository")
     assert git_repository_check["status"] == "fail"
     assert isinstance(git_repository_check["detail"], str)
@@ -699,4 +778,242 @@ def test_an_account_check_that_never_finishes_is_reported_as_timed_out_and_docto
     assert isinstance(account_check["detail"], str)
     assert "`/usr/bin/id -Gn` timed out after 10 s" in account_check["detail"]
     # Every other check still ran.
-    assert document["summary"] == {"passed": 11, "warned": 0, "failed": 1, "skipped": 0}
+    assert document["summary"] == {"passed": 15, "warned": 0, "failed": 1, "skipped": 0}
+
+
+# A recognisable fake key. If any part of it shows up in goodall's output,
+# a real pasted key would have too.
+PASTED_KEY = "sk-ant-api03-RECOGNISABLEFAKEVALUE-0123456789abcdef"
+
+
+def test_a_raw_key_pasted_into_the_env_file_fails_names_the_line_and_is_never_shown(
+    healthy_account: EvalAccount,
+) -> None:
+    healthy_account.env_file.write_text(VALID_ENV_FILE_TEXT + f'ANTHROPIC_API_KEY_GTM="{PASTED_KEY}"\n')
+
+    exit_code, standard_output, standard_error = run_goodall(["doctor"])
+    json_exit_code, json_output, json_error = run_goodall(["doctor", "--json"])
+
+    assert exit_code == exit_codes.ERROR
+    assert json_exit_code == exit_codes.ERROR
+    for printed in [standard_output, standard_error, json_output, json_error]:
+        assert "RECOGNISABLEFAKEVALUE" not in printed
+    assert "  FAIL  The env file holds only secret references\n" in standard_output
+    report_text = " ".join(standard_output.split())
+    assert "ANTHROPIC_API_KEY_GTM, on line 6 of" in report_text
+    assert "paste the secret reference" in report_text
+    assert "change the key" in report_text
+    assert failure_kinds(json.loads(json_output), "secrets.env_file_holds_only_references") == [
+        "env_file_value_not_a_reference"
+    ]
+
+
+def failure_kinds(document: dict[str, object], check_id: str) -> list[str]:
+    """The kind of each failure of one check in a `goodall doctor --json` document."""
+    failures = check_document(document, check_id)["failures"]
+    assert isinstance(failures, list)
+    kinds = []
+    for failure in failures:
+        kinds.append(failure["kind"])
+    return kinds
+
+
+def test_a_missing_env_file_passes_with_a_note_because_an_eval_may_use_no_secrets(
+    healthy_account: EvalAccount,
+) -> None:
+    healthy_account.env_file.unlink()
+
+    exit_code, standard_output, _ = run_goodall(["doctor"])
+    json_exit_code, json_output, _ = run_goodall(["doctor", "--json"])
+
+    assert exit_code == exit_codes.SUCCESS
+    assert json_exit_code == exit_codes.SUCCESS
+    report_text = " ".join(standard_output.split())
+    assert "pass The env file holds only secret references There is no env file at " in report_text
+    assert "That is fine if this eval uses no secrets." in report_text
+    env_file_check = check_document(json.loads(json_output), "secrets.env_file_holds_only_references")
+    assert env_file_check["status"] == "pass"
+    assert isinstance(env_file_check["note"], str)
+    assert str(healthy_account.env_file) in env_file_check["note"]
+
+
+def test_a_line_in_the_env_file_that_is_not_name_equals_value_is_reported_with_its_line_number(
+    healthy_account: EvalAccount,
+) -> None:
+    # A key pasted on a line of its own, with no name: still never shown.
+    healthy_account.env_file.write_text(VALID_ENV_FILE_TEXT + f"{PASTED_KEY}\n")
+
+    exit_code, standard_output, standard_error = run_goodall(["doctor", "--json"])
+
+    assert exit_code == exit_codes.ERROR
+    assert "RECOGNISABLEFAKEVALUE" not in standard_output + standard_error
+    document = json.loads(standard_output)
+    assert failure_kinds(document, "secrets.env_file_holds_only_references") == ["env_file_line_unreadable"]
+    detail = check_document(document, "secrets.env_file_holds_only_references")["detail"]
+    assert isinstance(detail, str)
+    assert detail.startswith("Line 6 of the env file at ")
+    assert "is not in the form NAME=value" in detail
+
+
+def test_an_unreadable_env_file_fails_saying_why(healthy_account: EvalAccount) -> None:
+    healthy_account.env_file.unlink()
+    healthy_account.env_file.mkdir()
+
+    exit_code, standard_output, _ = run_goodall(["doctor", "--json"])
+
+    assert exit_code == exit_codes.ERROR
+    document = json.loads(standard_output)
+    assert failure_kinds(document, "secrets.env_file_holds_only_references") == ["env_file_unreadable"]
+
+
+@pytest.mark.parametrize("permissions", [0o644, 0o640, 0o604])
+def test_an_env_file_other_accounts_can_read_is_a_warning_with_the_command_to_fix_it(
+    healthy_account: EvalAccount, permissions: int
+) -> None:
+    healthy_account.env_file.chmod(permissions)
+
+    exit_code, standard_output, _ = run_goodall(["doctor", "--json"])
+
+    # References are not secrets, so goodall still works; but they name
+    # vaults and items, which other accounts on the Mac have no need to see.
+    assert exit_code == exit_codes.SUCCESS
+    document = json.loads(standard_output)
+    private_check = check_document(document, "secrets.env_file_private")
+    assert private_check["status"] == "warn"
+    assert failure_kinds(document, "secrets.env_file_private") == ["env_file_readable_by_others"]
+    assert private_check["next_step"] == (
+        f"Run chmod 600 {healthy_account.env_file} in Terminal, then run goodall doctor again."
+    )
+
+
+def test_the_permissions_check_passes_when_there_is_no_env_file(healthy_account: EvalAccount) -> None:
+    healthy_account.env_file.unlink()
+
+    _, standard_output, _ = run_goodall(["doctor", "--json"])
+
+    assert check_document(json.loads(standard_output), "secrets.env_file_private")["status"] == "pass"
+
+
+def test_a_secret_looking_name_in_the_shared_env_file_fails_saying_to_move_it_to_the_env_file(
+    healthy_account: EvalAccount,
+) -> None:
+    healthy_account.shared_env_file.write_text(
+        VALID_SHARED_ENV_FILE_TEXT + f"OPENAI_API_KEY={PASTED_KEY}\ngithub_token=abc\nNOT_A_SECRET_KEYBOARD=uk\n"
+    )
+
+    exit_code, standard_output, standard_error = run_goodall(["doctor"])
+    _, json_output, _ = run_goodall(["doctor", "--json"])
+
+    assert exit_code == exit_codes.ERROR
+    for printed in [standard_output, standard_error, json_output]:
+        assert "RECOGNISABLEFAKEVALUE" not in printed
+    assert "  FAIL  The shared env file holds no secrets\n" in standard_output
+    document = json.loads(json_output)
+    assert failure_kinds(document, "secrets.shared_env_file_holds_no_secrets") == [
+        "shared_env_file_secret_name",
+        "shared_env_file_secret_name",
+    ]
+    shared_check = check_document(document, "secrets.shared_env_file_holds_no_secrets")
+    assert isinstance(shared_check["detail"], str)
+    assert "OPENAI_API_KEY, on line 6" in shared_check["detail"]
+    assert "github_token, on line 7" in shared_check["detail"]
+    assert "NOT_A_SECRET_KEYBOARD" not in shared_check["detail"]
+    assert isinstance(shared_check["next_step"], str)
+    assert "move this to the env file as a reference" in shared_check["next_step"]
+
+
+def test_a_missing_shared_env_file_is_a_warning_with_a_next_step(healthy_account: EvalAccount) -> None:
+    healthy_account.shared_env_file.unlink()
+
+    exit_code, standard_output, _ = run_goodall(["doctor"])
+
+    assert exit_code == exit_codes.SUCCESS
+    assert "  warn  The shared env file holds no secrets\n" in standard_output
+    report_text = " ".join(standard_output.split())
+    assert f"There is no shared env file at {healthy_account.shared_env_file}." in report_text
+    assert "Next: Run git pull in" in report_text
+
+
+def test_a_secret_reference_in_the_shared_env_file_fails_because_it_would_not_be_resolved(
+    healthy_account: EvalAccount,
+) -> None:
+    healthy_account.shared_env_file.write_text(
+        VALID_SHARED_ENV_FILE_TEXT + 'OTEL_EXPORTER_OTLP_HEADERS="op://RECOGNISABLEVAULT/otel/credential"\n'
+    )
+
+    exit_code, standard_output, standard_error = run_goodall(["doctor", "--json"])
+
+    assert exit_code == exit_codes.ERROR
+    assert "RECOGNISABLEVAULT" not in standard_output + standard_error
+    document = json.loads(standard_output)
+    assert failure_kinds(document, "secrets.shared_env_file_holds_no_secrets") == ["shared_env_file_secret_reference"]
+    next_step = check_document(document, "secrets.shared_env_file_holds_no_secrets")["next_step"]
+    assert isinstance(next_step, str)
+    assert "move this to the env file as a reference" in next_step
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        f"SOME_SETTING={PASTED_KEY}",
+        'OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer RECOGNISABLEFAKEVALUE0123456789abcdef"',
+        "AWS_ID=AKIARECOGNISABLEFAKEVALUE7",
+    ],
+)
+def test_a_value_in_the_shared_env_file_that_looks_like_a_random_token_is_a_warning(
+    healthy_account: EvalAccount, line: str
+) -> None:
+    healthy_account.shared_env_file.write_text(VALID_SHARED_ENV_FILE_TEXT + line + "\n")
+
+    exit_code, standard_output, standard_error = run_goodall(["doctor", "--json"])
+
+    # Only a guess, so it warns rather than blocking: no list of safe
+    # variables exists to tell a token from a long identifier.
+    assert exit_code == exit_codes.SUCCESS
+    assert "RECOGNISABLEFAKEVALUE" not in standard_output + standard_error
+    document = json.loads(standard_output)
+    assert check_document(document, "secrets.shared_env_file_holds_no_secrets")["status"] == "warn"
+    assert failure_kinds(document, "secrets.shared_env_file_holds_no_secrets") == ["shared_env_file_value_looks_secret"]
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318",
+        "OTEL_RESOURCE_ATTRIBUTES=service.name=goodall-pilot,deployment.environment=eval-2026",
+        "COLLECTOR_HOST=otel-collector-01.internal.example.com",
+        'GREETING="a sentence with ordinary words in it"',
+    ],
+)
+def test_ordinary_values_in_the_shared_env_file_pass(healthy_account: EvalAccount, line: str) -> None:
+    healthy_account.shared_env_file.write_text(VALID_SHARED_ENV_FILE_TEXT + line + "\n")
+
+    _, standard_output, _ = run_goodall(["doctor", "--json"])
+
+    document = json.loads(standard_output)
+    assert check_document(document, "secrets.shared_env_file_holds_no_secrets")["status"] == "pass"
+
+
+def test_a_variable_in_both_env_files_fails_naming_it(healthy_account: EvalAccount) -> None:
+    healthy_account.env_file.write_text(VALID_ENV_FILE_TEXT + 'OTEL_LOGS_EXPORTER="op://Eval/otel/exporter"\n')
+
+    exit_code, standard_output, _ = run_goodall(["doctor", "--json"])
+
+    assert exit_code == exit_codes.ERROR
+    document = json.loads(standard_output)
+    both_check = check_document(document, "secrets.no_variable_in_both_env_files")
+    assert both_check["status"] == "fail"
+    assert failure_kinds(document, "secrets.no_variable_in_both_env_files") == ["variable_in_both_env_files"]
+    assert isinstance(both_check["detail"], str)
+    assert "OTEL_LOGS_EXPORTER is set on line 6 of the env file" in both_check["detail"]
+    assert "and on line 3 of the shared env file" in both_check["detail"]
+
+
+def test_the_check_for_a_variable_in_both_files_waits_for_a_broken_env_file(healthy_account: EvalAccount) -> None:
+    healthy_account.env_file.write_text(f"OTEL_LOGS_EXPORTER={PASTED_KEY}\n")
+
+    _, standard_output, _ = run_goodall(["doctor", "--json"])
+
+    both_check = check_document(json.loads(standard_output), "secrets.no_variable_in_both_env_files")
+    assert both_check["status"] == "skip"
+    assert both_check["waiting_for"] == "secrets.env_file_holds_only_references"
