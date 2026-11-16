@@ -19,9 +19,9 @@ from goodall import cli, exit_codes
 PLANNED_COMMANDS = [
     "onboard",
     "doctor",
-    "session start",
-    "session end",
-    "session status",
+    "start",
+    "stop",
+    "status",
     "journal",
     "intervene",
     "hook",
@@ -51,7 +51,7 @@ def run_goodall(arguments: list[str]) -> tuple[int, str]:
 
 
 def registered_command_names(parser: argparse.ArgumentParser, prefix: str = "") -> list[str]:
-    """List every runnable command the parser knows, as "session start" etc.
+    """List every runnable command the parser knows, as "start", "export scout" etc.
 
     argparse has no public way to list subcommands, so this reads the
     `_SubParsersAction` objects it keeps in `parser._actions`. A command with
@@ -84,14 +84,38 @@ def test_help_lists_every_top_level_command() -> None:
 
 
 def test_group_help_lists_its_subcommands() -> None:
-    session_exit_code, session_output = run_goodall(["session", "--help"])
-    assert session_exit_code == exit_codes.SUCCESS
-    for subcommand in ["start", "end", "status"]:
-        assert subcommand in session_output
+    exit_code, output = run_goodall(["export", "--help"])
+    assert exit_code == exit_codes.SUCCESS
+    assert "scout" in output
 
-    export_exit_code, export_output = run_goodall(["export", "--help"])
-    assert export_exit_code == exit_codes.SUCCESS
-    assert "scout" in export_output
+
+def test_help_describes_work_blocks_without_saying_session() -> None:
+    # "Work block" is goodall's word for a logged stretch of work; "session"
+    # is reserved for a Claude session, which top-level help never mentions.
+    exit_code, output = run_goodall(["--help"])
+    assert exit_code == exit_codes.SUCCESS
+    assert "work block" in output
+    assert "session" not in output.lower()
+
+
+def test_old_session_command_is_unknown() -> None:
+    # The work-block commands were `goodall session start|end|status` before
+    # they became top-level. The old group must not linger as an alias.
+    exit_code, output = run_goodall(["session", "start"])
+    assert exit_code == exit_codes.USAGE_ERROR
+    assert "invalid choice" in output
+
+
+def test_start_accepts_a_workstream() -> None:
+    exit_code, output = run_goodall(["start", "--workstream", "research"])
+    assert exit_code == exit_codes.ERROR
+    assert "goodall start is not built yet" in output
+
+
+def test_start_workstream_option_needs_a_name() -> None:
+    exit_code, output = run_goodall(["start", "--workstream"])
+    assert exit_code == exit_codes.USAGE_ERROR
+    assert "--workstream" in output
 
 
 def test_no_arguments_prints_help_and_is_usage_error() -> None:
@@ -101,9 +125,9 @@ def test_no_arguments_prints_help_and_is_usage_error() -> None:
 
 
 def test_group_without_subcommand_is_usage_error() -> None:
-    exit_code, output = run_goodall(["session"])
+    exit_code, output = run_goodall(["export"])
     assert exit_code == exit_codes.USAGE_ERROR
-    assert "usage: goodall session" in output
+    assert "usage: goodall export" in output
 
 
 def test_every_stub_returns_error_and_names_itself() -> None:
