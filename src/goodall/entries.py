@@ -46,11 +46,13 @@ def run_journal(terminal: Terminal, runner: Runner, request: EntryRequest) -> in
     text = request.text
     if text is None:
         text = terminal.read_piped_text()
+    if text is None:
+        terminal.show_failure(text_missing_failure("journal entry", "goodall journal"))
+        return exit_codes.USAGE_ERROR
     eval_reading = find_eval_for_this_account()
     if isinstance(eval_reading, list):
         terminal.show_failures(eval_reading)
         return exit_codes.ERROR
-    assert text is not None
     entry = records.build_journal_entry(
         contributor=eval_reading.contributor.id,
         written_at=datetime.now(UTC),
@@ -58,6 +60,30 @@ def run_journal(terminal: Terminal, runner: Runner, request: EntryRequest) -> in
     )
     outcome = write_record(runner, eval_reading.local_settings.record_repo.path, entry)
     return report_outcome(terminal, "journal entry", outcome)
+
+
+def text_missing_failure(record_type_name: str, command: str) -> Failure:
+    """The failure for a command run with no text, at a keyboard, so nothing was piped in either.
+
+    `command` is the command as a person would type it without the text,
+    such as `goodall journal`, so each example can be copied as it stands.
+    """
+    return Failure(
+        kind="entry_text_missing",
+        what_happened=f"No text was given for the {record_type_name}. Nothing was recorded.",
+        why=(
+            "Goodall never asks questions in the terminal, so what you want to record has to come with the "
+            "command itself."
+        ),
+        what_to_do_next=(
+            "Put the text after the command, inside double quotes. For several lines, copy them and pipe "
+            "them in with pbpaste."
+        ),
+        commands_to_try=(
+            f'{command} "What happened, and who decided"',
+            f"pbpaste | {command}",
+        ),
+    )
 
 
 def find_eval_for_this_account() -> EvalForThisAccount | list[Failure]:

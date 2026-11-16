@@ -176,4 +176,20 @@ def test_journal_reads_several_lines_piped_to_standard_input(eval_account: EvalA
 
     assert run.exit_code == exit_codes.SUCCESS, run.standard_error
     [entry_file] = eval_account.journal_files()
-    assert entry_file.read_text().endswith("+++\n\n# Chose Postgres\n\nThe agent proposed it; I agreed.\nDecided by me.\n")
+    assert entry_file.read_text().endswith(
+        "+++\n\n# Chose Postgres\n\nThe agent proposed it; I agreed.\nDecided by me.\n"
+    )
+
+
+def test_journal_with_no_text_at_a_keyboard_fails_at_once_and_shows_how_to_pass_text(
+    eval_account: EvalAccount,
+) -> None:
+    # KeyboardInput fails the test if goodall tries to read from it.
+    run = run_goodall(["journal"])
+
+    assert run.exit_code == exit_codes.USAGE_ERROR
+    assert run.standard_output == ""
+    assert run.standard_error.startswith("FAIL  No text was given for the journal entry.")
+    assert 'goodall journal "' in run.standard_error
+    assert "| goodall journal" in run.standard_error
+    assert eval_account.journal_files() == []

@@ -78,16 +78,31 @@ class Failure:
     `kind` is a short fixed name such as "local_settings_missing". It appears
     only in JSON, so an agent can branch on it without matching English
     sentences, which may be reworded.
+
+    `commands_to_try` holds whole commands a person can copy and run, such
+    as `pbpaste | goodall journal`. They are shown one per line and never
+    wrapped, because a command split across two lines no longer runs when
+    pasted. Most failures have none.
     """
 
     kind: str
     what_happened: str
     why: str
     what_to_do_next: str
+    commands_to_try: tuple[str, ...] = ()
 
-    def as_json(self) -> dict[str, str]:
-        """Return this failure as a dictionary ready for `Terminal.write_json`."""
-        return asdict(self)
+    def as_json(self) -> dict[str, object]:
+        """Return this failure as a dictionary ready for `Terminal.write_json`.
+
+        `commands_to_try` appears only when there are some, so every other
+        failure keeps the four keys it has always had.
+        """
+        document: dict[str, object] = asdict(self)
+        if not self.commands_to_try:
+            del document["commands_to_try"]
+        else:
+            document["commands_to_try"] = list(self.commands_to_try)
+        return document
 
 
 class CheckStatus(StrEnum):
@@ -364,7 +379,22 @@ class Terminal:
             self.labelled_paragraph("Why", failure.why, BOLD),
             self.labelled_paragraph("Next", failure.what_to_do_next, BOLD),
         ]
+        if failure.commands_to_try:
+            paragraphs.append(self.commands_paragraph(failure.commands_to_try))
         self.standard_error.write("\n\n".join(paragraphs) + "\n")
+
+    def commands_paragraph(self, commands: tuple[str, ...]) -> str:
+        """Commands to copy, labelled "Try", one per line and never wrapped, so each pastes as it stands."""
+        label = "Try".ljust(LABEL_COLUMN_WIDTH)
+        if self.error_colour:
+            label = BOLD + "Try" + RESET + label[len("Try") :]
+        lines = []
+        for position, command in enumerate(commands):
+            if position == 0:
+                lines.append(label + command)
+            else:
+                lines.append(" " * LABEL_COLUMN_WIDTH + command)
+        return "\n".join(lines)
 
     def show_failures(self, failures: list[Failure]) -> None:
         """Write several failures to standard error, one after another, with a blank line between them."""
