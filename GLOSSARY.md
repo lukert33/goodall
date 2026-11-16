@@ -14,9 +14,13 @@ _Avoid_: Benchmark, experiment
 The question an eval sets out to measure, written down before the work starts.
 _Avoid_: Research question, hypothesis
 
+**macOS user account**:
+One login on a Mac with its own home folder, the kind created under Users & Groups in System Settings. Written out in full; shortened to "account" only where the same paragraph has already said "macOS user account".
+_Avoid_: Profile, user profile, macOS account, login
+
 **Eval account**:
 A standard (non-admin) macOS user account used for one eval and nothing else. It is the boundary of what the eval records.
-_Avoid_: Project account, eval machine, sandbox
+_Avoid_: Project account, eval machine, eval profile, sandbox
 
 **Development account**:
 An ordinary account where goodall itself is developed. It is outside any eval.
