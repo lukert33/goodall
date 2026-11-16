@@ -4,6 +4,30 @@
 (goodall.doctor). Every program they ask about goes through the runner in
 the check context (goodall.runner), so a test decides what each program
 does, and git runs for real.
+
+They fall under three headings, each with its own id prefix:
+
+- "Tools": git, gh and the secrets manager's command are installed. One
+  check per program, so each missing program is one failure naming it.
+- "Eval account": this macOS user account is a standard account, not an
+  administrator.
+- "Record repo": the record repo folder is a git repository. Later checks
+  on the record repo (its remote and visibility) belong here too.
+
+The dependency edges, chosen so one broken thing is one failure:
+
+- git and gh need nothing else, so they are checked even when local
+  settings are missing.
+- The secrets manager's command waits for valid local settings, because
+  they name the secrets manager.
+- The account check needs nothing else.
+- The git repository check waits for the record repo folder and for git:
+  without git it cannot ask, and the report should say "git is missing"
+  once, not again under the record repo.
+
+Like every check, these only look (ADR 0012): programs are looked for on
+the PATH without being run, `id -Gn` and `git rev-parse` only read, and no
+check that could print a secret runs here.
 """
 
 from dataclasses import dataclass
@@ -43,7 +67,8 @@ class RequiredProgram:
     """A program goodall needs, and what to tell a contributor when it is missing.
 
     - `name` is the command, as found on the PATH.
-    - `described` names it for a person, such as "gh, GitHub's command-line tool".
+    - `described` names it for a person, at the start of a sentence, such
+      as "gh, GitHub's command-line tool,".
     - `why` says what goodall uses it for.
     - `how_to_install` says where to get it, as the end of a sentence.
     """
@@ -64,7 +89,7 @@ GIT = RequiredProgram(
 GH = RequiredProgram(
     name="gh",
     described="gh, GitHub's command-line tool,",
-    why=("Goodall asks gh about the record repo on GitHub, so that goodall itself never holds a GitHub token."),
+    why="Goodall asks gh about the record repo on GitHub, so that goodall itself never holds a GitHub token.",
     how_to_install="from https://cli.github.com",
 )
 
@@ -155,7 +180,7 @@ def account_groups_unknown_failure(problem: str) -> Failure:
     """The failure for when goodall could not find out this account's groups."""
     return Failure(
         kind="account_groups_unknown",
-        what_happened=(f"Goodall could not tell whether this macOS user account is an administrator: {problem}."),
+        what_happened=f"Goodall could not tell whether this macOS user account is an administrator: {problem}.",
         why="Goodall reads the account's groups to confirm it is a standard account; without them it cannot.",
         what_to_do_next=(
             f"Run {' '.join(ACCOUNT_GROUPS_COMMAND)} in Terminal: it should print this account's groups on one "
@@ -270,7 +295,7 @@ def record_repo_git_unanswered_failure(local_settings: LocalSettings, problem: s
             f"repository: {problem}."
         ),
         why="Goodall keeps the eval's records with git, so it must be able to run git in the record repo.",
-        what_to_do_next=(f"Run git status in {record_repo.path} to see what git says, then run goodall doctor again."),
+        what_to_do_next=f"Run git status in {record_repo.path} to see what git says, then run goodall doctor again.",
     )
 
 

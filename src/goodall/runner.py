@@ -2,7 +2,9 @@
 
 Every program goodall runs (git, gh, the secrets manager's command, `id`)
 goes through a `Runner` (ADR 0011, AGENTS.md invariant 9). A caller
-describes what to run as a `Command` and reads back a `CommandResult`.
+describes what to run as a `Command` and reads back a `CommandResult`. The
+runner also says whether a program is installed (`find_program`) without
+running it, so a test decides that too.
 
 Rules this module keeps, and why:
 
