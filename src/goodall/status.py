@@ -32,17 +32,27 @@ def run_status(terminal: Terminal, as_json: bool) -> int:
     except RelativeConfigDirectoryError as relative_directory_error:
         return report_failure(terminal, relative_config_directory_failure(relative_directory_error.value), as_json)
 
-    # Only checks whether the file exists; nothing is created or opened.
-    if not location.settings_file.exists():
+    # Opening the file is how goodall learns whether it exists. Trap: asking
+    # first with Path.exists() raises PermissionError when the folder cannot
+    # be searched, so the question "is it there?" would crash goodall.
+    try:
+        location.settings_file.read_bytes()
+    except FileNotFoundError:
         return report_failure(terminal, local_settings_missing_failure(location), as_json)
+    except OSError as read_error:
+        return report_failure(terminal, local_settings_unreadable_failure(location, read_error), as_json)
 
     return report_failure(terminal, local_settings_not_read_yet_failure(location), as_json)
 
 
 def report_failure(terminal: Terminal, failure: Failure, as_json: bool) -> int:
-    """Show `failure` as text or as JSON, and return the error exit code."""
+    """Show `failure` as text or as JSON, and return the error exit code.
+
+    The JSON document has the same keys whatever went wrong. No work block
+    can be active while goodall is failing, so `work_block_active` is false.
+    """
     if as_json:
-        terminal.write_json({"failure": failure.as_json()})
+        terminal.write_json({"work_block_active": False, "failures": [failure.as_json()]})
     else:
         terminal.show_failure(failure)
     return exit_codes.ERROR
@@ -79,6 +89,26 @@ def local_settings_missing_failure(location: LocalSettingsLocation) -> Failure:
             "so nothing can be recorded."
         ),
         what_to_do_next=what_to_do_next,
+    )
+
+
+def local_settings_unreadable_failure(location: LocalSettingsLocation, read_error: OSError) -> Failure:
+    """The failure for local settings that exist, or may exist, but cannot be opened.
+
+    The operating system's own reason (for example "Permission denied") is
+    quoted, because it is the most precise clue there is.
+    """
+    return Failure(
+        kind="local_settings_unreadable",
+        what_happened=(f"Local settings at {location.settings_file} could not be read: {read_error.strerror}."),
+        why=(
+            "Goodall needs to read local settings to find this macOS user account's eval, "
+            "so it cannot tell whether a work block is active."
+        ),
+        what_to_do_next=(
+            f"Check the permissions of {location.settings_file} and the folders above it: "
+            "this macOS user account must be able to read them. Then run goodall status again."
+        ),
     )
 
 

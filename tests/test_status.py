@@ -11,6 +11,8 @@ home folder of whoever runs the tests.
 
 import io
 import json
+import os
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
@@ -127,7 +129,13 @@ def test_status_json_reports_the_same_failure_on_standard_output(empty_config_di
     assert json_error == ""
 
     document = json.loads(json_output)
-    failure = document["failure"]
+    # One stable shape whatever went wrong: an agent reads work_block_active
+    # to decide whether to proceed, and failures is always a list, because
+    # a settings file can have several things wrong with it at once.
+    assert set(document) == {"work_block_active", "failures"}
+    assert document["work_block_active"] is False
+    assert len(document["failures"]) == 1
+    failure = document["failures"][0]
     assert failure["kind"] == "local_settings_missing"
     assert str(empty_config_directory / "local-settings.toml") in failure["what_happened"]
     assert "goodall onboard" in failure["what_to_do_next"]
@@ -165,3 +173,69 @@ def test_status_with_local_settings_present_says_reading_them_is_not_built(empty
     assert str(settings_file) in standard_error
     assert "not built yet" in standard_error
     assert settings_file.read_text() == "schema_version = 1\n"
+
+
+@pytest.fixture
+def remove_permissions() -> Iterator[Callable[[Path], None]]:
+    """Take every permission away from a file or folder, and give them back afterwards.
+
+    Permissions are restored even when the test fails, so pytest can still
+    delete its temporary folders. Root ignores permissions, so these tests
+    are skipped when run as root.
+    """
+    if os.geteuid() == 0:
+        pytest.skip("root can read anything, so permissions cannot be taken away")
+    locked_paths: list[tuple[Path, int]] = []
+
+    def lock(path: Path) -> None:
+        locked_paths.append((path, path.stat().st_mode))
+        path.chmod(0)
+
+    yield lock
+    for path, original_mode in reversed(locked_paths):
+        path.chmod(original_mode)
+
+
+def test_status_with_unreadable_config_folder_fails_instead_of_crashing(
+    empty_config_directory: Path, remove_permissions: Callable[[Path], None]
+) -> None:
+    (empty_config_directory / "local-settings.toml").write_text("schema_version = 1\n")
+    remove_permissions(empty_config_directory)
+
+    exit_code, standard_output, standard_error = run_goodall(["status"])
+
+    assert exit_code == exit_codes.ERROR
+    assert standard_output == ""
+    assert standard_error.startswith("FAIL  Local settings at")
+    assert str(empty_config_directory / "local-settings.toml") in standard_error
+    assert "could not be read" in standard_error
+    assert "Permission denied" in standard_error
+    assert "\nNext  " in standard_error
+    assert "permissions" in standard_error
+
+
+def test_status_with_unreadable_settings_file_fails_instead_of_crashing(
+    empty_config_directory: Path, remove_permissions: Callable[[Path], None]
+) -> None:
+    settings_file = empty_config_directory / "local-settings.toml"
+    settings_file.write_text("schema_version = 1\n")
+    remove_permissions(settings_file)
+
+    exit_code, _, standard_error = run_goodall(["status", "--json"])
+
+    assert exit_code == exit_codes.ERROR
+    assert standard_error == ""
+
+
+def test_status_json_with_unreadable_settings_file_names_the_problem(
+    empty_config_directory: Path, remove_permissions: Callable[[Path], None]
+) -> None:
+    settings_file = empty_config_directory / "local-settings.toml"
+    settings_file.write_text("schema_version = 1\n")
+    remove_permissions(settings_file)
+
+    _, standard_output, _ = run_goodall(["status", "--json"])
+
+    failures = json.loads(standard_output)["failures"]
+    assert [failure["kind"] for failure in failures] == ["local_settings_unreadable"]
+    assert str(settings_file) in failures[0]["what_happened"]
