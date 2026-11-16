@@ -90,7 +90,7 @@ NAME_LIST_KEYS = ["workstreams", "intervention_categories"]
 CONTRIBUTOR_KEYS = ["id", "display_name"]
 SCOPE_KEYS = ["repository", "paths"]
 
-# How a message refers to a key, or a name in a list, that it does not show.
+# How a message refers to a key whose name it does not show.
 UNSHOWN_KEY = "a key whose name goodall does not show"
 
 # A name: lowercase letters and digits, in words joined by single hyphens,

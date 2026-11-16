@@ -26,7 +26,7 @@ The dependency edges, chosen so one broken thing is one failure:
   without git it cannot ask, and the report should say "git is missing"
   once, not again under the record repo.
 
-Like every check, these only look (ADR 0012): programs are looked for on
+Like every check, these only look (AGENTS.md invariant 5): programs are looked for on
 the PATH without being run, `id -Gn` and `git rev-parse` only read, and no
 check that could print a secret runs here.
 """

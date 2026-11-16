@@ -43,8 +43,8 @@ TOML reader's own messages pass through goodall.quoting for the same reason.
 The failures are built here, beside the rule that finds each problem, so
 `goodall status`, `goodall doctor` and the prompt gate all word a problem the
 same way. This module checks the file only. Whether the folders it names
-exist is a question about the machine, answered by the commands that need
-them (see goodall.status).
+exist is a question about the machine, answered by goodall.folders for the
+commands that need them.
 
 The file's shape is provisional by the owner's instruction (goodall-xes.8);
 `schema_version` is there so it can change.

@@ -35,7 +35,8 @@ it read them back instead of reading the file again. That is safe because a
 check runs only when every prerequisite passed or warned.
 
 Checks only look. `goodall doctor` promises to change nothing on the
-machine (ADR 0012), so no check may create, change or delete a file.
+machine (AGENTS.md invariant 5), so no check may create, change or delete
+a file.
 """
 
 from collections.abc import Callable

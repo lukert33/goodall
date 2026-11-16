@@ -8,7 +8,7 @@ the file. This module asks the machine. `goodall status` and
 wherever it is reported.
 
 Everything here only looks: nothing is created or changed, because
-`goodall doctor` promises to change nothing on the machine (ADR 0012).
+diagnostics are read-only (AGENTS.md invariant 5).
 """
 
 import os

@@ -412,8 +412,8 @@ class Terminal:
             group_blocks.append(group_text)
 
         counts = count_checks(results)
-        # Unverified comes last, after the four counts that came first, so
-        # the line still starts as it always did.
+        # Unverified comes last, so a script that reads the first four
+        # counts by position finds them where it expects.
         counts_line = (
             f"{counts.passed} passed, {counts.warned} warned, {counts.failed} failed, {counts.skipped} skipped, "
             f"{counts.unverified} unverified\n"

@@ -11,9 +11,9 @@ Exit code: 1 when any check failed, otherwise 0. Warnings do not fail it: a
 warning means goodall works, in a reduced way. Nor does a check goodall
 could not verify: it is reported as unverified, which is neither a pass nor
 a failure, and the report says what the contributor can check by hand.
-Skips are not counted
-either, because a check is only ever skipped when another check in the same
-report failed (goodall.checks), so a report with a skip already exits 1.
+Skips are not counted either, because a check is only ever skipped when
+another check in the same report failed (goodall.checks), so a report with
+a skip already exits 1.
 
 Doctor is strictly read-only (AGENTS.md invariant 5): it creates, changes
 and deletes nothing, so a contributor can always run it first when
@@ -28,9 +28,9 @@ The JSON document, whose shape agents rely on:
     }
 
 `schema_version` is raised whenever a key changes meaning or disappears;
-adding a key does not raise it. Adding the status "unverified" (and its
-count) did not raise it either: an agent that treats any status other than
-"pass" and "warn" as needing attention reads it correctly.
+adding a key does not raise it. Nor does adding a status (and its count),
+because an agent should treat any status other than "pass" and "warn" as
+needing attention, and so reads a new one correctly.
 """
 
 from goodall import exit_codes
