@@ -77,9 +77,11 @@ first.
    imports nothing third-party, because the prompt gate runs on every prompt.
 8. **Capture is independent of analysis.** `inspect-ai` and `inspect-scout`
    are an optional extra, imported only by export code.
-9. **One gateway each.** All subprocess and network calls go through one
-   runner module with a fake for tests; all terminal input and output goes
-   through one UI module.
+9. **One gateway each.** All subprocess calls go through one runner module
+   with a fake for tests, and goodall makes no network calls of its own. All
+   terminal output goes through one UI module. The terminal never asks a
+   question: the setup page is the only place goodall asks a person for
+   answers, and unattended setup reads an answers file.
 
 ## Command-line conventions
 
