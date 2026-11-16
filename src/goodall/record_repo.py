@@ -80,6 +80,10 @@ MAXIMUM_PUSH_RETRIES = 3
 # for a slow connection to send a few small text files.
 NETWORK_TIMEOUT_SECONDS = 30.0
 
+# The remote pushed to when the branch names no upstream: git's own name
+# for the remote a repository was cloned from.
+DEFAULT_REMOTE = "origin"
+
 # How long a commit may take. Longer than a short command's limit, because
 # the contributor's own hooks and commit signing run inside it.
 COMMIT_TIMEOUT_SECONDS = 60.0
@@ -245,6 +249,12 @@ def push_pending(runner: Runner, record_repo: Path) -> PushOutcome:
     target = find_push_target(runner, record_repo)
     if target is None:
         return PushOutcome(push_state=PushState.NO_REMOTE)
+    if isinstance(target, Failure):
+        return PushOutcome(
+            push_state=PushState.PENDING,
+            pending_commits=count_commits_on_no_remote(runner, record_repo),
+            failures=[target],
+        )
     push_result = push_branch(runner, record_repo, target)
     for _retry in range(MAXIMUM_PUSH_RETRIES):
         if push_result.succeeded:
@@ -302,6 +312,16 @@ def pending_outcome(runner: Runner, record_repo: Path, target: PushTarget, failu
         pending_commits=count_pending_commits(runner, record_repo, target),
         failures=[failure],
     )
+
+
+def count_commits_on_no_remote(runner: Runner, record_repo: Path) -> int:
+    """How many commits in this copy's history git has seen on no remote at all.
+
+    Used when there is no one branch to compare with, such as when the
+    record repo is not on a branch.
+    """
+    count_result = run_git(runner, record_repo, ["rev-list", "--count", "HEAD", "--not", "--remotes"])
+    return int(count_result.standard_output.strip() or "0")
 
 
 def fetch_branch(runner: Runner, record_repo: Path, target: PushTarget) -> CommandResult:
@@ -445,13 +465,65 @@ def push_failed_failure(
     )
 
 
-def find_push_target(runner: Runner, record_repo: Path) -> PushTarget | None:
-    """Where the current branch is pushed, or None when the record repo has no remote."""
-    branch = run_git(runner, record_repo, ["symbolic-ref", "--quiet", "--short", "HEAD"]).standard_output.strip()
-    remote = run_git(runner, record_repo, ["config", "--get", f"branch.{branch}.remote"]).standard_output.strip()
-    if not remote:
+def find_push_target(runner: Runner, record_repo: Path) -> PushTarget | Failure | None:
+    """Where the current branch is pushed; None when the record repo has no remote; a Failure when unclear.
+
+    The branch's upstream, set by `git clone`, says which remote and which
+    branch there. A record repo whose remote was added by hand may have no
+    upstream; then the remote called `origin`, git's usual name, gets the
+    branch under the same name. With several remotes and no upstream,
+    goodall does not guess. Nothing here is stored outside git (ADR 0009).
+    """
+    remotes_result = run_git(runner, record_repo, ["remote"])
+    remotes = remotes_result.standard_output.split()
+    if not remotes:
         return None
-    return PushTarget(remote=remote, branch=branch)
+    branch_result = run_git(runner, record_repo, ["symbolic-ref", "--quiet", "--short", "HEAD"])
+    branch = branch_result.standard_output.strip()
+    if not branch_result.succeeded or not branch:
+        return not_on_a_branch_failure(record_repo)
+
+    upstream_remote = run_git(runner, record_repo, ["config", "--get", f"branch.{branch}.remote"])
+    upstream_branch = run_git(runner, record_repo, ["config", "--get", f"branch.{branch}.merge"])
+    remote = upstream_remote.standard_output.strip()
+    remote_branch = upstream_branch.standard_output.strip().removeprefix("refs/heads/")
+    if remote in remotes and remote_branch:
+        return PushTarget(remote=remote, branch=remote_branch)
+    if DEFAULT_REMOTE in remotes:
+        return PushTarget(remote=DEFAULT_REMOTE, branch=branch)
+    return no_push_destination_failure(record_repo, branch)
+
+
+def not_on_a_branch_failure(record_repo: Path) -> Failure:
+    """The failure for a record repo whose copy is not on a branch, so there is no branch to push."""
+    return Failure(
+        kind="record_repo_not_on_a_branch",
+        what_happened=(
+            f"The record is saved and committed in {record_repo}, but not pushed: the record repo is not on a "
+            "branch (git calls this a detached HEAD), so goodall does not know where on the remote it belongs."
+        ),
+        why="Records reach other contributors only once they are pushed to the eval's branch on the remote.",
+        what_to_do_next=(
+            f"Ask the researcher who runs the eval to put the record repo in {record_repo} back on its branch "
+            "(git status shows where it is). The waiting commits are pushed with the next record goodall writes."
+        ),
+    )
+
+
+def no_push_destination_failure(record_repo: Path, branch: str) -> Failure:
+    """The failure for a record repo with remotes but none that goodall can tell is the one to push to."""
+    return Failure(
+        kind="record_repo_push_destination_unknown",
+        what_happened=(
+            f"The record is saved and committed in {record_repo}, but not pushed: the branch {branch} has no "
+            "upstream and there is no remote called origin, so goodall does not know where to push it."
+        ),
+        why="Goodall pushes where git says to, and never guesses or changes the repository's settings itself.",
+        what_to_do_next=(
+            f"In {record_repo}, run git push --set-upstream <remote> {branch} once, naming the eval's remote. "
+            "Goodall pushes there from then on."
+        ),
+    )
 
 
 def not_written(path: Path, failure: Failure) -> RecordWriteOutcome:

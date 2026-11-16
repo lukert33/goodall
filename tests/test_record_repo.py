@@ -338,3 +338,42 @@ def test_stray_git_variables_in_the_environment_cannot_redirect_the_write(
     assert commit_subjects(record_repo)[0] == "Add journal entry 20261116T093000Z-ada-lovelace-7f3a9c2e"
     assert git(record_repo, "log", "-1", "--format=%an") == "Ada Lovelace\n"
     assert commit_subjects(other_repository) == ["Start the record repo"]
+
+
+def test_every_git_command_is_bounded_in_time_and_cannot_prompt(tmp_path: Path) -> None:
+    remote, record_repo = make_remote_and_clone(tmp_path)
+    remote.rename(tmp_path / "remote-away.git")
+    runner = FakeRunner()
+
+    write_record(runner, record_repo, journal_entry())
+
+    assert runner.calls != []
+    for command in runner.calls:
+        assert command.timeout_seconds <= 60
+        assert command.extra_environment["GIT_TERMINAL_PROMPT"] == "0"
+        assert "GIT_" in command.removed_environment_prefixes
+
+
+def test_a_record_repo_with_a_remote_but_no_upstream_pushes_to_origin(tmp_path: Path) -> None:
+    remote = tmp_path / "remote.git"
+    git(tmp_path, "init", "--quiet", "--bare", "--initial-branch=main", str(remote))
+    record_repo = make_record_repo(tmp_path / "records")
+    git(record_repo, "remote", "add", "origin", str(remote))
+
+    outcome = write_record(FakeRunner(), record_repo, journal_entry())
+
+    assert outcome.failures == []
+    assert outcome.push_state == PushState.PUSHED
+    assert commit_subjects(remote, "main")[0] == "Add journal entry 20261116T093000Z-ada-lovelace-7f3a9c2e"
+
+
+def test_a_record_repo_not_on_a_branch_commits_but_leaves_the_push_pending(tmp_path: Path) -> None:
+    remote, record_repo = make_remote_and_clone(tmp_path)
+    git(record_repo, "switch", "--quiet", "--detach")
+
+    outcome = write_record(FakeRunner(), record_repo, journal_entry())
+
+    assert [failure.kind for failure in outcome.failures] == ["record_repo_not_on_a_branch"]
+    assert outcome.committed
+    assert outcome.push_state == PushState.PENDING
+    assert commit_subjects(remote, "main") == ["Start the record repo"]
