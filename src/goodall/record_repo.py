@@ -89,8 +89,14 @@ def write_record(runner: Runner, record_repo: Path, record: records.Record) -> R
     path = record_repo / relative_path
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("x", encoding="utf-8") as record_file:
-        record_file.write(text)
+    # "x" creates the file only if nothing is there, in one step, so an
+    # existing record (or anything else at that name) is never overwritten,
+    # even by a second goodall writing at the same moment.
+    try:
+        with path.open("x", encoding="utf-8") as record_file:
+            record_file.write(text)
+    except FileExistsError:
+        return not_written(path, record_already_exists_failure(path))
 
     run_git(runner, record_repo, ["add", "--", str(relative_path)])
     run_git(runner, record_repo, ["commit", "--quiet", "-m", commit_message(record), "--", str(relative_path)])
@@ -321,6 +327,29 @@ def find_push_target(runner: Runner, record_repo: Path) -> PushTarget | None:
     if not remote:
         return None
     return PushTarget(remote=remote, branch=branch)
+
+
+def not_written(path: Path, failure: Failure) -> RecordWriteOutcome:
+    """The outcome for a record whose file was not written, because of `failure`."""
+    return RecordWriteOutcome(
+        path=path, written=False, committed=False, push_state=PushState.NOT_ATTEMPTED, failures=[failure]
+    )
+
+
+def record_already_exists_failure(path: Path) -> Failure:
+    """The failure for a record whose file is already in the record repo."""
+    return Failure(
+        kind="record_already_exists",
+        what_happened=f"A file is already at {path}, so goodall did not write the record there.",
+        why=(
+            "Goodall never edits or replaces a record once it is written, so the record repo stays an honest "
+            "account of what was recorded when. Each record's file name is new, so this should not happen."
+        ),
+        what_to_do_next=(
+            "Run the command again: the new record gets a fresh file name. If this keeps happening, report it "
+            "to the researcher who runs the eval, with the path above."
+        ),
+    )
 
 
 def commit_message(record: records.Record) -> str:

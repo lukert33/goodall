@@ -180,3 +180,18 @@ def test_a_push_rejected_because_a_collaborator_pushed_first_succeeds_after_merg
     assert git(adas_record_repo, "rev-parse", "HEAD") in git(remote, "rev-list", "main")
     # Grace's copy now has Ada's record too.
     assert (graces_record_repo / "journal" / "20261116T093000Z-ada-lovelace-7f3a9c2e.md").exists()
+
+
+def test_a_record_whose_file_already_exists_is_refused_and_the_file_left_alone(tmp_path: Path) -> None:
+    record_repo = make_record_repo(tmp_path / "records")
+    write_record(FakeRunner(), record_repo, journal_entry(body="The original note."))
+    commits_before = git(record_repo, "rev-list", "--count", "HEAD")
+
+    outcome = write_record(FakeRunner(), record_repo, journal_entry(body="A different note with the same id."))
+
+    assert [failure.kind for failure in outcome.failures] == ["record_already_exists"]
+    assert not outcome.written
+    assert not outcome.committed
+    assert outcome.push_state == PushState.NOT_ATTEMPTED
+    assert "The original note." in outcome.path.read_text()
+    assert git(record_repo, "rev-list", "--count", "HEAD") == commits_before
