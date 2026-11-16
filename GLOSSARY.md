@@ -79,6 +79,10 @@ _Avoid_: Metrics, OTel data, logs
 A contributor's written note about what was decided or done, and by whom.
 _Avoid_: Log entry, diary entry, note
 
+**Eval config**:
+The settings that describe one eval: its contributors, workstreams, declared scope and record repo.
+_Avoid_: Project config, project file, settings
+
 **Declared scope**:
 The list of repositories and paths that count as an eval's dataset.
 _Avoid_: Dataset boundary, org
