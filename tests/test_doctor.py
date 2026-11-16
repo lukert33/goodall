@@ -211,7 +211,7 @@ Settings
   pass        The record repo folder exists
   pass        The log directory can be written to
   pass        The eval config is found and valid
-  pass        This account's contributor is in the roster
+  pass        This eval account's contributor is in the roster
   pass        The main workstream is one of the eval's workstreams
 
 Tools
@@ -279,7 +279,7 @@ Settings
               Waiting for: Local settings are found
   skip        The eval config is found and valid
               Waiting for: Local settings are found
-  skip        This account's contributor is in the roster
+  skip        This eval account's contributor is in the roster
               Waiting for: Local settings are found
   skip        The main workstream is one of the eval's workstreams
               Waiting for: Local settings are found
