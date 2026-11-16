@@ -404,3 +404,26 @@ def test_journal_with_a_file_that_is_not_text_says_so_without_showing_it(
     assert run.exit_code == exit_codes.USAGE_ERROR
     assert "is not plain text" in " ".join(run.standard_error.split())
     assert eval_account.journal_files() == []
+
+
+def test_journal_refuses_text_longer_than_the_limit_and_keeps_text_at_the_limit(
+    eval_account: EvalAccount, tmp_path: Path
+) -> None:
+    # About fifteen thousand words: far more than a note, as when a whole
+    # transcript is pasted by mistake. Transcripts are kept as raw records.
+    longest_allowed = "word " * 20_000
+    too_long = longest_allowed + "x"
+
+    refused_run = run_goodall(["journal"], standard_input=io.StringIO(too_long))
+    long_note = tmp_path / "long.txt"
+    long_note.write_text(too_long)
+    refused_file_run = run_goodall(["journal", "--file", str(long_note)])
+    kept_run = run_goodall(["journal"], standard_input=io.StringIO(longest_allowed))
+
+    assert refused_run.exit_code == exit_codes.USAGE_ERROR
+    assert refused_run.standard_error.startswith(
+        "FAIL  The text for the journal entry is longer than 100000 characters."
+    )
+    assert refused_file_run.exit_code == exit_codes.USAGE_ERROR
+    assert kept_run.exit_code == exit_codes.SUCCESS
+    assert len(eval_account.journal_files()) == 1

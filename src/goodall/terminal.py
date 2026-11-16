@@ -315,18 +315,22 @@ class Terminal:
         # next block knows to start with a blank line.
         self.output_started = False
 
-    def read_piped_text(self) -> str | None:
-        """Return everything piped to standard input, or None when nothing can be piped.
+    def read_piped_text(self, maximum_characters: int) -> str | None:
+        """Return what was piped to standard input, or None when nothing can be piped.
 
         This is not a question: it reads text that was sent with the command
         (`pbpaste | goodall journal`), never what a person types in answer to
         a prompt. So when standard input is a terminal, which means a person
         at the keyboard and nothing piped, it returns None at once instead of
         waiting for them to type.
+
+        It reads at most one character more than `maximum_characters`, so a
+        caller can tell the text was too long without goodall ever holding
+        an endless stream in memory.
         """
         if self.standard_input is None or self.standard_input.isatty():
             return None
-        return self.standard_input.read()
+        return self.standard_input.read(maximum_characters + 1)
 
     def show_facts(self, facts: list[tuple[str, str]]) -> None:
         """Write labelled facts to standard output, one per line, values lined up in one column.

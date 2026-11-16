@@ -191,12 +191,25 @@ def get_entry_text(terminal: Terminal, request: EntryRequest, record_type_name: 
             return text_or_failure
         text = text_or_failure
     if text is None:
-        text = terminal.read_piped_text()
+        try:
+            text = terminal.read_piped_text(MAXIMUM_TEXT_CHARACTERS)
+        except UnicodeDecodeError:
+            return piped_text_not_plain_text_failure(record_type_name)
     if text is None:
         return text_missing_failure(record_type_name, command)
     if text.strip() == "":
         return text_empty_failure(record_type_name, command)
+    if len(text) > MAXIMUM_TEXT_CHARACTERS:
+        return text_too_long_failure(record_type_name)
     return text
+
+
+# The longest text one entry may have: about fifteen thousand words, or forty
+# printed pages. Far longer than any note, so nothing a person writes is
+# refused, but it stops a whole transcript or log pasted by mistake from
+# landing in a record that is meant to be read and published. Transcripts
+# are kept elsewhere, as raw records.
+MAXIMUM_TEXT_CHARACTERS = 100_000
 
 
 def read_text_file(text_file: Path) -> str | Failure:
@@ -206,14 +219,45 @@ def read_text_file(text_file: Path) -> str | Failure:
     other editor: goodall reads it and leaves it where it is. It must be
     UTF-8 plain text, which is what TextEdit saves in its "Make Plain Text"
     mode; a rich-text or binary file is refused without showing any of it.
+    At most one character more than the limit is read, so a huge file is
+    refused without being loaded whole.
     """
     try:
         with text_file.open(encoding="utf-8") as opened_file:
-            return opened_file.read()
+            return opened_file.read(MAXIMUM_TEXT_CHARACTERS + 1)
     except UnicodeDecodeError:
         return text_file_not_plain_text_failure(text_file)
     except OSError as read_error:
         return text_file_unreadable_failure(text_file, read_error)
+
+
+def text_too_long_failure(record_type_name: str) -> Failure:
+    """The failure for text longer than MAXIMUM_TEXT_CHARACTERS."""
+    return Failure(
+        kind="entry_text_too_long",
+        what_happened=(
+            f"The text for the {record_type_name} is longer than {MAXIMUM_TEXT_CHARACTERS} characters. "
+            "Nothing was recorded."
+        ),
+        why=(
+            "An entry is a note that people will read, so goodall caps its length well beyond any note. Text this "
+            "long is usually a transcript or log pasted by mistake, and goodall keeps those separately."
+        ),
+        what_to_do_next=(
+            "Check that you copied what you meant to. To record something this long, write a short entry that "
+            "says where the full text is kept."
+        ),
+    )
+
+
+def piped_text_not_plain_text_failure(record_type_name: str) -> Failure:
+    """The failure for bytes piped to standard input that are not UTF-8 text."""
+    return Failure(
+        kind="entry_text_not_plain_text",
+        what_happened=f"What was piped in for the {record_type_name} is not plain text. Nothing was recorded.",
+        why="Records are plain text, so they can be read, compared and published without special software.",
+        what_to_do_next="Pipe in plain text, or save the entry as a plain text file and pass it with --file.",
+    )
 
 
 def text_given_twice_failure(record_type_name: str) -> Failure:
