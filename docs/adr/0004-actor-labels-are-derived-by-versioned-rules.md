@@ -1,0 +1,3 @@
+# Actor labels are derived by versioned rules
+
+Whether a human, an AI or the harness produced each entry is computed after the fact from raw records by documented rules that carry a version, not stamped on entries as they are captured. Labelling at capture would be simpler and would make labels available immediately, but a wrong rule would be baked into the dataset and the raw record would no longer be verbatim. The rules are expected to change as the project learns what a transcript's "user" entries really contain (typed prompts, tool results, injected text), and deriving them means every dataset can be relabelled with a later version.
