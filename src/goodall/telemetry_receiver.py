@@ -162,6 +162,35 @@ def reject_non_json_constant(constant_name: str) -> None:
     raise ValueError(f"{constant_name} is not valid JSON")
 
 
+def as_one_line(body: bytes) -> bytes:
+    """Return a validated JSON body as one line, replacing each line-break byte with a space.
+
+    A JSON Lines file holds one record per line, so a stored body cannot
+    contain a raw line break. ADR 0003 asks raw records to stay verbatim.
+    These two meet without conflict because of how JSON is defined, which is
+    why `refusal_for_body` must have accepted the body first:
+
+    - In valid JSON a raw carriage return or line feed can only be
+      whitespace between tokens. Inside a string it must be written as the
+      escape \\n or \\r, which is left alone, and UTF-8 never uses these
+      byte values inside a multi-byte character.
+    - Whitespace between tokens carries no meaning, so swapping one
+      whitespace byte for another changes nothing a JSON reader sees.
+
+    So the stored line has the same length as the body, every string,
+    number and key exactly as sent, and parses to the same value. Bodies
+    without line breaks, which is what Claude Code sends, are stored byte
+    for byte. The change is deliberately not marked inside the line: a
+    wrapper object would make every line something other than plain OTLP
+    JSON, which the Collector's files and readers expect.
+
+    Trap for readers: split the file on b"\\n" only. Python's
+    str.splitlines also splits on characters such as U+2028, which may
+    appear unescaped inside a JSON string.
+    """
+    return body.replace(b"\r", b" ").replace(b"\n", b" ")
+
+
 def append_line(telemetry_file: Path, line: bytes) -> None:
     """Append one line to a telemetry file and force it to disk before returning.
 
@@ -275,7 +304,7 @@ class TelemetryRequestHandler(BaseHTTPRequestHandler):
         telemetry_file = self.telemetry_directory / TELEMETRY_FILE_NAME_FOR_PATH[self.path]
         try:
             with self.write_lock:
-                append_line(telemetry_file, body)
+                append_line(telemetry_file, as_one_line(body))
         except OSError:
             # 503 is a status OTLP exporters retry, so a full disk or a
             # moved directory does not silently lose the batch.

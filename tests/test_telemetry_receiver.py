@@ -59,8 +59,14 @@ def post_like_claude_code(port: int, path: str, body: bytes) -> tuple[int, bytes
 
 
 def stored_lines(telemetry_file: Path) -> list[bytes]:
-    """Read a telemetry file back as its lines, without their line endings."""
-    return telemetry_file.read_bytes().splitlines()
+    """Read a telemetry file back as its lines, without their line endings.
+
+    Splits on b"\\n" only, as any reader of these files must (see
+    `telemetry_receiver.as_one_line`), and insists the last line is complete.
+    """
+    content = telemetry_file.read_bytes()
+    assert content.endswith(b"\n"), "the last line is incomplete"
+    return content[:-1].split(b"\n")
 
 
 def test_claude_code_log_export_lands_verbatim_as_one_line(receiver: RunningReceiver, tmp_path: Path) -> None:
@@ -447,3 +453,29 @@ def test_receiver_prints_nothing_about_requests(receiver: RunningReceiver, capfd
     captured = capfd.readouterr()
     assert captured.out == ""
     assert captured.err == ""
+
+
+def test_pretty_printed_body_is_stored_on_one_line_with_the_same_meaning(
+    receiver: RunningReceiver, tmp_path: Path
+) -> None:
+    # Claude Code sends compact JSON, but JSON allows line breaks between
+    # tokens, and a JSON Lines file cannot hold a line break inside a line.
+    pretty_body = b'{\r\n  "resourceLogs": [\n    {"body": {"stringValue": "a\\nb"}, "count": 1.50}\n  ]\n}\n'
+
+    status, _ = post_like_claude_code(receiver.port, "/v1/logs", pretty_body)
+
+    assert status == 200
+    stored = stored_lines(tmp_path / "logs.jsonl")
+    assert len(stored) == 1
+    # Each line-break byte became one space; every other byte is untouched,
+    # including the escaped \n inside the string and the number as written.
+    assert stored[0] == b'{    "resourceLogs": [     {"body": {"stringValue": "a\\nb"}, "count": 1.50}   ] } '
+    assert json.loads(stored[0]) == json.loads(pretty_body)
+
+
+def test_escaped_line_break_inside_a_string_is_stored_unchanged(receiver: RunningReceiver, tmp_path: Path) -> None:
+    body = b'{"resourceLogs":[],"prompt":"first line\\nsecond line\\r\\n"}'
+
+    post_like_claude_code(receiver.port, "/v1/logs", body)
+
+    assert stored_lines(tmp_path / "logs.jsonl") == [body]
