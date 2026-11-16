@@ -92,8 +92,24 @@ The settings that are true for every contributor to one eval: its name, roster, 
 _Avoid_: Project config, project file, settings
 
 **Local settings**:
-The settings true for one eval account on one machine: where its record repo and log directory are, which contributor it is, and its references into a secrets manager.
+The settings true for one eval account on one machine: where its record repo and log directory are, which contributor it is, and which secrets manager it uses.
 _Avoid_: Local config, machine config, pointer file
+
+**Secrets manager**:
+A program that stores secrets outside files and can hand one to a program it launches.
+_Avoid_: Vault, password manager, keychain
+
+**Secret reference**:
+A pointer to a secret held in a secrets manager, which names the secret without containing it.
+_Avoid_: Secret, key, credential (for the pointer itself)
+
+**Env file**:
+The file in an eval account, named `.env`, that lists environment variable names and the secret reference each resolves to. It holds nothing else.
+_Avoid_: Dotenv, secrets file, credentials file
+
+**Shared env file**:
+The file in the record repo, named `.env.shared`, that lists the non-secret environment variables every contributor's launched programs need.
+_Avoid_: Public env file, plain env file, dev env file
 
 **Declared scope**:
 The repositories, and paths inside them, that count as an eval's dataset. Repositories are named by identity, not by where a copy sits on one machine.
