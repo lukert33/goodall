@@ -14,10 +14,32 @@ contributor.
   guidance gets its own `AGENTS.md`.
 - **`CLAUDE.md` is a pointer.** In every directory it contains only an
   `@AGENTS.md` import. Put new guidance in `AGENTS.md`.
-- **Decisions and their reasoning**: `bd memories DECISION`. Read the relevant
-  entry before changing anything a decision covers; record a new decision with
-  `bd remember "DECISION <date> (<topic>): ..."`.
+- **Decisions and their reasoning**: `docs/adr/`. Read the ADRs for an area
+  before changing it. Record a new one, as a short paragraph, only when the
+  decision is hard to reverse, surprising without context, and the result of
+  a real trade-off.
+- **Vocabulary**: `GLOSSARY.md`. Use its terms in code, tests, issues and
+  prose.
+- **Working notes and spike findings**: Beads memory (`bd memories <keyword>`,
+  `bd remember "..."`).
 - **Tasks**: `bd` (see the Beads sections below).
+
+## Agent skills
+
+### Issue tracker
+
+Issues live in Beads, driven by the `bd` command; this repo does not use
+GitHub Issues. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five default triage labels, applied as Beads labels. See
+`docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: one `GLOSSARY.md` at the repo root and ADRs in `docs/adr/`.
+See `docs/agents/domain.md`.
 
 ## Two kinds of machine account
 
@@ -62,7 +84,7 @@ first.
 
 - One command, `goodall`, with subcommands.
 - Commands that agents call offer `--json` with a stable shape.
-- Exit codes: `0` success, `1` error, `2` usage error, `3` the session gate is
+- Exit codes: `0` success, `1` error, `2` usage error, `3` the prompt gate is
   closed.
 - Every failure message says what to do next.
 
