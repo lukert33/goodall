@@ -210,3 +210,42 @@ def test_a_record_whose_folder_leads_outside_the_record_repo_is_refused(tmp_path
     assert not outcome.written
     assert not outcome.committed
     assert list(elsewhere.iterdir()) == []
+
+
+def test_a_record_repo_without_a_configured_identity_gets_a_failure_saying_how_to_set_one(tmp_path: Path) -> None:
+    record_repo = make_record_repo(tmp_path / "records")
+    git(record_repo, "config", "--unset", "user.name")
+    git(record_repo, "config", "--unset", "user.email")
+    commits_before = git(record_repo, "rev-list", "--count", "HEAD")
+
+    outcome = write_record(FakeRunner(), record_repo, journal_entry())
+
+    assert [failure.kind for failure in outcome.failures] == ["record_repo_identity_missing"]
+    assert "git config" in outcome.failures[0].what_to_do_next
+    assert not outcome.written
+    assert not outcome.committed
+    assert not outcome.path.exists()
+    assert git(record_repo, "rev-list", "--count", "HEAD") == commits_before
+
+
+def test_a_folder_that_is_not_a_git_repository_gets_a_failure_and_no_file(tmp_path: Path) -> None:
+    folder = tmp_path / "not-a-repository"
+    folder.mkdir()
+
+    outcome = write_record(FakeRunner(), folder, journal_entry())
+
+    assert [failure.kind for failure in outcome.failures] == ["record_repo_not_git_repository"]
+    assert not outcome.written
+    assert list(folder.iterdir()) == []
+
+
+def test_a_folder_inside_another_git_repository_is_not_taken_for_the_record_repo(tmp_path: Path) -> None:
+    outer_repository = make_record_repo(tmp_path / "outer")
+    folder = outer_repository / "records"
+    folder.mkdir()
+
+    outcome = write_record(FakeRunner(), folder, journal_entry())
+
+    assert [failure.kind for failure in outcome.failures] == ["record_repo_not_git_repository"]
+    assert list(folder.iterdir()) == []
+    assert commit_subjects(outer_repository) == ["Start the record repo"]

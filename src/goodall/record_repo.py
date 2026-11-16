@@ -74,6 +74,9 @@ class RecordWriteOutcome:
 # to the remote while a person waits.
 MAXIMUM_PUSH_RETRIES = 3
 
+# The git settings that say who makes a commit. Both must be set.
+IDENTITY_SETTINGS = ["user.name", "user.email"]
+
 # Each kind of record, named for a person reading the repository's history.
 RECORD_TYPE_NAMES = {
     records.WorkBlockRecord: "work block record",
@@ -87,6 +90,12 @@ def write_record(runner: Runner, record_repo: Path, record: records.Record) -> R
     text = records.render_record(record)
     relative_path = records.relative_path_for(record)
     path = record_repo / relative_path
+
+    # Checked before anything is written, so a record repo goodall cannot
+    # commit in never gets a stray uncommitted file.
+    readiness_failure = check_record_repo_ready(runner, record_repo)
+    if readiness_failure is not None:
+        return not_written(path, readiness_failure)
 
     # Trap: a link anywhere on the way (a `journal` folder that is really a
     # link to another folder, say) would carry the record out of the record
@@ -115,6 +124,69 @@ def write_record(runner: Runner, record_repo: Path, record: records.Record) -> R
         push_state=push_outcome.push_state,
         pending_commits=push_outcome.pending_commits,
         failures=push_outcome.failures,
+    )
+
+
+def check_record_repo_ready(runner: Runner, record_repo: Path) -> Failure | None:
+    """Say why goodall cannot commit in `record_repo`, or None when it can.
+
+    It must be the top folder of a git repository of its own, and git must
+    have an identity to sign the commit with.
+    """
+    top_folder_result = run_git(runner, record_repo, ["rev-parse", "--show-toplevel"])
+    if not top_folder_result.succeeded:
+        return record_repo_not_git_repository_failure(record_repo, top_folder_result.problem or "")
+    # Trap: git also answers for a plain folder inside some other
+    # repository (a home folder kept in git, say), naming that one's top
+    # folder; committing there would put records in the wrong repository.
+    # resolve() both, because git names the real path and the folder given
+    # may pass through a link (on macOS, /var is /private/var).
+    top_folder = Path(top_folder_result.standard_output.strip())
+    if top_folder.resolve() != record_repo.resolve():
+        return record_repo_not_git_repository_failure(
+            record_repo, f"it is a folder inside the git repository {top_folder}"
+        )
+
+    # Trap: with no name or email configured, git may make one up from the
+    # account and machine names, and the commit would carry an address that
+    # reaches nobody. Goodall never invents an identity either, so it
+    # insists on one that git was told.
+    for setting in IDENTITY_SETTINGS:
+        identity_result = run_git(runner, record_repo, ["config", "--get", setting])
+        if not identity_result.standard_output.strip():
+            return identity_missing_failure(record_repo)
+    return None
+
+
+def record_repo_not_git_repository_failure(record_repo: Path, problem: str) -> Failure:
+    """The failure for a record repo folder that is not a git repository goodall can commit in."""
+    return Failure(
+        kind="record_repo_not_git_repository",
+        what_happened=f"The record repo folder {record_repo} is not a git repository of its own: {problem}.",
+        why="Goodall keeps the eval's records by committing them in the record repo, so it must be one.",
+        what_to_do_next=(
+            "Run goodall doctor, which says what is wrong with the record repo folder and how to fix it. "
+            "No record was written."
+        ),
+    )
+
+
+def identity_missing_failure(record_repo: Path) -> Failure:
+    """The failure for a record repo where git has no name or email to put on commits."""
+    return Failure(
+        kind="record_repo_identity_missing",
+        what_happened=(
+            f"git has no name or email to put on commits in {record_repo}, so goodall did not write the record."
+        ),
+        why=(
+            "Every commit in the record repo names who made it. Goodall uses the name and email you gave git, "
+            "and never makes one up."
+        ),
+        what_to_do_next=(
+            'Tell git who you are by running, in Terminal: git config --global user.name "Your Name" and then '
+            'git config --global user.email "you@example.org", with your own name and the email you use for '
+            "this eval. Then run the command again."
+        ),
     )
 
 
