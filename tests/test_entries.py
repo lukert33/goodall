@@ -76,6 +76,15 @@ class EvalAccount:
     def commit_subjects(self) -> list[str]:
         return git(self.record_repo, "log", "--format=%s").splitlines()
 
+    def add_remote(self) -> Path:
+        """Give the record repo a shared copy to push to: a bare repository beside the home folder."""
+        remote = self.home_folder.parent / "remote.git"
+        git(self.home_folder.parent, "clone", "--quiet", "--bare", str(self.record_repo), str(remote))
+        git(self.record_repo, "remote", "add", "origin", str(remote))
+        git(self.record_repo, "fetch", "--quiet", "origin")
+        git(self.record_repo, "branch", "--quiet", "--set-upstream-to=origin/main")
+        return remote
+
 
 @pytest.fixture
 def eval_account(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> EvalAccount:
@@ -271,3 +280,43 @@ def test_journal_json_reports_a_usage_failure_in_the_same_shape(eval_account: Ev
     assert document["committed"] is False
     assert document["pushed"] is False
     assert [failure["kind"] for failure in document["failures"]] == ["entry_text_missing"]
+
+
+def test_journal_sent_to_a_reachable_shared_record_repo_says_so(eval_account: EvalAccount) -> None:
+    remote = eval_account.add_remote()
+
+    run = run_goodall(["journal", "Chose Postgres."])
+
+    assert run.exit_code == exit_codes.SUCCESS
+    assert run.standard_error == ""
+    assert run.standard_output.startswith("Recorded your journal entry and sent it to the shared record repo.\n")
+    [entry_file] = eval_account.journal_files()
+    assert git(remote, "log", "-1", "--format=%s", "main") == f"Add journal entry {entry_file.stem}\n"
+
+
+def test_journal_with_a_pending_push_is_saved_on_this_mac_with_a_warning_and_exits_0(
+    eval_account: EvalAccount,
+) -> None:
+    remote = eval_account.add_remote()
+    # The shared copy cannot be reached, as when this Mac is offline.
+    remote.rename(remote.with_name("remote-away.git"))
+
+    run = run_goodall(["journal", "Chose Postgres."])
+
+    assert run.exit_code == exit_codes.SUCCESS
+    assert "saved on this Mac and will be sent to the shared record repo" in " ".join(run.standard_output.split())
+    assert run.standard_error.startswith("WARN  The record is saved and committed")
+    assert "\nNext  " in run.standard_error
+    assert "FAIL" not in run.standard_error
+    [entry_file] = eval_account.journal_files()
+    assert eval_account.commit_subjects()[0] == f"Add journal entry {entry_file.stem}"
+
+    json_run = run_goodall(["journal", "--json", "A second note."])
+
+    document = json.loads(json_run.standard_output)
+    assert json_run.exit_code == exit_codes.SUCCESS
+    assert document["committed"] is True
+    assert document["pushed"] is False
+    assert document["push_state"] == "pending"
+    assert [warning["kind"] for warning in document["warnings"]] == ["record_push_failed"]
+    assert document["failures"] == []

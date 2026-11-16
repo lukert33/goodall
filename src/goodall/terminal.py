@@ -372,10 +372,21 @@ class Terminal:
             break_on_hyphens=False,
         )
 
-    def show_failure(self, failure: Failure) -> None:
+    def show_warnings(self, warnings: list[Failure]) -> None:
+        """Write problems that did not stop the command to standard error, labelled WARN instead of FAIL.
+
+        A warning has the same three parts as a failure, because it still
+        needs a next step; only the label says the command itself succeeded.
+        """
+        for position, warning in enumerate(warnings):
+            if position > 0:
+                self.standard_error.write("\n")
+            self.show_failure(warning, label="WARN", label_colour=BOLD_YELLOW)
+
+    def show_failure(self, failure: Failure, label: str = "FAIL", label_colour: str = BOLD_RED) -> None:
         """Write a failure to standard error as three labelled paragraphs."""
         paragraphs = [
-            self.labelled_paragraph("FAIL", failure.what_happened, BOLD_RED),
+            self.labelled_paragraph(label, failure.what_happened, label_colour),
             self.labelled_paragraph("Why", failure.why, BOLD),
             self.labelled_paragraph("Next", failure.what_to_do_next, BOLD),
         ]

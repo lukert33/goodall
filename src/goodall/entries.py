@@ -302,6 +302,7 @@ def show_result(terminal: Terminal, result: EntryResult, as_json: bool) -> None:
         return
     terminal.show_paragraph(success_summary(result))
     terminal.show_facts(result.facts)
+    terminal.show_warnings(result.warnings)
 
 
 def success_summary(result: EntryResult) -> str:
