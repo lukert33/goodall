@@ -1,0 +1,46 @@
+[project]
+name = "goodall"
+version = "0.0.1"
+description = "For observing interactions between apes and their tools, notably in open-world evals."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE"]
+# Goodall has no runtime dependencies. Adding one needs the provenance
+# approval described in AGENTS.md ("Dependencies").
+dependencies = []
+
+[project.scripts]
+goodall = "goodall.cli:main"
+
+# Build backend. uv_build ships inside uv itself, so building adds no package
+# beyond the tool this project already relies on. The range matches the uv
+# version in use; raise both together. See docs/DEPENDENCIES.md.
+[build-system]
+requires = ["uv_build>=0.11.28,<0.12"]
+build-backend = "uv_build"
+
+# Development-only tools. None of these ships to users. Each has an "adopt"
+# row in docs/DEPENDENCIES.md; add nothing here without one.
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",  # test runner; 9.0.3 is the first release with the tmpdir fix
+    "ruff>=0.17",     # linter and formatter
+    "mypy>=2.4",      # type checker
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+# E/F: errors and unused names. I: import order. B: likely bugs.
+# UP: outdated syntax for the Python version we require.
+select = ["E", "F", "I", "B", "UP"]
+
+[tool.mypy]
+strict = true
+files = ["src", "tests"]
