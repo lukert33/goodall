@@ -118,15 +118,19 @@ def write_record(runner: Runner, record_repo: Path, record: records.Record) -> R
     expected_folder = record_repo.resolve() / relative_path.parent
     if path.parent.resolve() != expected_folder:
         return not_written(path, record_path_outside_record_repo_failure(record_repo, path))
-    path.parent.mkdir(parents=True, exist_ok=True)
     # "x" creates the file only if nothing is there, in one step, so an
     # existing record (or anything else at that name) is never overwritten,
     # even by a second goodall writing at the same moment.
     try:
+        path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("x", encoding="utf-8") as record_file:
             record_file.write(text)
     except FileExistsError:
         return not_written(path, record_already_exists_failure(path))
+    except OSError as write_error:
+        # No permission, a full disk, a folder where a file should be: all
+        # states of the machine, so a failure with a next step, not a crash.
+        return not_written(path, record_not_written_failure(path, write_error))
 
     # Stage and commit only this one file. Naming it after `--` makes the
     # commit take that path alone (git's "--only"), so anything else the
@@ -371,20 +375,26 @@ def merge_remote_branch(runner: Runner, record_repo: Path, target: PushTarget) -
         "Written by goodall: another contributor pushed records first, and this joins their commits with "
         "this copy's so both can be pushed."
     )
+    # The merge commit runs the contributor's hooks and signing, like any
+    # commit, so it gets a commit's time limit. `--no-ff` because a setting
+    # of `merge.ff = only` would otherwise refuse the merge outright.
     merge_result = run_git(
         runner,
         record_repo,
         ["merge", "--quiet", "--no-ff", "--no-edit", "-m", merge_message, target.tracking_reference],
+        timeout_seconds=COMMIT_TIMEOUT_SECONDS,
     )
     if merge_result.succeeded:
         return None
     # A merge that stopped part-way leaves MERGE_HEAD behind; undo it. One
     # that refused before starting (an untracked file in the way, say)
     # changed nothing and leaves nothing to undo.
+    undone = True
     merge_in_progress = run_git(runner, record_repo, ["rev-parse", "--verify", "--quiet", "MERGE_HEAD"])
     if merge_in_progress.succeeded:
-        run_git(runner, record_repo, ["merge", "--abort"])
-    return merge_failed_failure(record_repo, target, merge_result.problem or "git merge failed")
+        abort_result = run_git(runner, record_repo, ["merge", "--abort"])
+        undone = abort_result.succeeded
+    return merge_failed_failure(record_repo, target, merge_result.problem or "git merge failed", undone)
 
 
 def local_changes_block_merge_failure(record_repo: Path, target: PushTarget) -> Failure:
@@ -407,14 +417,23 @@ def local_changes_block_merge_failure(record_repo: Path, target: PushTarget) -> 
     )
 
 
-def merge_failed_failure(record_repo: Path, target: PushTarget, problem: str) -> Failure:
-    """The failure for a merge with the remote branch that did not complete, and was undone."""
+def merge_failed_failure(record_repo: Path, target: PushTarget, problem: str, undone: bool = True) -> Failure:
+    """The failure for a merge with the remote branch that did not complete.
+
+    `undone` says whether the attempt was rolled back; the message must
+    never claim it was when it was not.
+    """
+    what_was_left = "Goodall undid the attempt; your commits are as they were."
+    if not undone:
+        what_was_left = (
+            "Goodall could not undo the attempt, so the record repo is part-way through a merge; your commits "
+            "are still there."
+        )
     return Failure(
         kind="record_merge_failed",
         what_happened=(
             f"The record is saved and committed in {record_repo}, but not pushed: another contributor pushed to "
-            f"{target.remote} first, and combining their commits with yours failed ({problem}). Goodall undid "
-            "the attempt; your commits are as they were."
+            f"{target.remote} first, and combining their commits with yours failed ({problem}). {what_was_left}"
         ),
         why=(
             "Records are separate files, so this should not happen; it usually means a file other than a "
@@ -572,6 +591,19 @@ def record_path_outside_record_repo_failure(record_repo: Path, path: Path) -> Fa
         what_to_do_next=(
             f"Look at the folders in {record_repo} (ls -l shows links) and replace the link with a real folder, "
             "or ask the researcher who runs the eval. Then run the command again."
+        ),
+    )
+
+
+def record_not_written_failure(path: Path, write_error: OSError) -> Failure:
+    """The failure for a record file the system would not let goodall create."""
+    return Failure(
+        kind="record_not_written",
+        what_happened=f"Goodall could not write the record to {path}: {write_error.strerror}.",
+        why="Goodall keeps each record as a file in the record repo, so it must be able to create one there.",
+        what_to_do_next=(
+            f"Check that this macOS user account may write in {path.parent} and that the disk has space, then "
+            "run the command again."
         ),
     )
 

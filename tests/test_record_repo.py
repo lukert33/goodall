@@ -377,3 +377,18 @@ def test_a_record_repo_not_on_a_branch_commits_but_leaves_the_push_pending(tmp_p
     assert outcome.committed
     assert outcome.push_state == PushState.PENDING
     assert commit_subjects(remote, "main") == ["Start the record repo"]
+
+
+def test_a_record_folder_goodall_may_not_write_in_gets_a_failure_not_an_exception(tmp_path: Path) -> None:
+    record_repo = make_record_repo(tmp_path / "records")
+    journal_folder = record_repo / "journal"
+    journal_folder.mkdir()
+    journal_folder.chmod(0o555)
+    try:
+        outcome = write_record(FakeRunner(), record_repo, journal_entry())
+    finally:
+        journal_folder.chmod(0o755)
+
+    assert [failure.kind for failure in outcome.failures] == ["record_not_written"]
+    assert not outcome.written
+    assert not outcome.committed
