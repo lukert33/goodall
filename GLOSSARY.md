@@ -26,8 +26,12 @@ _Avoid_: Project account, eval machine, eval profile, sandbox
 An ordinary account where goodall itself is developed. It is outside any eval.
 
 **Contributor**:
-A person or agent whose work an eval records, identified on every record.
-_Avoid_: User, participant, subject
+A person taking part in an eval, identified on every record their eval account produces. Agents are not contributors; records identify them by model and tool.
+_Avoid_: User, participant, subject, agent contributor
+
+**Roster**:
+The list of an eval's contributors, each with an id and a display name.
+_Avoid_: Team list, members
 
 **Workstream**:
 A named division of an eval's work, such as engineering or go-to-market, used to attribute effort and cost.
@@ -84,15 +88,15 @@ A contributor's written note about what was decided or done, and by whom.
 _Avoid_: Log entry, diary entry, note
 
 **Eval config**:
-The settings that describe one eval: its contributors, workstreams, declared scope and record repo.
+The settings that are true for every contributor to one eval: its name, roster, workstreams, declared scope and intervention categories.
 _Avoid_: Project config, project file, settings
 
 **Local settings**:
-The settings true for one eval account on one machine: where its record repo and log directory are, and which contributor it is.
+The settings true for one eval account on one machine: where its record repo and log directory are, which contributor it is, and its references into a secrets manager.
 _Avoid_: Local config, machine config, pointer file
 
 **Declared scope**:
-The list of repositories and paths that count as an eval's dataset.
+The repositories, and paths inside them, that count as an eval's dataset. Repositories are named by identity, not by where a copy sits on one machine.
 _Avoid_: Dataset boundary, org
 
 ### Attribution
