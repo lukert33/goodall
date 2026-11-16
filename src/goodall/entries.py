@@ -37,10 +37,16 @@ from goodall.terminal import Failure, Terminal
 
 @dataclass(frozen=True)
 class EntryRequest:
-    """What the person asked to record, as read from the command line."""
+    """What the person asked to record, as read from the command line.
+
+    `text` is the text given as an argument and `text_file` a file to read
+    it from; at most one of them is set, and with neither the text is read
+    from standard input.
+    """
 
     text: str | None
     as_json: bool
+    text_file: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -169,13 +175,21 @@ def record_type_of(record: records.Record) -> str:
 
 
 def get_entry_text(terminal: Terminal, request: EntryRequest, record_type_name: str, command: str) -> str | Failure:
-    """Return the text to record, from the argument or from what was piped in, or a usage failure.
+    """Return the text to record, from the argument, a file or what was piped in, or a usage failure.
 
-    The argument wins when both are there, and then standard input is not
-    read at all: an agent's shell may leave standard input open with
-    nothing coming, and reading it would hang.
+    With an argument or a file, standard input is not read at all: an
+    agent's shell may leave standard input open with nothing coming, and
+    reading it would hang. An argument and a file together are refused
+    rather than one silently winning.
     """
+    if request.text is not None and request.text_file is not None:
+        return text_given_twice_failure(record_type_name)
     text = request.text
+    if request.text_file is not None:
+        text_or_failure = read_text_file(request.text_file)
+        if isinstance(text_or_failure, Failure):
+            return text_or_failure
+        text = text_or_failure
     if text is None:
         text = terminal.read_piped_text()
     if text is None:
@@ -183,6 +197,59 @@ def get_entry_text(terminal: Terminal, request: EntryRequest, record_type_name: 
     if text.strip() == "":
         return text_empty_failure(record_type_name, command)
     return text
+
+
+def read_text_file(text_file: Path) -> str | Failure:
+    """Read the text of an entry from `text_file`, or say why it could not be.
+
+    The file is the contributor's own draft, written in TextEdit or any
+    other editor: goodall reads it and leaves it where it is. It must be
+    UTF-8 plain text, which is what TextEdit saves in its "Make Plain Text"
+    mode; a rich-text or binary file is refused without showing any of it.
+    """
+    try:
+        with text_file.open(encoding="utf-8") as opened_file:
+            return opened_file.read()
+    except UnicodeDecodeError:
+        return text_file_not_plain_text_failure(text_file)
+    except OSError as read_error:
+        return text_file_unreadable_failure(text_file, read_error)
+
+
+def text_given_twice_failure(record_type_name: str) -> Failure:
+    """The failure for text given both after the command and in a file."""
+    return Failure(
+        kind="entry_text_given_twice",
+        what_happened=f"Both text and a file were given for the {record_type_name}. Nothing was recorded.",
+        why="Goodall records one text per entry, and will not guess which of the two you meant.",
+        what_to_do_next="Run the command again with either the text in quotes or --file, not both.",
+    )
+
+
+def text_file_unreadable_failure(text_file: Path, read_error: OSError) -> Failure:
+    """The failure for a --file that is missing, is a folder, or may not be read."""
+    return Failure(
+        kind="entry_text_file_unreadable",
+        what_happened=f"Goodall could not read {text_file}: {read_error.strerror}. Nothing was recorded.",
+        why="With --file, the text of the entry is read from that file.",
+        what_to_do_next=(
+            "Check the file's name and folder. In Finder, holding Option while you right-click a file offers "
+            '"Copy as Pathname", which gives its full path to paste after --file.'
+        ),
+    )
+
+
+def text_file_not_plain_text_failure(text_file: Path) -> Failure:
+    """The failure for a --file that is not UTF-8 plain text, such as a Word document or a picture."""
+    return Failure(
+        kind="entry_text_file_not_plain_text",
+        what_happened=f"The file {text_file} is not plain text, so goodall did not read it. Nothing was recorded.",
+        why="Records are plain text, so they can be read, compared and published without special software.",
+        what_to_do_next=(
+            'Save the entry as plain text: in TextEdit, choose Format, then "Make Plain Text", then save. '
+            "Then run the command again with that file."
+        ),
+    )
 
 
 def text_empty_failure(record_type_name: str, command: str) -> Failure:

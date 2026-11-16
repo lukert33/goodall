@@ -27,6 +27,7 @@ Design decisions a reader might otherwise reverse-engineer:
 """
 
 import argparse
+from pathlib import Path
 
 from goodall import exit_codes
 from goodall.doctor import run_doctor
@@ -83,13 +84,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     status.set_defaults(command_name="status")
 
-    journal = commands.add_parser("journal", help="Add an entry to the eval journal in the record repo.")
-    journal.add_argument("text", nargs="?", help="What was decided or done, and by whom.")
-    journal.add_argument(
-        "--json",
-        action="store_true",
-        help="Print the result as one JSON document on standard output, for agents and scripts.",
+    journal = commands.add_parser(
+        "journal",
+        help="Add an entry to the eval journal in the record repo.",
+        description="Add a journal entry: a note about what was decided or done, and by whom.",
+        epilog=(
+            "examples:\n"
+            '  goodall journal "Chose Postgres over SQLite; I decided, the agent wrote the comparison."\n'
+            "  pbpaste | goodall journal              (several lines, copied first)\n"
+            "  goodall journal --file ~/Desktop/note.txt"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
+    add_entry_text_arguments(journal, "What was decided or done, and by whom.")
     journal.set_defaults(command_name="journal")
 
     intervene = commands.add_parser("intervene", help="Log a researcher intervention in the record repo.")
@@ -122,6 +129,27 @@ def build_parser() -> argparse.ArgumentParser:
     release.set_defaults(command_name="release")
 
     return parser
+
+
+def add_entry_text_arguments(parser: argparse.ArgumentParser, text_help: str) -> None:
+    """Add the ways of giving an entry's text, and --json, which journal and intervene share.
+
+    The text is optional to argparse because it may instead come from
+    --file or from standard input; goodall.entries reports a missing text
+    itself, with examples to copy.
+    """
+    parser.add_argument("text", nargs="?", help=text_help + " Leave it out to pipe the text in instead.")
+    parser.add_argument(
+        "--file",
+        metavar="<path>",
+        type=Path,
+        help="Read the text from this plain text file, for an entry written in TextEdit or another editor.",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Print the result as one JSON document on standard output, for agents and scripts.",
+    )
 
 
 def run_stub(command_name: str, terminal: Terminal) -> int:
@@ -178,6 +206,8 @@ def main(argv: list[str] | None = None, terminal: Terminal | None = None, runner
     if command_name == "doctor":
         return run_doctor(terminal, runner, as_json=arguments.json)
     if command_name == "journal":
-        return run_journal(terminal, runner, EntryRequest(text=arguments.text, as_json=arguments.json))
+        return run_journal(
+            terminal, runner, EntryRequest(text=arguments.text, as_json=arguments.json, text_file=arguments.file)
+        )
 
     return run_stub(command_name, terminal)

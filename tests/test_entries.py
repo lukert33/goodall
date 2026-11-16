@@ -355,3 +355,52 @@ def test_journal_with_the_record_repo_folder_missing_names_the_folder(eval_accou
     assert run.exit_code == exit_codes.ERROR
     assert run.standard_error.startswith("FAIL  The record repo folder ~/evals/goodall-pilot-records does not exist.")
     assert "Nothing was recorded." in " ".join(run.standard_error.split())
+
+
+def test_journal_reads_its_text_from_a_file_written_in_any_editor(eval_account: EvalAccount, tmp_path: Path) -> None:
+    note = tmp_path / "Today's note.txt"
+    note.write_text("Chose Postgres over SQLite.\n\nThe agent wrote the comparison; I decided.\n")
+
+    run = run_goodall(["journal", "--file", str(note)])
+
+    assert run.exit_code == exit_codes.SUCCESS, run.standard_error
+    [entry_file] = eval_account.journal_files()
+    assert entry_file.read_text().endswith(
+        "+++\n\nChose Postgres over SQLite.\n\nThe agent wrote the comparison; I decided.\n"
+    )
+    # The file is the contributor's own draft; goodall leaves it where it was.
+    assert note.exists()
+
+
+def test_journal_given_both_text_and_a_file_is_a_usage_error(eval_account: EvalAccount, tmp_path: Path) -> None:
+    note = tmp_path / "note.txt"
+    note.write_text("From the file.\n")
+
+    run = run_goodall(["journal", "--file", str(note), "From the argument."])
+
+    assert run.exit_code == exit_codes.USAGE_ERROR
+    assert run.standard_error.startswith("FAIL  Both text and a file were given for the journal entry.")
+    assert eval_account.journal_files() == []
+
+
+def test_journal_with_a_file_that_is_not_there_names_it(eval_account: EvalAccount, tmp_path: Path) -> None:
+    missing_note = tmp_path / "no-such-note.txt"
+
+    run = run_goodall(["journal", "--file", str(missing_note)])
+
+    assert run.exit_code == exit_codes.USAGE_ERROR
+    assert " ".join(run.standard_error.split()).startswith(f"FAIL Goodall could not read {missing_note}")
+    assert eval_account.journal_files() == []
+
+
+def test_journal_with_a_file_that_is_not_text_says_so_without_showing_it(
+    eval_account: EvalAccount, tmp_path: Path
+) -> None:
+    picture = tmp_path / "screenshot.png"
+    picture.write_bytes(b"\x89PNG\r\n\x1a\n\xff\xfe\x00\x00")
+
+    run = run_goodall(["journal", "--file", str(picture)])
+
+    assert run.exit_code == exit_codes.USAGE_ERROR
+    assert "is not plain text" in " ".join(run.standard_error.split())
+    assert eval_account.journal_files() == []
