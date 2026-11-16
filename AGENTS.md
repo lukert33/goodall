@@ -65,8 +65,9 @@ first.
 3. **Labels come from versioned rules.** Actor labels (`human`, `ai`,
    `harness`) are computed from raw data by documented rules that carry a
    version.
-4. **Secrets stay in the secrets manager.** Files hold `op://` references
-   only; raw secret values given as input are rejected.
+4. **Secrets stay in the secrets manager.** Files hold only references into
+   it (1Password's `op://` references are the one kind supported today); raw
+   secret values given as input are rejected.
 5. **Diagnostics are read-only.** `goodall doctor` and its checks leave files,
    credentials and remote state untouched.
 6. **Goodall operates git, people administer it.** Goodall commits and pushes
