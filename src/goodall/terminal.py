@@ -268,7 +268,12 @@ class Terminal:
     `io.StringIO` objects.
     """
 
-    def __init__(self, standard_output: TextIO | None = None, standard_error: TextIO | None = None) -> None:
+    def __init__(
+        self,
+        standard_output: TextIO | None = None,
+        standard_error: TextIO | None = None,
+        standard_input: TextIO | None = None,
+    ) -> None:
         # Trap: the defaults are looked up now rather than in the signature,
         # so that anything that swaps sys.stdout before goodall runs (pytest's
         # capture, contextlib.redirect_stdout) is respected.
@@ -276,8 +281,13 @@ class Terminal:
             standard_output = sys.stdout
         if standard_error is None:
             standard_error = sys.stderr
+        if standard_input is None:
+            # Trap: sys.stdin is None when goodall is started with standard
+            # input closed; read_piped_text treats that as nothing piped.
+            standard_input = sys.stdin
         self.standard_output = standard_output
         self.standard_error = standard_error
+        self.standard_input: TextIO | None = standard_input
 
         # Measured once, so one command's output never changes width halfway
         # through if the window is resized.

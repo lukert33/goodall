@@ -30,6 +30,7 @@ import argparse
 
 from goodall import exit_codes
 from goodall.doctor import run_doctor
+from goodall.entries import EntryRequest, run_journal
 from goodall.runner import RealRunner, Runner
 from goodall.status import run_status
 from goodall.terminal import Failure, Terminal
@@ -83,6 +84,7 @@ def build_parser() -> argparse.ArgumentParser:
     status.set_defaults(command_name="status")
 
     journal = commands.add_parser("journal", help="Add an entry to the eval journal in the record repo.")
+    journal.add_argument("text", nargs="?", help="What was decided or done, and by whom.")
     journal.set_defaults(command_name="journal")
 
     intervene = commands.add_parser("intervene", help="Log a researcher intervention in the record repo.")
@@ -170,5 +172,7 @@ def main(argv: list[str] | None = None, terminal: Terminal | None = None, runner
         return run_status(terminal, as_json=arguments.json)
     if command_name == "doctor":
         return run_doctor(terminal, runner, as_json=arguments.json)
+    if command_name == "journal":
+        return run_journal(terminal, runner, EntryRequest(text=arguments.text, as_json=False))
 
     return run_stub(command_name, terminal)

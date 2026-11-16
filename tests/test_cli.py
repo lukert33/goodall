@@ -134,7 +134,7 @@ def test_group_without_subcommand_is_usage_error() -> None:
 
 
 # Commands that do something real, so they no longer report "not built yet".
-BUILT_COMMANDS = ["status", "doctor"]
+BUILT_COMMANDS = ["status", "doctor", "journal"]
 
 
 def test_every_stub_returns_error_and_names_itself() -> None:
