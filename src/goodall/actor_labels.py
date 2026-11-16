@@ -313,6 +313,43 @@ def label_transcript(transcript_path: Path) -> LabelledTranscript:
     return result
 
 
+@dataclass(frozen=True)
+class LabelSummary:
+    """How one labelled transcript divides, for a researcher to see at a glance.
+
+    Every label and every rule appears, with zero when unused, so a rule that
+    stopped matching after a Claude Code update shows up as a zero rather than
+    as a missing line. Rules are listed in the order they are applied.
+    """
+
+    rules_version: str
+    entries_by_label: dict[str, int]
+    entries_by_rule: dict[str, int]
+    mixed_entries: int
+    unmatched_entries: int
+
+
+def summarise_labels(labelled_transcript: LabelledTranscript) -> LabelSummary:
+    """Count the labels, the rules that decided them, mixed and unmatched entries."""
+    entries_by_label = {"human": 0, "ai": 0, "harness": 0}
+    entries_by_rule: dict[str, int] = {}
+    for rule in ACTOR_LABEL_RULES:
+        entries_by_rule[rule.name] = 0
+    mixed_entries = 0
+    for label in labelled_transcript.labels:
+        entries_by_label[label.actor_label] += 1
+        entries_by_rule[label.rule_name] += 1
+        if label.mixed:
+            mixed_entries += 1
+    return LabelSummary(
+        rules_version=labelled_transcript.rules_version,
+        entries_by_label=entries_by_label,
+        entries_by_rule=entries_by_rule,
+        mixed_entries=mixed_entries,
+        unmatched_entries=len(labelled_transcript.unmatched),
+    )
+
+
 def first_matching_rule(facts: EntryFacts) -> Rule | None:
     """Return the first rule in `ACTOR_LABEL_RULES` whose test is true, if any."""
     for rule in ACTOR_LABEL_RULES:

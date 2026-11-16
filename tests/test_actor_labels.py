@@ -12,8 +12,10 @@ from pathlib import Path
 from goodall.actor_labels import (
     ACTOR_LABEL_RULES_VERSION,
     EntryLabel,
+    LabelSummary,
     UnmatchedEntry,
     label_transcript,
+    summarise_labels,
 )
 
 FIXTURES = Path(__file__).parent / "fixtures" / "claude_code_transcripts"
@@ -60,3 +62,35 @@ def test_the_result_says_which_rules_version_produced_it() -> None:
 
     assert result.rules_version == ACTOR_LABEL_RULES_VERSION
     assert result.rules_version == "1"
+
+
+def test_the_summary_shows_how_a_transcript_divides() -> None:
+    summary = summarise_labels(label_transcript(FIXTURES / "actor_labels.jsonl"))
+
+    assert summary == LabelSummary(
+        rules_version="1",
+        entries_by_label={"human": 4, "ai": 5, "harness": 10},
+        entries_by_rule={
+            "person_typed_prompt": 1,
+            "person_typed_prompt_behind_harness_context": 1,
+            "person_rejected_tool_call": 1,
+            "person_interrupted": 1,
+            "harness_wrote_assistant_entry": 1,
+            "model_wrote_assistant_entry": 4,
+            "harness_returned_tool_results": 1,
+            "interruption_marker_closing_a_rejection": 1,
+            "harness_injected_user_entry": 4,
+            "agent_instructed_subagent": 1,
+            "bookkeeping_entry": 3,
+        },
+        mixed_entries=3,
+        unmatched_entries=4,
+    )
+
+
+def test_the_summary_lists_every_label_and_rule_even_when_unused() -> None:
+    # A zero is information: it says the rule ran and matched nothing.
+    summary = summarise_labels(label_transcript(FIXTURES / "typed_prompts.jsonl"))
+
+    assert summary.entries_by_label["harness"] == 0
+    assert summary.entries_by_rule["person_rejected_tool_call"] == 0
