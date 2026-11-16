@@ -22,8 +22,9 @@ safe, even if the push is still pending (that is shown as a warning); 1 when
 it was not committed; 2 for a mistake in how the command was run.
 """
 
+import re
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from goodall import exit_codes, records
@@ -115,6 +116,7 @@ class InterventionDetails:
     decision: str | None
     interrupted: str | None = None
     claude_session: str | None = None
+    occurred_at: str | None = None
 
 
 def run_intervene(terminal: Terminal, runner: Runner, request: EntryRequest, details: InterventionDetails) -> int:
@@ -146,14 +148,21 @@ def add_intervention(
         usage_failures.append(decision_failure)
     if details.claude_session is not None and not records.CLAUDE_SESSION_ID_PATTERN.fullmatch(details.claude_session):
         usage_failures.append(claude_session_invalid_failure())
+    now = datetime.now(UTC)
+    occurred_at = now
+    if details.occurred_at is not None:
+        occurred_at_or_failure = parse_occurred_at(details.occurred_at, now)
+        if isinstance(occurred_at_or_failure, Failure):
+            usage_failures.append(occurred_at_or_failure)
+        else:
+            occurred_at = occurred_at_or_failure
     if usage_failures:
         return stopped(record_type, exit_codes.USAGE_ERROR, usage_failures)
     # The checks above guarantee these; the assert tells the type checker.
     assert details.category is not None and details.decision is not None
-    now = datetime.now(UTC)
     intervention = records.build_intervention(
         contributor=eval_reading.contributor.id,
-        occurred_at=now,
+        occurred_at=occurred_at,
         written_at=now,
         category=details.category,
         decision=details.decision,
@@ -240,6 +249,92 @@ def check_decision(decision: str | None) -> Failure | None:
         what_happened="The --decision given is not one of the five decisions. Nothing was recorded.",
         why=why + " They are matched exactly, in lowercase.",
         what_to_do_next=what_to_do_next,
+    )
+
+
+# A time of day on its own, like 9:30 or 14:05:30.
+TIME_OF_DAY_PATTERN = re.compile(r"(\d{1,2}):(\d{2})(?::(\d{2}))?")
+
+
+def parse_occurred_at(typed: str, now: datetime) -> datetime | Failure:
+    """Turn what was typed after --occurred-at into a moment no later than `now`, or a usage failure.
+
+    People think in their own clock, so a time without a zone is this Mac's
+    local time, and is converted to UTC for the record. Three forms:
+
+    - a time of day, `14:05`: the most recent 14:05, which is yesterday's
+      when it is not 14:05 yet today, so an intervention noted just after
+      midnight lands on the right day;
+    - a date and time, `2026-11-16 14:05`, in local time;
+    - a full timestamp with a zone, `2026-11-16T14:05:00Z` or `+01:00`.
+
+    A date on its own is refused rather than read as midnight, which would
+    pretend to know the time. So is a moment after `now`: the schema says an
+    intervention is written down no earlier than it happened.
+    """
+    local_now = now.astimezone()
+    time_of_day = TIME_OF_DAY_PATTERN.fullmatch(typed)
+    moment: datetime | None = None
+    if time_of_day is not None:
+        hour = int(time_of_day.group(1))
+        minute = int(time_of_day.group(2))
+        second = int(time_of_day.group(3) or "0")
+        try:
+            moment = local_now.replace(hour=hour, minute=minute, second=second, microsecond=0)
+        except ValueError:
+            moment = None
+        if moment is not None and moment > local_now:
+            moment = moment - timedelta(days=1)
+    elif ":" in typed:
+        try:
+            moment = datetime.fromisoformat(typed)
+        except ValueError:
+            moment = None
+        if moment is not None and moment.utcoffset() is None:
+            # Trap: astimezone() on a moment with no zone takes it as this
+            # Mac's local time, which is what a person typing it meant.
+            moment = moment.astimezone()
+    if moment is None:
+        return occurred_at_unreadable_failure()
+    if moment > now:
+        return occurred_at_in_future_failure()
+    return moment.astimezone(UTC)
+
+
+def occurred_at_examples() -> tuple[str, ...]:
+    """Commands showing the forms --occurred-at accepts, for a failure to offer."""
+    return (
+        'goodall intervene --category <category> --decision <decision> --occurred-at 14:05 "What happened"',
+        'goodall intervene --category <category> --decision <decision> --occurred-at "2026-11-16 14:05" '
+        '"What happened"',
+    )
+
+
+def occurred_at_unreadable_failure() -> Failure:
+    """The failure for an --occurred-at goodall cannot read as a moment."""
+    return Failure(
+        kind="intervention_occurred_at_unreadable",
+        what_happened="Goodall could not read the --occurred-at given as a time. Nothing was recorded.",
+        why="An intervention records when it happened, so the time has to be exact, to the minute at least.",
+        what_to_do_next=(
+            "Give a time of day on this Mac's clock, such as 14:05 (the most recent 14:05), or a date and time, "
+            "such as 2026-11-16 14:05. Leave --occurred-at out if it happened just now."
+        ),
+        commands_to_try=occurred_at_examples(),
+    )
+
+
+def occurred_at_in_future_failure() -> Failure:
+    """The failure for an --occurred-at later than now."""
+    return Failure(
+        kind="intervention_occurred_at_in_future",
+        what_happened="The --occurred-at given is later than now. Nothing was recorded.",
+        why="An intervention is recorded once it has happened, so it cannot have happened after now.",
+        what_to_do_next=(
+            "Check the date and time, and that this Mac's clock is right. A time without a date means the most "
+            "recent one, on this Mac's clock."
+        ),
+        commands_to_try=occurred_at_examples(),
     )
 
 

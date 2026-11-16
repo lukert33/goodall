@@ -116,7 +116,8 @@ def build_parser() -> argparse.ArgumentParser:
             "  goodall intervene --category agent-limitation --decision modify \\\n"
             '      "It tried to delete a failing test; I told it to fix the date parsing."\n'
             "  pbpaste | goodall intervene --category infrastructure --decision escalate\n"
-            "  goodall intervene --category policy-mandated --decision approve --file ~/Desktop/review.txt\n"
+            "  goodall intervene --category policy-mandated --decision approve --occurred-at 14:05 \\\n"
+            "      --file ~/Desktop/review.txt\n"
             "\n"
             "decisions:\n" + "\n".join(decision_lines)
         ),
@@ -145,6 +146,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--claude-session",
         metavar="<session id>",
         help="The Claude session it happened in, as the Session ID that /status shows in Claude Code.",
+    )
+    intervene.add_argument(
+        "--occurred-at",
+        metavar="<time>",
+        help=(
+            "When it happened, if not just now, on this Mac's clock: a time such as 14:05 (the most recent "
+            "14:05), or a date and time such as '2026-11-16 14:05'."
+        ),
     )
     intervene.set_defaults(command_name="intervene")
 
@@ -261,6 +270,7 @@ def main(argv: list[str] | None = None, terminal: Terminal | None = None, runner
             decision=arguments.decision,
             interrupted=arguments.interrupted,
             claude_session=arguments.claude_session,
+            occurred_at=arguments.occurred_at,
         )
         return run_intervene(terminal, runner, entry_request, intervention_details)
 

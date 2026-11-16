@@ -17,7 +17,10 @@ import io
 import json
 import os
 import subprocess
+import time
+from collections.abc import Iterator
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -559,4 +562,70 @@ def test_intervene_with_a_claude_session_that_is_not_a_session_id_says_where_to_
     assert run.exit_code == exit_codes.USAGE_ERROR
     assert run.standard_error.startswith("FAIL  The --claude-session given is not a Claude Code session id.")
     assert "/status" in run.standard_error
+    assert eval_account.intervention_files() == []
+
+
+@pytest.fixture
+def new_york_time(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Make this Mac's local time New York's, so a time typed without a zone has a known meaning."""
+    monkeypatch.setenv("TZ", "America/New_York")
+    time.tzset()
+    yield
+    monkeypatch.undo()
+    time.tzset()
+
+
+def header_value(record_file: Path, key: str) -> str:
+    """The value of `key` in a record file's metadata header, as written."""
+    for line in record_file.read_text().splitlines():
+        if line.startswith(f"{key} = "):
+            return line.removeprefix(f"{key} = ")
+    raise AssertionError(f"{key} is not in {record_file}")
+
+
+@pytest.mark.parametrize(
+    ("occurred_at", "expected_utc"),
+    [
+        ("2026-11-16T09:30:00Z", "2026-11-16T09:30:00Z"),
+        ("2026-11-16T10:30:00+01:00", "2026-11-16T09:30:00Z"),
+        # No zone given: this Mac's local time, here New York, five hours behind UTC in November.
+        ("2026-11-16 09:30", "2026-11-16T14:30:00Z"),
+        ("2026-11-16T09:30:15", "2026-11-16T14:30:15Z"),
+    ],
+)
+def test_intervene_records_when_it_occurred_if_that_was_earlier(
+    eval_account: EvalAccount, new_york_time: None, occurred_at: str, expected_utc: str
+) -> None:
+    run = run_goodall(intervene_arguments("--occurred-at", occurred_at))
+
+    assert run.exit_code == exit_codes.SUCCESS, run.standard_error
+    [intervention_file] = eval_account.intervention_files()
+    assert header_value(intervention_file, "occurred_at") == expected_utc
+    assert header_value(intervention_file, "written_at") != expected_utc
+    # The file name sorts by when it happened, not when it was written down.
+    assert intervention_file.name.startswith(expected_utc.replace("-", "").replace(":", ""))
+
+
+def test_intervene_occurred_at_a_time_of_day_means_the_most_recent_one(
+    eval_account: EvalAccount, new_york_time: None
+) -> None:
+    two_hours_ago = datetime.now().astimezone() - timedelta(hours=2)
+    expected_utc = two_hours_ago.replace(second=0, microsecond=0).astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    run = run_goodall(intervene_arguments("--occurred-at", two_hours_ago.strftime("%H:%M")))
+
+    assert run.exit_code == exit_codes.SUCCESS, run.standard_error
+    [intervention_file] = eval_account.intervention_files()
+    assert header_value(intervention_file, "occurred_at") == expected_utc
+
+
+@pytest.mark.parametrize("occurred_at", ["2099-01-01T00:00:00Z", "half past nine", "2026-13-40 09:30", ""])
+def test_intervene_occurred_at_in_the_future_or_unreadable_is_a_usage_error_with_examples(
+    eval_account: EvalAccount, occurred_at: str
+) -> None:
+    run = run_goodall(intervene_arguments("--occurred-at", occurred_at))
+
+    assert run.exit_code == exit_codes.USAGE_ERROR
+    flattened_error = " ".join(run.standard_error.split())
+    assert "--occurred-at 14:05" in flattened_error
     assert eval_account.intervention_files() == []
