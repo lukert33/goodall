@@ -92,7 +92,7 @@ The settings that are true for every contributor to one eval: its name, roster, 
 _Avoid_: Project config, project file, settings
 
 **Local settings**:
-The settings true for one eval account on one machine: where its record repo and log directory are, which contributor it is, and which secrets manager it uses.
+The settings true for one eval account on one machine: where its record repo and log directory are, which contributor it is and their main workstream, and which secrets manager it uses.
 _Avoid_: Local config, machine config, pointer file
 
 **Setup page**:
