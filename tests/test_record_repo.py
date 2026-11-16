@@ -281,3 +281,41 @@ def test_a_commit_refused_by_the_contributors_own_hook_leaves_the_record_written
     assert outcome.push_state == PushState.NOT_ATTEMPTED
     assert outcome.path.exists()
     assert git(record_repo, "rev-list", "--count", "HEAD") == commits_before
+
+
+def test_a_collaborators_push_is_not_merged_while_the_contributor_has_uncommitted_changes(tmp_path: Path) -> None:
+    remote, adas_record_repo = make_remote_and_clone(tmp_path, "adas-records", "Ada Lovelace")
+    graces_record_repo = clone(tmp_path, remote, "graces-records", "Grace Hopper")
+    write_record(FakeRunner(), adas_record_repo, journal_entry(contributor=ADA))
+    (graces_record_repo / "eval.toml").write_text('name = "an edit Grace has not committed"\n')
+    graces_head_before = git(graces_record_repo, "rev-parse", "HEAD")
+
+    outcome = write_record(FakeRunner(), graces_record_repo, journal_entry(contributor=GRACE))
+
+    assert [failure.kind for failure in outcome.failures] == ["record_push_blocked_by_local_changes"]
+    assert outcome.committed
+    assert outcome.push_state == PushState.PENDING
+    assert outcome.pending_commits == 1
+    # Grace's record is committed on top of what she had, and nothing else moved.
+    assert git(graces_record_repo, "rev-parse", "HEAD~1") == graces_head_before
+    assert (graces_record_repo / "eval.toml").read_text() == 'name = "an edit Grace has not committed"\n'
+
+
+def test_a_merge_that_conflicts_is_undone_and_the_local_commit_kept(tmp_path: Path) -> None:
+    remote, adas_record_repo = make_remote_and_clone(tmp_path, "adas-records", "Ada Lovelace")
+    graces_record_repo = clone(tmp_path, remote, "graces-records", "Grace Hopper")
+    # Both change the same shared file, which records never do.
+    for folder, name in [(adas_record_repo, "Ada's name"), (graces_record_repo, "Grace's name")]:
+        (folder / "eval.toml").write_text(f'name = "{name}"\n')
+        git(folder, "commit", "--quiet", "-am", "Rename the eval")
+    write_record(FakeRunner(), adas_record_repo, journal_entry(contributor=ADA))
+
+    outcome = write_record(FakeRunner(), graces_record_repo, journal_entry(contributor=GRACE))
+
+    assert [failure.kind for failure in outcome.failures] == ["record_merge_failed"]
+    assert outcome.committed
+    assert outcome.push_state == PushState.PENDING
+    assert outcome.pending_commits == 2
+    assert commit_subjects(graces_record_repo)[0] == "Add journal entry 20261116T093000Z-grace-hopper-7f3a9c2e"
+    assert git(graces_record_repo, "status", "--porcelain") == ""
+    assert (graces_record_repo / "eval.toml").read_text() == 'name = "Grace\'s name"\n'
