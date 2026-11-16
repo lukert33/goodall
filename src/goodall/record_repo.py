@@ -130,8 +130,52 @@ def push_pending(runner: Runner, record_repo: Path) -> PushOutcome:
     target = find_push_target(runner, record_repo)
     if target is None:
         return PushOutcome(push_state=PushState.NO_REMOTE)
-    run_git(runner, record_repo, ["push", "--quiet", target.remote, f"HEAD:refs/heads/{target.branch}"])
-    return PushOutcome(push_state=PushState.PUSHED)
+    push_result = run_git(runner, record_repo, ["push", "--quiet", target.remote, f"HEAD:refs/heads/{target.branch}"])
+    if push_result.succeeded:
+        return PushOutcome(push_state=PushState.PUSHED)
+    pending_commits = count_pending_commits(runner, record_repo, target)
+    return PushOutcome(
+        push_state=PushState.PENDING,
+        pending_commits=pending_commits,
+        failures=[push_failed_failure(record_repo, target, push_result, pending_commits)],
+    )
+
+
+def count_pending_commits(runner: Runner, record_repo: Path, target: PushTarget) -> int:
+    """How many commits on the current branch are not on the remote, as far as git last saw it.
+
+    Worked out from git itself (the remote-tracking branch, which git moves
+    on every successful push and fetch), so it can never disagree with the
+    repository the way a separate list could. When git has never seen the
+    branch on the remote, every commit on it is pending.
+    """
+    tracking_known = run_git(runner, record_repo, ["rev-parse", "--verify", "--quiet", target.tracking_reference])
+    revisions = ["HEAD"]
+    if tracking_known.succeeded:
+        revisions = [f"{target.tracking_reference}..HEAD"]
+    count_result = run_git(runner, record_repo, ["rev-list", "--count", *revisions])
+    return int(count_result.standard_output.strip() or "0")
+
+
+def push_failed_failure(
+    record_repo: Path, target: PushTarget, push_result: CommandResult, pending_commits: int
+) -> Failure:
+    """The failure for a push that did not happen; the record itself is safe in a local commit."""
+    return Failure(
+        kind="record_push_failed",
+        what_happened=(
+            f"The record is saved and committed in {record_repo}, but could not be pushed to the remote "
+            f"{target.remote}: {push_result.problem}. {pending_commits} commit(s) are waiting to be pushed."
+        ),
+        why=(
+            "Other contributors and the researcher see records only once they reach the remote. Nothing is lost: "
+            "the next record goodall writes pushes everything waiting."
+        ),
+        what_to_do_next=(
+            f"Check this Mac is online and can reach the remote (run git push in {record_repo} to see git's own "
+            "message). Goodall will push the waiting commits with the next record it writes."
+        ),
+    )
 
 
 def find_push_target(runner: Runner, record_repo: Path) -> PushTarget | None:

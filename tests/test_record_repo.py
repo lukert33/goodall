@@ -132,3 +132,30 @@ def test_a_record_written_in_a_clone_with_a_reachable_remote_is_pushed(tmp_path:
     assert outcome.push_state == PushState.PUSHED
     assert outcome.pending_commits == 0
     assert commit_subjects(remote, "main")[0] == "Add journal entry 20261116T093000Z-ada-lovelace-7f3a9c2e"
+
+
+def test_a_push_to_an_unreachable_remote_is_pending_and_goes_out_with_the_next_write(tmp_path: Path) -> None:
+    remote, record_repo = make_remote_and_clone(tmp_path)
+    # The remote goes away, as when a laptop is offline, and comes back later.
+    away = tmp_path / "remote-away.git"
+    remote.rename(away)
+
+    first_outcome = write_record(FakeRunner(), record_repo, journal_entry(body="First note.", suffix="00000001"))
+
+    assert first_outcome.committed
+    assert first_outcome.push_state == PushState.PENDING
+    assert first_outcome.pending_commits == 1
+    assert [failure.kind for failure in first_outcome.failures] == ["record_push_failed"]
+    assert (record_repo / "journal" / "20261116T093000Z-ada-lovelace-00000001.md").exists()
+    assert commit_subjects(record_repo)[0] == "Add journal entry 20261116T093000Z-ada-lovelace-00000001"
+
+    away.rename(remote)
+    second_outcome = write_record(FakeRunner(), record_repo, journal_entry(body="Second note.", suffix="00000002"))
+
+    assert second_outcome.failures == []
+    assert second_outcome.push_state == PushState.PUSHED
+    assert second_outcome.pending_commits == 0
+    assert commit_subjects(remote, "main")[:2] == [
+        "Add journal entry 20261116T093000Z-ada-lovelace-00000002",
+        "Add journal entry 20261116T093000Z-ada-lovelace-00000001",
+    ]
