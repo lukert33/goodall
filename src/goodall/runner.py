@@ -111,6 +111,10 @@ class Command:
     - `timeout_seconds` is how long it may run before it is killed.
     - `extra_environment` holds environment variables the program gets on
       top of goodall's own environment.
+    - `removed_environment_prefixes`: any variable in goodall's own
+      environment whose name starts with one of these is left out of the
+      program's, so a stray setting (git's `GIT_DIR`, say) cannot steer it.
+      `extra_environment` is applied afterwards, so it can still set one.
     - `working_directory` is the folder it runs in; None means the folder
       goodall was run from.
     """
@@ -120,6 +124,7 @@ class Command:
     timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS
     extra_environment: dict[str, str] = field(default_factory=dict)
     working_directory: Path | None = None
+    removed_environment_prefixes: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         """Refuse an extra environment variable whose name says it holds a secret.
@@ -233,7 +238,10 @@ class RealRunner:
         output_destination = subprocess.PIPE
         if command.output == OutputMode.DISCARD:
             output_destination = subprocess.DEVNULL
-        environment = dict(os.environ)
+        environment = {}
+        for name, value in os.environ.items():
+            if not name.startswith(tuple(command.removed_environment_prefixes)):
+                environment[name] = value
         environment.update(command.extra_environment)
         # Checked first, because Popen reports a missing working folder as
         # FileNotFoundError, which would read as "the program was not found".
