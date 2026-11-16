@@ -43,11 +43,9 @@ class EntryRequest:
 
 def run_journal(terminal: Terminal, runner: Runner, request: EntryRequest) -> int:
     """Add a journal entry to the record repo and return the exit code."""
-    text = request.text
-    if text is None:
-        text = terminal.read_piped_text()
-    if text is None:
-        terminal.show_failure(text_missing_failure("journal entry", "goodall journal"))
+    text = get_entry_text(terminal, request, "journal entry", "goodall journal")
+    if isinstance(text, Failure):
+        terminal.show_failure(text)
         return exit_codes.USAGE_ERROR
     eval_reading = find_eval_for_this_account()
     if isinstance(eval_reading, list):
@@ -60,6 +58,37 @@ def run_journal(terminal: Terminal, runner: Runner, request: EntryRequest) -> in
     )
     outcome = write_record(runner, eval_reading.local_settings.record_repo.path, entry)
     return report_outcome(terminal, "journal entry", outcome)
+
+
+def get_entry_text(terminal: Terminal, request: EntryRequest, record_type_name: str, command: str) -> str | Failure:
+    """Return the text to record, from the argument or from what was piped in, or a usage failure.
+
+    The argument wins when both are there, and then standard input is not
+    read at all: an agent's shell may leave standard input open with
+    nothing coming, and reading it would hang.
+    """
+    text = request.text
+    if text is None:
+        text = terminal.read_piped_text()
+    if text is None:
+        return text_missing_failure(record_type_name, command)
+    if text.strip() == "":
+        return text_empty_failure(record_type_name, command)
+    return text
+
+
+def text_empty_failure(record_type_name: str, command: str) -> Failure:
+    """The failure for text that is empty or only spaces and blank lines."""
+    return Failure(
+        kind="entry_text_empty",
+        what_happened=f"The text for the {record_type_name} is empty. Nothing was recorded.",
+        why="A record with nothing written in it says nothing about what happened, so goodall does not keep one.",
+        what_to_do_next=(
+            "Run the command again with the text you meant to record. If you piped it in, check that what you "
+            "copied was not empty."
+        ),
+        commands_to_try=(f'{command} "What happened, and who decided"',),
+    )
 
 
 def text_missing_failure(record_type_name: str, command: str) -> Failure:

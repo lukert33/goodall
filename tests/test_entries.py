@@ -193,3 +193,25 @@ def test_journal_with_no_text_at_a_keyboard_fails_at_once_and_shows_how_to_pass_
     assert 'goodall journal "' in run.standard_error
     assert "| goodall journal" in run.standard_error
     assert eval_account.journal_files() == []
+
+
+@pytest.mark.parametrize(
+    ("arguments", "piped_text"),
+    [
+        (["journal", "   "], None),
+        (["journal", ""], None),
+        (["journal"], ""),
+        (["journal"], "\n \t\n"),
+    ],
+)
+def test_journal_refuses_empty_or_blank_text(
+    eval_account: EvalAccount, arguments: list[str], piped_text: str | None
+) -> None:
+    standard_input = None if piped_text is None else io.StringIO(piped_text)
+
+    run = run_goodall(arguments, standard_input=standard_input)
+
+    assert run.exit_code == exit_codes.USAGE_ERROR
+    assert run.standard_error.startswith("FAIL  The text for the journal entry is empty.")
+    assert eval_account.journal_files() == []
+    assert eval_account.commit_subjects() == ["Start the record repo"]
