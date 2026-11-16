@@ -119,6 +119,12 @@ facts are the provenance.
   repository rule takes precedence over the default in the Beads sections
   below. Pushing, opening a pull request, and committing to `main` or to a
   branch someone else is working on still wait for the owner's go-ahead.
+- **A merged branch is finished.** Once a branch's pull request is merged,
+  further work starts on a new branch from `origin/main`. Claude Code hooks
+  (`.claude/hooks/branch_merge_status.py`) report a merged branch at session
+  start and on each prompt, and refuse `git commit` and `git push` there. In
+  other tools, check with `gh pr list --head <branch> --state all` before
+  committing.
 - Prefer smaller commits: one logical change each, made as soon as that change
   passes the quality gates. Imperative subject; the body gives the reason.
 - AI-authored commits keep their `Co-Authored-By` trailer, and branches are
