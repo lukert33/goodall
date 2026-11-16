@@ -33,6 +33,9 @@ CLOSED_PULL_REQUEST = {"number": 9, "state": "CLOSED", "url": "https://example.t
 # The fake `gh`: prints the canned answer, counts how often it was called, and
 # can be told to fail. It reads its instructions from files beside itself so
 # each test controls it without environment variables leaking between tests.
+# The hook calls `gh pr list --head <branch> ...`, so the branch is the fourth
+# argument; a branch with its own answer file gets that answer, every other
+# branch gets the shared one.
 FAKE_GH_SOURCE = """#!/bin/sh
 here="$(dirname "$0")"
 echo called >> "$here/gh-calls.log"
@@ -40,7 +43,11 @@ if [ -f "$here/gh-fails" ]; then
   echo "gh: could not reach GitHub" >&2
   exit 1
 fi
-cat "$here/gh-answer.json"
+if [ -f "$here/gh-answer-for-$4.json" ]; then
+  cat "$here/gh-answer-for-$4.json"
+else
+  cat "$here/gh-answer.json"
+fi
 """
 
 
@@ -69,6 +76,10 @@ class Workspace:
 
     def set_pull_requests(self, pull_requests: list[dict[str, object]]) -> None:
         (self.fake_bin / "gh-answer.json").write_text(json.dumps(pull_requests))
+
+    def set_pull_requests_for_branch(self, branch: str, pull_requests: list[dict[str, object]]) -> None:
+        """Give one branch its own answer; other branches keep the shared one."""
+        (self.fake_bin / f"gh-answer-for-{branch}.json").write_text(json.dumps(pull_requests))
 
     def make_gh_fail(self) -> None:
         (self.fake_bin / "gh-fails").write_text("")
@@ -275,6 +286,117 @@ def test_gate_ignores_input_it_cannot_understand(tmp_path: Path) -> None:
     result = workspace.run_hook("gate", {"unexpected": "shape"})
 
     assert result.returncode == 0
+
+
+# --- A branch switch earlier in the same command ----------------------------
+#
+# The gate runs before the command does, so the checkout is still on the old
+# branch. When the command itself first moves to another branch, a later
+# commit lands there, and that is the branch to judge.
+
+
+def test_commit_after_switch_create_in_the_same_command_is_allowed(tmp_path: Path) -> None:
+    workspace = make_workspace(tmp_path)
+    workspace.set_pull_requests_for_branch("work-branch", [MERGED_PULL_REQUEST])
+
+    result = workspace.run_gate("git fetch origin && git switch -c next-branch main && git commit -m more")
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_commit_after_checkout_create_in_the_same_command_is_allowed(tmp_path: Path) -> None:
+    workspace = make_workspace(tmp_path)
+    workspace.set_pull_requests_for_branch("work-branch", [MERGED_PULL_REQUEST])
+
+    result = workspace.run_gate("git checkout -b next-branch main && git commit -m more")
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_switch_create_with_git_dash_c_is_followed_into_that_repository(tmp_path: Path) -> None:
+    workspace = make_workspace(tmp_path)
+    workspace.set_pull_requests_for_branch("work-branch", [MERGED_PULL_REQUEST])
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    repository = workspace.repository
+
+    result = workspace.run_gate(
+        f"git -C {repository} switch -c next-branch main && git -C {repository} commit -m more",
+        working_directory=elsewhere,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_commit_after_switching_to_an_existing_merged_branch_is_blocked(tmp_path: Path) -> None:
+    workspace = make_workspace(tmp_path)
+    workspace.git("branch", "finished-branch")
+    workspace.set_pull_requests_for_branch("finished-branch", [MERGED_PULL_REQUEST])
+
+    result = workspace.run_gate("git switch finished-branch && git commit -m more")
+
+    assert result.returncode == 2
+    assert "finished-branch" in result.stderr
+
+
+def test_commit_after_switching_from_a_merged_branch_to_an_unmerged_one_is_allowed(tmp_path: Path) -> None:
+    workspace = make_workspace(tmp_path)
+    workspace.git("branch", "live-branch")
+    workspace.set_pull_requests_for_branch("work-branch", [MERGED_PULL_REQUEST])
+    workspace.set_pull_requests_for_branch("live-branch", [OPEN_PULL_REQUEST])
+
+    result = workspace.run_gate("git checkout live-branch && git commit -m more")
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_a_later_switch_back_to_a_merged_branch_is_still_blocked(tmp_path: Path) -> None:
+    workspace = make_workspace(tmp_path)
+    workspace.set_pull_requests_for_branch("work-branch", [MERGED_PULL_REQUEST])
+
+    result = workspace.run_gate("git switch -c next-branch main && git switch work-branch && git commit -m more")
+
+    assert result.returncode == 2
+
+
+def test_switch_create_reusing_a_merged_branch_name_is_blocked(tmp_path: Path) -> None:
+    workspace = make_workspace(tmp_path)
+    workspace.set_pull_requests_for_branch("reused-name", [MERGED_PULL_REQUEST])
+
+    result = workspace.run_gate("git switch -c reused-name main && git commit -m more")
+
+    assert result.returncode == 2
+
+
+def test_unrecognised_switch_forms_fall_back_to_the_current_branch(tmp_path: Path) -> None:
+    workspace = make_workspace(tmp_path)
+    workspace.git("branch", "live-branch")
+    workspace.set_pull_requests_for_branch("work-branch", [MERGED_PULL_REQUEST])
+
+    for unsure_switch in [
+        "git switch --detach main",
+        "git switch -",
+        "git checkout -- notes.txt",
+        "git checkout notes.txt",
+        "git switch --track origin/live-branch",
+        "git switch -c next-branch main && git checkout -",
+    ]:
+        result = workspace.run_gate(f"{unsure_switch} && git commit -m more")
+        assert result.returncode == 2, unsure_switch
+
+
+def test_a_switch_not_joined_to_the_commit_by_and_is_not_trusted(tmp_path: Path) -> None:
+    workspace = make_workspace(tmp_path)
+    workspace.set_pull_requests_for_branch("work-branch", [MERGED_PULL_REQUEST])
+
+    # If the switch failed, these would still run the commit on work-branch.
+    for command in [
+        "git switch -c next-branch main ; git commit -m more",
+        "git switch -c next-branch main || git commit -m more",
+        "git switch -c next-branch main && git add . ; git commit -m more",
+    ]:
+        result = workspace.run_gate(command)
+        assert result.returncode == 2, command
 
 
 # --- Session start (tell the agent the status up front) ---------------------
