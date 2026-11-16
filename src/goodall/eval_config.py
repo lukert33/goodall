@@ -35,8 +35,9 @@ Rules a reader might otherwise reverse-engineer:
   it may contain an email address or a secret reference.
 - Failures never quote a value from either file back, because a value in
   the wrong place may be a secret pasted by mistake (ADR 0006). The
-  exceptions are names that already passed the name rule above, which
-  cannot hold an email address or a secret reference, and file paths.
+  exceptions are file paths, and names and keys that goodall.quoting says
+  may be shown. Passing the name rule above is not enough on its own: a
+  lower-case hex token passes it, and a pasted key is a valid TOML key.
 
 This module imports only the standard library, because the prompt gate will
 read the eval config on every prompt (ADR 0005).
@@ -52,6 +53,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from goodall.local_settings import LocalSettings, is_whole_number
+from goodall.quoting import can_show_name, toml_error_as_shown
 from goodall.terminal import Failure
 
 # The name of the eval config file at the top of the record repo.
@@ -84,6 +86,9 @@ NAME_LIST_KEYS = ["workstreams", "intervention_categories"]
 # are required.
 CONTRIBUTOR_KEYS = ["id", "display_name"]
 SCOPE_KEYS = ["repository", "paths"]
+
+# How a message refers to a key, or a name in a list, that it does not show.
+UNSHOWN_KEY = "a key whose name goodall does not show"
 
 # A name: lowercase letters and digits, in words joined by single hyphens,
 # such as "ada-lovelace" or "go-to-market".
@@ -230,7 +235,8 @@ def read_eval_config(record_repo_folder: Path, local_settings_file: Path) -> Eva
         config_table = tomllib.loads(file_text)
     except tomllib.TOMLDecodeError as toml_error:
         # tomllib's message ends with the place, such as "(at line 2, column 8)".
-        return [eval_config_not_toml_failure(config_file, str(toml_error))]
+        # Some of its messages repeat a key, which toml_error_as_shown takes out.
+        return [eval_config_not_toml_failure(config_file, toml_error_as_shown(str(toml_error)))]
 
     return check_eval_config_table(config_file, config_table)
 
@@ -336,7 +342,10 @@ def read_name_list(config_file: Path, table: dict[str, object], key: str, proble
 
     duplicates = find_duplicates(names)
     for duplicate in duplicates:
-        problems.append(duplicate_failure(config_file, f"{key} lists {duplicate} more than once"))
+        if is_name_to_show(duplicate):
+            problems.append(duplicate_failure(config_file, f"{key} lists {duplicate} more than once"))
+        else:
+            problems.append(duplicate_failure(config_file, f"{key} lists one name more than once"))
     if duplicates:
         return None
     return names
@@ -399,7 +408,11 @@ def read_contributors(config_file: Path, table: dict[str, object], problems: lis
     for contributor in contributors:
         contributor_ids.append(contributor.id)
     for duplicate in find_duplicates(contributor_ids):
-        problems.append(duplicate_failure(config_file, f"more than one [[contributors]] block has id {duplicate}"))
+        if is_name_to_show(duplicate):
+            what_is_repeated = f"more than one [[contributors]] block has id {duplicate}"
+        else:
+            what_is_repeated = "more than one [[contributors]] block has the same id"
+        problems.append(duplicate_failure(config_file, what_is_repeated))
 
     if len(problems) > problems_before:
         return None
@@ -512,7 +525,9 @@ def find_private_values(config_file: Path, value: object, where: str) -> list[Fa
     """Look through every text value inside `value` for email addresses and secret references.
 
     Walks tables and lists all the way down, so nothing in the file is
-    missed. Returns one failure per value found, naming where it is.
+    missed. Returns one failure per value found, naming where it is; a key
+    is named only when it may be shown (`key_as_shown`), because these
+    walk keys goodall does not know, too.
     """
     problems: list[Failure] = []
     if isinstance(value, str):
@@ -527,9 +542,9 @@ def find_private_values(config_file: Path, value: object, where: str) -> list[Fa
                 for position, block in enumerate(inner_value, start=1):
                     problems.extend(find_private_values(config_file, block, block_name(key, position)))
             elif where == TOP_OF_FILE:
-                problems.extend(find_private_values(config_file, inner_value, key))
+                problems.extend(find_private_values(config_file, inner_value, key_as_shown(key)))
             else:
-                problems.extend(find_private_values(config_file, inner_value, f"{key} in {where}"))
+                problems.extend(find_private_values(config_file, inner_value, f"{key_as_shown(key)} in {where}"))
     elif isinstance(value, list):
         for item in value:
             problems.extend(find_private_values(config_file, item, where))
@@ -558,7 +573,10 @@ def find_duplicates(names: list[str]) -> list[str]:
 
 
 def block_name(key: str, position: int) -> str:
-    """Name one [[key]] block for a message, such as "the 2nd [[contributors]] block"."""
+    """Name one [[key]] block for a message, such as "the 2nd [[contributors]] block".
+
+    A key that may not be shown (`key_as_shown`) is left out of the name.
+    """
     if position % 100 in [11, 12, 13]:
         suffix = "th"
     elif position % 10 == 1:
@@ -569,7 +587,32 @@ def block_name(key: str, position: int) -> str:
         suffix = "rd"
     else:
         suffix = "th"
+    if not can_show_name(key):
+        return f"the {position}{suffix} block of a [[list]] whose name goodall does not show"
     return f"the {position}{suffix} [[{key}]] block"
+
+
+def key_as_shown(key: str) -> str:
+    """How a message refers to `key`: by its name, or, when it could be a secret, without it."""
+    if can_show_name(key):
+        return key
+    return UNSHOWN_KEY
+
+
+def names_as_shown(names: list[str]) -> str:
+    """List `names` for a message, leaving out any that may not be shown and saying how many were left out."""
+    shown_names: list[str] = []
+    for name in names:
+        if is_name_to_show(name):
+            shown_names.append(name)
+    unshown_count = len(names) - len(shown_names)
+    if unshown_count == 0:
+        return ", ".join(shown_names)
+    if unshown_count == 1:
+        unshown = "1 name goodall does not show"
+    else:
+        unshown = f"{unshown_count} names goodall does not show"
+    return ", ".join([*shown_names, unshown])
 
 
 def in_where(where: str) -> str:
@@ -579,9 +622,9 @@ def in_where(where: str) -> str:
     return f" in {where}"
 
 
-def is_name(value: str) -> bool:
-    """True when `value` follows the name rule, which means it is safe to quote back."""
-    return NAME_PATTERN.fullmatch(value) is not None
+def is_name_to_show(value: str) -> bool:
+    """True when `value` follows the name rule and goodall.quoting lets it be shown, so it is safe to quote back."""
+    return NAME_PATTERN.fullmatch(value) is not None and can_show_name(value)
 
 
 def eval_config_missing_failure(config_file: Path, local_settings_file: Path) -> Failure:
@@ -643,9 +686,28 @@ def key_missing_failure(config_file: Path, key: str, where: str) -> Failure:
 def key_unknown_failure(config_file: Path, key: str, known_keys: list[str], where: str) -> Failure:
     """The failure for a key goodall does not know, which is often a misspelling.
 
-    The key's name is quoted, as local settings do: keys are names a person
-    typed, and a secret pasted into a key's place would break the TOML first.
+    Trap: the key is named only when goodall.quoting says it may be shown.
+    A key pasted by mistake (`sk-ant-api03-... = "x"`) is a valid bare TOML
+    key, so reaching this point says nothing about whether it is a secret.
     """
+    if not can_show_name(key):
+        return Failure(
+            kind="eval_config_key_unknown",
+            what_happened=(
+                f"The eval config at {config_file} contains {UNSHOWN_KEY}{in_where(where)}, and goodall does not "
+                "know it. Goodall does not show its name, in case it is a secret pasted by mistake."
+            ),
+            why=(
+                "A key goodall does not know has no effect, so a misspelled name would look like a setting that "
+                "took effect when it did not."
+            ),
+            what_to_do_next=(
+                f"Open {config_file} and remove or correct every key{in_where(where)} that is not one of these: "
+                f"{', '.join(known_keys)}. If it was a real key, change it with whoever issued it, because it may "
+                "have been exposed."
+            ),
+        )
+
     close_matches = difflib.get_close_matches(key, known_keys, n=1, cutoff=0.75)
     if close_matches:
         suggestion = f" Did you mean {close_matches[0]}?"
@@ -683,8 +745,8 @@ def value_invalid_failure(config_file: Path, key: str, problem: str, where: str)
 def duplicate_failure(config_file: Path, what_is_repeated: str) -> Failure:
     """The failure for a contributor id or a name listed twice.
 
-    Only names that passed the name rule reach here, so quoting the repeated
-    name back is safe.
+    Callers quote the repeated name only when `is_name_to_show` allows it,
+    and otherwise describe it without the name.
     """
     return Failure(
         kind="eval_config_duplicate",
@@ -783,10 +845,10 @@ def contains_secret_reference_failure(config_file: Path, where: str) -> Failure:
 def contributor_not_in_roster_failure(local_settings: LocalSettings, eval_config: EvalConfig) -> Failure:
     """The failure for local settings naming a contributor the eval's roster does not have.
 
-    The id from local settings is quoted only when it follows the name rule,
+    The id from local settings is quoted only when `is_name_to_show` allows it,
     because anything else in that place may be a secret pasted by mistake.
     """
-    if is_name(local_settings.contributor):
+    if is_name_to_show(local_settings.contributor):
         whose_id = f"Your contributor id, {local_settings.contributor},"
     else:
         whose_id = "The contributor id in your local settings"
@@ -795,7 +857,7 @@ def contributor_not_in_roster_failure(local_settings: LocalSettings, eval_config
         roster_ids.append(contributor.id)
     return Failure(
         kind="contributor_not_in_roster",
-        what_happened=(f"{whose_id} is not in this eval's roster. The roster's ids are {', '.join(roster_ids)}."),
+        what_happened=f"{whose_id} is not in this eval's roster. The roster's ids are {names_as_shown(roster_ids)}.",
         why=(
             "Every record names the contributor who made it, so goodall records nothing until it knows who you "
             "are in this eval."
@@ -809,14 +871,15 @@ def contributor_not_in_roster_failure(local_settings: LocalSettings, eval_config
 
 def main_workstream_unknown_failure(local_settings: LocalSettings, eval_config: EvalConfig) -> Failure:
     """The failure for a main workstream the eval does not have, often after one was renamed."""
-    if is_name(local_settings.main_workstream):
+    if is_name_to_show(local_settings.main_workstream):
         whose_workstream = f"Your main workstream, {local_settings.main_workstream},"
     else:
         whose_workstream = "The main workstream in your local settings"
     return Failure(
         kind="main_workstream_unknown",
         what_happened=(
-            f"{whose_workstream} is not one of this eval's workstreams, which are {', '.join(eval_config.workstreams)}."
+            f"{whose_workstream} is not one of this eval's workstreams, which are "
+            f"{names_as_shown(eval_config.workstreams)}."
         ),
         why=(
             "A work block is started on your main workstream unless you choose another, so it must be a workstream "

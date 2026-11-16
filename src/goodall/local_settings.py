@@ -36,7 +36,9 @@ known to be a full path, which the contributor needs to see as written.
 Terminal output in an eval account can end up in a transcript an agent
 reads, and a value in the wrong place may be a secret pasted by mistake
 (ADR 0006), so goodall names the setting and shows a correct example line
-instead.
+instead. A key goodall does not know is named only when goodall.quoting
+says it may be shown, because a pasted key is a valid TOML key too, and the
+TOML reader's own messages pass through goodall.quoting for the same reason.
 
 The failures are built here, beside the rule that finds each problem, so
 `goodall status`, `goodall doctor` and the prompt gate all word a problem the
@@ -55,6 +57,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TypeGuard
 
+from goodall.quoting import can_show_name, toml_error_as_shown
 from goodall.terminal import Failure
 
 # The environment variable that overrides where local settings are found.
@@ -215,8 +218,9 @@ def read_local_settings_file(location: LocalSettingsLocation) -> LocalSettings |
     except tomllib.TOMLDecodeError as toml_error:
         # tomllib's message ends with the place, for example
         # "Invalid value (at line 2, column 15)", which is what a person
-        # editing by hand needs.
-        return [local_settings_not_toml_failure(settings_file, str(toml_error))]
+        # editing by hand needs. Some of its messages repeat a key, which
+        # toml_error_as_shown takes out.
+        return [local_settings_not_toml_failure(settings_file, toml_error_as_shown(str(toml_error)))]
 
     return check_settings_table(settings_file, settings_table)
 
@@ -447,7 +451,29 @@ def key_unknown_failure(settings_file: Path, setting_name: str) -> Failure:
 
     It is reported rather than ignored, because an ignored misspelling looks
     like a setting that took effect.
+
+    Trap: the key is named only when goodall.quoting says it may be shown.
+    A key pasted by mistake (`sk-ant-api03-... = "x"`) is a valid bare TOML
+    key, so reaching this point says nothing about whether it is a secret.
     """
+    if not can_show_name(setting_name):
+        return Failure(
+            kind="local_settings_key_unknown",
+            what_happened=(
+                f"Local settings at {settings_file} contain a key goodall does not know. Goodall does not show "
+                "its name, in case it is a secret pasted by mistake."
+            ),
+            why=(
+                "A setting goodall does not know has no effect, so a misspelled name would look like a setting "
+                "that took effect when it did not."
+            ),
+            what_to_do_next=(
+                f"Open {settings_file} and remove or correct every key that is not one of these: "
+                f"{', '.join(KNOWN_SETTING_NAMES)}. If it was a real key, change it with whoever issued it, because "
+                "it may have been exposed."
+            ),
+        )
+
     close_matches = difflib.get_close_matches(setting_name, KNOWN_SETTING_NAMES, n=1, cutoff=0.75)
     if close_matches:
         suggestion = f" Did you mean {close_matches[0]}?"
