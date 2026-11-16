@@ -176,18 +176,32 @@ def read_eval_for_this_account(local_settings: LocalSettings) -> EvalForThisAcco
     eval_config = eval_config_reading
 
     problems: list[Failure] = []
-    this_contributor = None
-    for contributor in eval_config.contributors:
-        if contributor.id == local_settings.contributor:
-            this_contributor = contributor
+    this_contributor = find_this_contributor(local_settings, eval_config)
     if this_contributor is None:
         problems.append(contributor_not_in_roster_failure(local_settings, eval_config))
-    if local_settings.main_workstream not in eval_config.workstreams:
+    if not main_workstream_is_known(local_settings, eval_config):
         problems.append(main_workstream_unknown_failure(local_settings, eval_config))
 
     if problems or this_contributor is None:
         return problems
     return EvalForThisAccount(local_settings=local_settings, eval_config=eval_config, contributor=this_contributor)
+
+
+def find_this_contributor(local_settings: LocalSettings, eval_config: EvalConfig) -> Contributor | None:
+    """Return this macOS user account's entry in the roster, or None when its contributor id is not there.
+
+    One of the two cross-checks between local settings and the eval config;
+    `goodall doctor` runs each as its own check, so each is a function.
+    """
+    for contributor in eval_config.contributors:
+        if contributor.id == local_settings.contributor:
+            return contributor
+    return None
+
+
+def main_workstream_is_known(local_settings: LocalSettings, eval_config: EvalConfig) -> bool:
+    """True when this account's main workstream is one of the eval's workstreams."""
+    return local_settings.main_workstream in eval_config.workstreams
 
 
 def read_eval_config(record_repo_folder: Path, local_settings_file: Path) -> EvalConfig | list[Failure]:
