@@ -24,8 +24,17 @@ SECRETS_MANAGER_INSTALLED = "tools.secrets_manager_installed"
 STANDARD_ACCOUNT = "eval_account.standard_account"
 RECORD_REPO_IS_GIT_REPOSITORY = "record_repo.is_git_repository"
 
-# The command that lists this macOS user account's groups by name.
+# The command that lists this macOS user account's groups by name. It is
+# named by its full path, the same on macOS and Linux, so a program called
+# `id` placed earlier on the PATH cannot answer for it.
 ACCOUNT_GROUPS_COMMAND = ["/usr/bin/id", "-Gn"]
+
+# Membership of any of these groups makes an account an administrator. On
+# macOS that is `admin`, and `wheel` for root. Goodall targets macOS, but its
+# tests and its developers also run on Linux, where `admin` does not exist
+# and an account that can become root is in `sudo` or `wheel`. No standard
+# macOS account is in either, so listing them costs nothing on a Mac.
+ADMINISTRATOR_GROUPS = ["admin", "wheel", "sudo"]
 
 
 @dataclass(frozen=True)
@@ -121,9 +130,63 @@ def check_secrets_manager_installed(context: CheckContext) -> CheckOutcome:
 
 
 def check_standard_account(context: CheckContext) -> CheckOutcome:
-    """This macOS user account is a standard account, not an administrator."""
-    context.runner.run(Command(ACCOUNT_GROUPS_COMMAND))
+    """This macOS user account is a standard account, not an administrator.
+
+    It asks `id -Gn` for the account's groups by name. On macOS an
+    administrator is exactly an account in the `admin` group.
+    """
+    command = Command(ACCOUNT_GROUPS_COMMAND)
+    result = context.runner.run(command)
+    group_names = result.standard_output.split()
+    # Trap: a command that failed printed no groups, which would look like
+    # "no admin group". Not knowing must fail, never pass. Every account is
+    # in at least one group, so an empty answer is not an answer either.
+    if not result.succeeded or not group_names:
+        problem = result.problem or f"`{command.as_typed}` listed no groups"
+        return failed([account_groups_unknown_failure(problem)])
+    for group_name in group_names:
+        if group_name in ADMINISTRATOR_GROUPS:
+            return failed([account_is_administrator_failure(group_name)])
     return passed()
+
+
+def account_groups_unknown_failure(problem: str) -> Failure:
+    """The failure for when goodall could not find out this account's groups."""
+    return Failure(
+        kind="account_groups_unknown",
+        what_happened=(f"Goodall could not tell whether this macOS user account is an administrator: {problem}."),
+        why="Goodall reads the account's groups to confirm it is a standard account; without them it cannot.",
+        what_to_do_next=(
+            f"Run {' '.join(ACCOUNT_GROUPS_COMMAND)} in Terminal: it should print this account's groups on one "
+            "line. If it shows an error, ask the owner of this Mac to look at it. Then run goodall doctor again."
+        ),
+    )
+
+
+def account_is_administrator_failure(group_name: str) -> Failure:
+    """The failure for an eval account that is an administrator.
+
+    The short reason is part of what happened, not only of `why`, because
+    the report shows what happened and the next step; a researcher who sees
+    no reason may take the rule for fussiness.
+    """
+    return Failure(
+        kind="account_is_administrator",
+        what_happened=(
+            f"This macOS user account is an administrator (it is in the {group_name} group). An eval needs a "
+            "standard account: it cannot reach other accounts' files or install software, which is what makes "
+            "it safe to hand to an agent."
+        ),
+        why=(
+            "The agents in an eval act with this account's rights. An administrator can install software, "
+            "change system settings and read other accounts' files, so an agent could too."
+        ),
+        what_to_do_next=(
+            "Run the eval in a standard account. From an administrator account, open System Settings, then "
+            "Users & Groups, and either create a new standard account for this eval or turn off "
+            "administrator rights for this one. Then run goodall doctor again in the eval account."
+        ),
+    )
 
 
 def check_record_repo_is_git_repository(context: CheckContext) -> CheckOutcome:

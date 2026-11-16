@@ -571,3 +571,67 @@ def test_missing_op_fails_the_secrets_manager_check_naming_1password(healthy_acc
     assert "op, 1Password's command-line tool," in secrets_manager_check["detail"]
     assert isinstance(secrets_manager_check["next_step"], str)
     assert "https://developer.1password.com/docs/cli/get-started/" in secrets_manager_check["next_step"]
+
+
+# The groups of an administrator on macOS: the same as a standard account's,
+# plus admin and the groups that come with it.
+ADMINISTRATOR_ACCOUNT_GROUPS = "staff everyone localaccounts _appserverusr admin _appserveradm _lpadmin\n"
+
+
+def test_an_administrator_account_fails_with_why_a_standard_account_is_required(healthy_account: EvalAccount) -> None:
+    runner = healthy_runner()
+    runner.answer(ACCOUNT_GROUPS_COMMAND, standard_output=ADMINISTRATOR_ACCOUNT_GROUPS)
+
+    exit_code, standard_output, _ = run_goodall(["doctor"], runner)
+
+    assert exit_code == exit_codes.ERROR
+    assert "  FAIL  This macOS user account is a standard account, not an administrator\n" in standard_output
+    # Joined into one line, so a phrase that wraps still matches.
+    report_text = " ".join(standard_output.split())
+    assert "is an administrator (it is in the admin group)" in report_text
+    # The reason, so a researcher does not wave it away as fussiness.
+    assert "cannot reach other accounts' files or install software" in report_text
+    assert "safe to hand to an agent" in report_text
+    assert standard_output.endswith("11 passed, 0 warned, 1 failed, 0 skipped\n")
+
+
+@pytest.mark.parametrize(
+    ("groups", "expected_status"),
+    [
+        # Linux has no admin group; an account that can become root is in
+        # sudo (Debian, Ubuntu) or wheel (Fedora, and root on macOS).
+        ("ada adm cdrom sudo dip plugdev\n", "fail"),
+        ("ada wheel\n", "fail"),
+        ("ada docker users\n", "pass"),
+    ],
+)
+def test_the_account_check_also_recognises_administrators_on_linux(
+    healthy_account: EvalAccount, groups: str, expected_status: str
+) -> None:
+    runner = healthy_runner()
+    runner.answer(ACCOUNT_GROUPS_COMMAND, standard_output=groups)
+
+    _, standard_output, _ = run_goodall(["doctor", "--json"], runner)
+
+    document = json.loads(standard_output)
+    assert check_document(document, "eval_account.standard_account")["status"] == expected_status
+
+
+def test_an_account_check_that_never_finishes_is_reported_as_timed_out_and_doctor_still_completes(
+    healthy_account: EvalAccount,
+) -> None:
+    runner = healthy_runner()
+    runner.answer_timed_out(ACCOUNT_GROUPS_COMMAND)
+
+    exit_code, standard_output, _ = run_goodall(["doctor", "--json"], runner)
+
+    assert exit_code == exit_codes.ERROR
+    document = json.loads(standard_output)
+    # Not being able to ask is a failure, never a pass: an unanswered
+    # question must not read as "standard account".
+    account_check = check_document(document, "eval_account.standard_account")
+    assert account_check["status"] == "fail"
+    assert isinstance(account_check["detail"], str)
+    assert "`/usr/bin/id -Gn` timed out after 10 s" in account_check["detail"]
+    # Every other check still ran.
+    assert document["summary"] == {"passed": 11, "warned": 0, "failed": 1, "skipped": 0}
