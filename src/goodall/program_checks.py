@@ -10,7 +10,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from goodall.checks import Check, CheckContext, CheckOutcome, failed, passed
-from goodall.runner import Command
+from goodall.local_settings import LocalSettings
+from goodall.runner import Command, CommandOutcome, first_non_blank_line
 from goodall.settings_checks import LOCAL_SETTINGS_VALID, RECORD_REPO_FOUND, valid_local_settings
 from goodall.terminal import Failure
 
@@ -190,11 +191,87 @@ def account_is_administrator_failure(group_name: str) -> Failure:
 
 
 def check_record_repo_is_git_repository(context: CheckContext) -> CheckOutcome:
-    """The record repo folder is the top of a git repository."""
+    """The record repo folder is the top of a git repository.
+
+    Asks real git, through the runner, for the top folder of the repository
+    the record repo folder is in. `rev-parse` only reads, so doctor stays
+    read-only.
+    """
     local_settings = valid_local_settings(context)
-    record_repo: Path = local_settings.record_repo.path
-    context.runner.run(Command(["git", "rev-parse", "--show-toplevel"], working_directory=record_repo))
+    result = context.runner.run(
+        Command(["git", "rev-parse", "--show-toplevel"], working_directory=local_settings.record_repo.path)
+    )
+    if result.outcome == CommandOutcome.COMPLETED and not result.succeeded:
+        git_said = first_non_blank_line(result.standard_error) or f"nothing, and exited with code {result.exit_code}"
+        return failed([record_repo_not_git_repository_failure(local_settings, git_said)])
+    if result.problem is not None:
+        return failed([record_repo_git_unanswered_failure(local_settings, result.problem)])
+    # Trap: git also answers for a plain folder inside some other repository
+    # (a home folder kept in git, say), naming that repository's top folder.
+    # resolve() both, because git names the real path and a path in local
+    # settings may pass through a link (on macOS, /var is /private/var).
+    top_folder = Path(result.standard_output.strip())
+    if top_folder.resolve() != local_settings.record_repo.path.resolve():
+        return failed([record_repo_inside_other_repository_failure(local_settings, top_folder)])
     return passed()
+
+
+def record_repo_inside_other_repository_failure(local_settings: LocalSettings, top_folder: Path) -> Failure:
+    """The failure for a record repo folder that is only a folder inside another repository."""
+    record_repo = local_settings.record_repo
+    return Failure(
+        kind="record_repo_inside_other_repository",
+        what_happened=(
+            f"The record repo folder {record_repo.as_written} is not a git repository of its own: it is inside "
+            f"the git repository {top_folder}."
+        ),
+        why=(
+            "Goodall commits the eval's records in the record repo, so they would go into the repository around "
+            "it instead."
+        ),
+        what_to_do_next=(
+            f"Clone the eval's record repo with git clone, into {record_repo.path} (moving this folder aside "
+            f"first), or set record_repo in {local_settings.settings_file} to the folder where you cloned it. "
+            "Then run goodall doctor again."
+        ),
+    )
+
+
+def record_repo_not_git_repository_failure(local_settings: LocalSettings, git_said: str) -> Failure:
+    """The failure for a record repo folder git does not accept as a repository.
+
+    Worded "a git repository that git will use" because git also refuses a
+    real repository owned by another macOS user account; git's own words
+    say which it is.
+    """
+    record_repo = local_settings.record_repo
+    return Failure(
+        kind="record_repo_not_git_repository",
+        what_happened=(
+            f"The record repo folder {record_repo.as_written} is not a git repository that git will use. "
+            f"git said: {git_said}"
+        ),
+        why="Goodall keeps the eval's records with git, so the record repo must be a clone of the eval's repository.",
+        what_to_do_next=(
+            f"Clone the eval's record repo with git clone, into {record_repo.path} (moving this folder aside "
+            f"first), or set record_repo in {local_settings.settings_file} to the folder where you cloned it. "
+            "Then run goodall doctor again."
+        ),
+    )
+
+
+def record_repo_git_unanswered_failure(local_settings: LocalSettings, problem: str) -> Failure:
+    """The failure for when git could not be asked about the record repo folder at all."""
+    record_repo = local_settings.record_repo
+    return Failure(
+        kind="record_repo_git_unanswered",
+        what_happened=(
+            f"Goodall could not ask git whether the record repo folder {record_repo.as_written} is a git "
+            f"repository: {problem}."
+        ),
+        why="Goodall keeps the eval's records with git, so it must be able to run git in the record repo.",
+        what_to_do_next=(f"Run git status in {record_repo.path} to see what git says, then run goodall doctor again."),
+    )
 
 
 PROGRAM_CHECKS = [

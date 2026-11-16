@@ -617,6 +617,59 @@ def test_the_account_check_also_recognises_administrators_on_linux(
     assert check_document(document, "eval_account.standard_account")["status"] == expected_status
 
 
+def test_a_record_repo_folder_that_is_not_a_git_repository_fails(healthy_account: EvalAccount) -> None:
+    # Real git, asked about a real folder that holds the eval config but
+    # was never made a repository (copied instead of cloned, say).
+    shutil.rmtree(healthy_account.record_repo / ".git")
+
+    exit_code, standard_output, _ = run_goodall(["doctor", "--json"])
+
+    assert exit_code == exit_codes.ERROR
+    document = json.loads(standard_output)
+    assert document["summary"] == {"passed": 11, "warned": 0, "failed": 1, "skipped": 0}
+    git_repository_check = check_document(document, "record_repo.is_git_repository")
+    assert git_repository_check["status"] == "fail"
+    assert isinstance(git_repository_check["detail"], str)
+    assert "~/evals/goodall-pilot-records is not a git repository" in git_repository_check["detail"]
+    # git's own words, so an unusual cause (such as a folder owned by
+    # another account) is not hidden behind goodall's summary.
+    assert "not a git repository" in git_repository_check["detail"].split("git said: ")[1]
+    assert isinstance(git_repository_check["next_step"], str)
+    assert "git clone" in git_repository_check["next_step"]
+
+
+def test_a_record_repo_folder_inside_another_repository_fails(healthy_account: EvalAccount) -> None:
+    # The home folder is a repository (some people keep theirs in git), and
+    # the record repo folder is only a folder inside it. Records committed
+    # there would go to the wrong repository.
+    shutil.rmtree(healthy_account.record_repo / ".git")
+    subprocess.run(["git", "init", "--quiet", str(healthy_account.home_folder)], check=True, capture_output=True)
+
+    exit_code, standard_output, _ = run_goodall(["doctor", "--json"])
+
+    assert exit_code == exit_codes.ERROR
+    git_repository_check = check_document(json.loads(standard_output), "record_repo.is_git_repository")
+    assert git_repository_check["status"] == "fail"
+    assert isinstance(git_repository_check["detail"], str)
+    assert "is inside the git repository" in git_repository_check["detail"]
+    assert healthy_account.home_folder.name in git_repository_check["detail"]
+
+
+def test_a_record_repo_check_whose_git_never_finishes_says_so(healthy_account: EvalAccount) -> None:
+    runner = healthy_runner()
+    # git is scripted here rather than real, so it can be made to hang.
+    runner.real_programs.remove("git")
+    runner.answer_timed_out(["git", "rev-parse", "--show-toplevel"])
+
+    _, standard_output, _ = run_goodall(["doctor", "--json"], runner)
+
+    git_repository_check = check_document(json.loads(standard_output), "record_repo.is_git_repository")
+    assert git_repository_check["status"] == "fail"
+    assert isinstance(git_repository_check["detail"], str)
+    assert "could not ask git" in git_repository_check["detail"]
+    assert "`git rev-parse --show-toplevel` timed out after 10 s" in git_repository_check["detail"]
+
+
 def test_an_account_check_that_never_finishes_is_reported_as_timed_out_and_doctor_still_completes(
     healthy_account: EvalAccount,
 ) -> None:
