@@ -23,6 +23,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -93,7 +94,7 @@ class EvalAccount:
     def work_block_files(self) -> list[Path]:
         return sorted((self.record_repo / "work-blocks").glob("*.json"))
 
-    def work_block_records(self) -> list[dict[str, object]]:
+    def work_block_records(self) -> list[dict[str, Any]]:
         records = []
         for record_file in self.work_block_files():
             records.append(json.loads(record_file.read_text()))
@@ -285,3 +286,53 @@ def test_creating_the_marker_is_won_by_exactly_one_of_two_racers(tmp_path: Path)
     assert sorted(path.name for path in (tmp_path / "work-blocks").iterdir() if path.is_file()) == [
         "active-work-block.json"
     ]
+
+
+# ---------------------------------------------------------------------------
+# goodall stop
+# ---------------------------------------------------------------------------
+
+
+def test_stop_ends_the_work_block_cleanly_and_records_it_with_its_claude_sessions(
+    eval_account: EvalAccount,
+) -> None:
+    run_goodall(eval_account, ["start"])
+    # The hook leaves heartbeats while the person works, with the Claude
+    # session each came from.
+    for minutes, claude_session in [(10, CLAUDE_SESSION), (50, OTHER_CLAUDE_SESSION), (70, CLAUDE_SESSION)]:
+        work_blocks.record_heartbeat(
+            eval_account.log_directory, MONDAY_MORNING + timedelta(minutes=minutes), claude_session
+        )
+    eval_account.clock.advance(timedelta(hours=2, minutes=5))
+
+    stop = run_goodall(eval_account, ["stop"])
+
+    assert stop.exit_code == exit_codes.SUCCESS, stop.standard_error
+    assert stop.standard_error == ""
+    assert "Stopped your work block on research" in stop.everything_printed
+    assert "Mon 16 Nov 2026, 11:35 GMT" in stop.everything_printed
+    [record] = eval_account.work_block_records()
+    assert record["contributor"] == "ada-lovelace"
+    assert record["workstream"] == "research"
+    assert record["started_at"] == "2026-11-16T09:30:00Z"
+    assert record["ended_at"] == "2026-11-16T11:35:00Z"
+    assert record["end_state"] == "clean"
+    assert record["claude_sessions"] == [CLAUDE_SESSION, OTHER_CLAUDE_SESSION]
+    assert record["machine"]["claude_code_version"] == "2.3.4"
+    [record_file] = eval_account.work_block_files()
+    assert eval_account.commit_subjects()[0] == f"Add work block record {record_file.stem}"
+    assert str(record_file) in stop.standard_output
+    assert not marker_file(eval_account).exists()
+
+    status = run_goodall(eval_account, ["status"])
+    assert status.exit_code == exit_codes.ERROR
+    assert "No work block is active" in status.everything_printed
+
+
+def test_stop_with_no_work_block_active_says_so_and_exits_1(eval_account: EvalAccount) -> None:
+    stop = run_goodall(eval_account, ["stop"])
+
+    assert stop.exit_code == exit_codes.ERROR
+    assert stop.standard_error.startswith("FAIL  No work block is active, so there was nothing to stop.")
+    assert "goodall start" in stop.standard_error
+    assert eval_account.work_block_files() == []

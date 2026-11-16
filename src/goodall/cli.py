@@ -38,7 +38,7 @@ from goodall.entries import DECISION_MEANINGS, EntryRequest, InterventionDetails
 from goodall.runner import RealRunner, Runner
 from goodall.status import run_status
 from goodall.terminal import Failure, Terminal
-from goodall.work_block_commands import Clock, run_start
+from goodall.work_block_commands import Clock, run_start, run_stop
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -273,6 +273,8 @@ def main(
         return run_status(terminal, runner, clock, as_json=arguments.json)
     if command_name == "start":
         return run_start(terminal, runner, clock, workstream=arguments.workstream)
+    if command_name == "stop":
+        return run_stop(terminal, runner, clock)
     if command_name == "doctor":
         return run_doctor(terminal, runner, as_json=arguments.json)
     if command_name == "journal":

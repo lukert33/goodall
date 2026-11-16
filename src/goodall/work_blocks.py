@@ -321,26 +321,32 @@ def create_marker(log_directory: Path, running_record: records.WorkBlockRecord) 
     """
     files = WorkBlockFiles(log_directory)
     make_folders(files)
-    text = records.render_record(running_record)
-    temporary_file = files.folder / f".{MARKER_FILE_NAME}.{secrets.token_hex(4)}.tmp"
+    return create_whole_file(files.marker, records.render_record(running_record))
+
+
+def create_whole_file(path: Path, text: str) -> bool:
+    """Create `path` holding `text`, appearing whole or not at all; False when something is already there.
+
+    The text is written in full to a temporary file beside it, which is then
+    hard-linked to `path`: a link fails if the name is taken, so exactly one
+    of two racing creators wins, and nobody can see the file half written.
+    On a disk that cannot make hard links, it falls back to creating `path`
+    with O_EXCL, which is as exclusive but can, for an instant, be seen empty.
+    """
+    temporary_file = path.parent / f".{path.name}.{secrets.token_hex(4)}.tmp"
     write_new_file(temporary_file, text)
     try:
-        os.link(temporary_file, files.marker)
+        os.link(temporary_file, path)
         return True
     except FileExistsError:
         return False
     except OSError as link_error:
         if link_error.errno not in LINK_NOT_SUPPORTED_ERRORS:
             raise
-        return create_marker_without_link(files.marker, text)
     finally:
         temporary_file.unlink(missing_ok=True)
-
-
-def create_marker_without_link(marker: Path, text: str) -> bool:
-    """Create the marker with O_EXCL, on a disk that cannot make hard links; False when one is there."""
     try:
-        write_new_file(marker, text)
+        write_new_file(path, text)
     except FileExistsError:
         return False
     return True
@@ -368,3 +374,42 @@ def make_folders(files: WorkBlockFiles) -> None:
 def format_timestamp(moment: datetime) -> str:
     """Write a moment in UTC as records do: `2026-11-16T09:30:00Z`."""
     return moment.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def save_unrecorded(log_directory: Path, ended_record: records.WorkBlockRecord) -> bool:
+    """Keep an ended work block's record in the log directory until it is in the record repo.
+
+    Done before the marker is removed, so the work block is never lost
+    between the two. Returns False when a record for this work block is
+    already waiting, which means another goodall ended it first.
+    """
+    files = WorkBlockFiles(log_directory)
+    make_folders(files)
+    return create_whole_file(files.unrecorded_file(ended_record.id), records.render_record(ended_record))
+
+
+def remove_marker(log_directory: Path, work_block_id: str) -> None:
+    """Remove the marker of a work block that has ended and whose record is saved.
+
+    Trap: the marker is read again first, so a marker some other goodall
+    created for a new work block in the meantime is never removed by
+    mistake. A marker that is already gone is fine.
+    """
+    files = WorkBlockFiles(log_directory)
+    try:
+        marker_text = files.marker.read_text(encoding="utf-8")
+    except OSError:
+        return
+    marker_record = records.parse_work_block_record(marker_text).record
+    if marker_record is None or marker_record.id != work_block_id:
+        return
+    files.marker.unlink(missing_ok=True)
+
+
+def unrecorded_files(log_directory: Path) -> list[Path]:
+    """The ended work blocks' records waiting in the log directory, oldest first."""
+    folder = WorkBlockFiles(log_directory).unrecorded_folder
+    try:
+        return sorted(folder.glob("*.json"))
+    except OSError:
+        return []

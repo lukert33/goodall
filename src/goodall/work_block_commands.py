@@ -36,17 +36,21 @@ Times are stored in UTC and shown in this Mac's local time with its zone.
 The clock is passed in, so tests can set it.
 """
 
+import dataclasses
 import platform
 import re
 import socket
 from collections.abc import Callable
-from datetime import datetime
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from pathlib import Path
 
 import goodall
 from goodall import exit_codes, records, work_blocks
 from goodall.eval_config import EvalForThisAccount, read_eval_for_this_account
 from goodall.folders import describe_folder_problem, log_directory_unreachable_failure, record_repo_missing_failure
 from goodall.local_settings import read_local_settings
+from goodall.record_repo import PushState, write_record
 from goodall.runner import Command, Runner
 from goodall.terminal import Failure, Terminal
 
@@ -139,6 +143,244 @@ def workstream_unknown_failure(eval_for_this_account: EvalForThisAccount) -> Fai
             "the eval."
         ),
         commands_to_try=tuple(commands_to_try),
+    )
+
+
+def run_stop(terminal: Terminal, runner: Runner, clock: Clock) -> int:
+    """End the active work block cleanly, write its record, say what happened, and return the exit code.
+
+    Exit 0 once the work block has ended and its record is committed in the
+    record repo; 1 when no work block was active, or when its record could
+    not be written yet (it then waits in the log directory, and the person
+    is told so).
+    """
+    eval_reading = find_eval_for_work_blocks()
+    if isinstance(eval_reading, list):
+        terminal.show_failures(eval_reading)
+        return exit_codes.ERROR
+    log_directory = eval_reading.local_settings.log_directory.path
+    now = clock()
+    active = work_blocks.active_work_block(log_directory, now)
+    if active is None:
+        terminal.show_failure(nothing_to_stop_failure())
+        return exit_codes.ERROR
+
+    ended_record = end_work_block(log_directory, active, now, "clean")
+    writes = write_unrecorded_records(runner, eval_reading)
+    write_of_this_block = find_write(writes, ended_record.id)
+    if write_of_this_block is None or not write_of_this_block.committed:
+        failures: list[Failure] = []
+        if write_of_this_block is not None:
+            failures = write_of_this_block.failures
+        terminal.show_failure(record_waiting_failure(ended_record, log_directory, failures))
+        return exit_codes.ERROR
+
+    terminal.show_paragraph(
+        f"Stopped your work block on {ended_record.workstream}. It ran from "
+        f"{describe_moment(ended_record.started_at)} to {describe_moment(now)} ({describe_length(ended_record)}). "
+        + where_the_record_went(write_of_this_block.push_state)
+    )
+    terminal.show_facts(
+        [
+            ("Id", ended_record.id),
+            ("File", str(write_of_this_block.path)),
+            ("Claude sessions", str(len(ended_record.claude_sessions))),
+        ]
+    )
+    terminal.show_warnings(write_of_this_block.failures)
+    return exit_codes.SUCCESS
+
+
+def end_work_block(
+    log_directory: Path, running: work_blocks.RunningWorkBlock, ended_at: datetime, end_state: str
+) -> records.WorkBlockRecord:
+    """End a running work block: save its finished record in the log directory, then remove its marker.
+
+    The record gets every Claude session its heartbeats carried. The order
+    matters: the record is saved before the marker goes, so the work block
+    is never lost in between. Returns the finished record.
+    """
+    ended_at = ended_at.astimezone(UTC).replace(microsecond=0)
+    # A clock set back (by hand, or by a time-zone mistake) must not make a
+    # work block end before it began, which the records module refuses.
+    ended_at = max(ended_at, running.record.started_at)
+    ended_record = dataclasses.replace(
+        running.record,
+        ended_at=ended_at,
+        end_state=end_state,
+        claude_sessions=work_blocks.read_claude_sessions(log_directory, running.id),
+    )
+    work_blocks.save_unrecorded(log_directory, ended_record)
+    work_blocks.remove_marker(log_directory, running.id)
+    return ended_record
+
+
+@dataclass(frozen=True)
+class UnrecordedWrite:
+    """What came of writing one waiting work block record into the record repo.
+
+    `record` is None when the waiting file could not be read as a record;
+    it is then left where it is, never deleted. `committed`, `path`,
+    `push_state` and `failures` are as goodall.record_repo reports them.
+    """
+
+    waiting_file: Path
+    record: records.WorkBlockRecord | None
+    committed: bool
+    path: Path | None = None
+    push_state: PushState = PushState.NOT_ATTEMPTED
+    failures: list[Failure] = field(default_factory=list)
+
+
+def write_unrecorded_records(runner: Runner, eval_reading: EvalForThisAccount) -> list[UnrecordedWrite]:
+    """Write every ended work block record waiting in the log directory into the record repo.
+
+    Each one committed is removed from the log directory, since the record
+    repo now holds it; any other stays, to be tried again by the next
+    goodall start, stop or status.
+    """
+    log_directory = eval_reading.local_settings.log_directory.path
+    writes = []
+    for waiting_file in work_blocks.unrecorded_files(log_directory):
+        writes.append(write_one_unrecorded_record(runner, eval_reading, waiting_file))
+    return writes
+
+
+def write_one_unrecorded_record(
+    runner: Runner, eval_reading: EvalForThisAccount, waiting_file: Path
+) -> UnrecordedWrite:
+    """Write one waiting work block record into the record repo; remove it from the log directory once committed."""
+    try:
+        parse_result = records.parse_work_block_record(waiting_file.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError):
+        parse_result = records.ParseResult(record=None, problems=[])
+    record = parse_result.record
+    if record is None:
+        return UnrecordedWrite(
+            waiting_file, None, committed=False, failures=[unreadable_waiting_record_failure(waiting_file)]
+        )
+    eval_config = eval_reading.eval_config
+    contributor_ids = []
+    for contributor in eval_config.contributors:
+        contributor_ids.append(contributor.id)
+    problems = parse_result.problems + records.validate_record(
+        record, contributor_ids=contributor_ids, workstreams=eval_config.workstreams
+    )
+    if problems:
+        return UnrecordedWrite(
+            waiting_file, record, committed=False, failures=[record_refused_failure(waiting_file, problems)]
+        )
+    outcome = write_record(runner, eval_reading.local_settings.record_repo.path, record)
+    if outcome.committed:
+        waiting_file.unlink(missing_ok=True)
+    return UnrecordedWrite(
+        waiting_file,
+        record,
+        committed=outcome.committed,
+        path=outcome.path,
+        push_state=outcome.push_state,
+        failures=outcome.failures,
+    )
+
+
+def find_write(writes: list[UnrecordedWrite], work_block_id: str) -> UnrecordedWrite | None:
+    """The write of one work block's record among `writes`, or None when it was not attempted."""
+    for write in writes:
+        if write.record is not None and write.record.id == work_block_id:
+            return write
+    return None
+
+
+def where_the_record_went(push_state: PushState) -> str:
+    """One sentence saying the record is kept and whether others can see it yet, as journal entries say it."""
+    if push_state == PushState.PUSHED:
+        return "Its record is in the record repo and was sent to the shared record repo."
+    if push_state == PushState.PENDING:
+        return (
+            "Its record is saved in the record repo on this Mac and will be sent to the shared record repo the "
+            "next time goodall records something."
+        )
+    return "Its record is in the record repo, which has no shared copy to send it to, so it is kept on this Mac."
+
+
+def describe_length(record: records.WorkBlockRecord) -> str:
+    """How long an ended work block ran, as `2 h 5 min`."""
+    assert record.ended_at is not None
+    total_minutes = int((record.ended_at - record.started_at).total_seconds() // 60)
+    hours, minutes = divmod(total_minutes, 60)
+    if hours == 0:
+        return f"{minutes} min"
+    return f"{hours} h {minutes} min"
+
+
+def nothing_to_stop_failure() -> Failure:
+    """The failure for goodall stop with no work block active."""
+    return Failure(
+        kind="no_work_block_active",
+        what_happened="No work block is active, so there was nothing to stop.",
+        why="goodall stop ends the work block that goodall start began, and none is running now.",
+        what_to_do_next="To begin one, run goodall start. To check what goodall is recording, run goodall status.",
+    )
+
+
+def record_waiting_failure(
+    ended_record: records.WorkBlockRecord, log_directory: Path, failures: list[Failure]
+) -> Failure:
+    """The failure for a work block that has ended but whose record could not be written to the record repo yet.
+
+    It says plainly that the work block did end, that nothing is lost, where
+    the record waits, and what went wrong, in the record repo module's own
+    words.
+    """
+    reasons = []
+    next_steps = []
+    for failure in failures:
+        reasons.append(failure.what_happened)
+        next_steps.append(failure.what_to_do_next)
+    waiting_file = work_blocks.WorkBlockFiles(log_directory).unrecorded_file(ended_record.id)
+    what_to_do_next = " ".join(next_steps)
+    if what_to_do_next == "":
+        what_to_do_next = "Run goodall doctor to see what is wrong with the record repo."
+    return Failure(
+        kind="work_block_record_waiting",
+        what_happened=(
+            f"Your work block on {ended_record.workstream} has ended, so goodall is no longer recording, but its "
+            "record could not be written to the record repo yet. " + " ".join(reasons)
+        ),
+        why=(
+            f"Nothing is lost: the record is kept in {waiting_file} until it can be written. Goodall writes it "
+            "the next time you run goodall start, goodall stop or goodall status."
+        ),
+        what_to_do_next=what_to_do_next,
+    )
+
+
+def unreadable_waiting_record_failure(waiting_file: Path) -> Failure:
+    """The failure for a waiting work block record in the log directory that goodall cannot read back."""
+    return Failure(
+        kind="work_block_record_unreadable",
+        what_happened=f"Goodall could not read the waiting work block record {waiting_file}, so it was not written.",
+        why="Goodall keeps an ended work block's record there until the record repo takes it, and never deletes it.",
+        what_to_do_next=(
+            "Leave the file where it is and tell the researcher who runs the eval, with the path above, so they "
+            "can look at it."
+        ),
+    )
+
+
+def record_refused_failure(waiting_file: Path, problems: list[records.RecordProblem]) -> Failure:
+    """The failure for a waiting work block record that does not fit this eval's config, say after a rename."""
+    messages = []
+    for problem in problems:
+        messages.append(problem.message)
+    return Failure(
+        kind="work_block_record_refused",
+        what_happened=f"The waiting work block record {waiting_file} was not written: " + " ".join(messages),
+        why="Records are kept in the shape the eval config expects, so goodall checks each one before writing it.",
+        what_to_do_next=(
+            "Leave the file where it is and tell the researcher who runs the eval, with the path above. If a "
+            "workstream was renamed, they can add the old name back to eval.toml so the record can be written."
+        ),
     )
 
 
