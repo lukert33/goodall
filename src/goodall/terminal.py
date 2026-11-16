@@ -137,8 +137,57 @@ class Terminal:
 
         # Measured once, so one command's output never changes width halfway
         # through if the window is resized.
+        self.output_width = measure_width(standard_output)
         self.error_width = measure_width(standard_error)
         self.error_colour = colour_is_wanted(standard_error)
+
+        # True once anything has been written to standard output, so the
+        # next block knows to start with a blank line.
+        self.output_started = False
+
+    def show_facts(self, facts: list[tuple[str, str]]) -> None:
+        """Write labelled facts to standard output, one per line, values lined up in one column.
+
+        Each fact is a (label, value) pair, such as ("Eval", "goodall-pilot").
+        The value column starts two spaces after the longest label.
+        """
+        self.start_output_block()
+        longest_label_length = 0
+        for label, _ in facts:
+            longest_label_length = max(longest_label_length, len(label))
+        value_column = longest_label_length + 2
+
+        lines = []
+        for label, value in facts:
+            wrapped = self.wrap(value, self.output_width, " " * value_column)
+            lines.append(label.ljust(value_column) + wrapped[value_column:])
+        self.standard_output.write("\n".join(lines) + "\n")
+
+    def show_paragraph(self, text: str) -> None:
+        """Write a paragraph of text to standard output, wrapped to the output width."""
+        self.start_output_block()
+        self.standard_output.write(self.wrap(text, self.output_width, "") + "\n")
+
+    def start_output_block(self) -> None:
+        """Separate each block on standard output from the one before it with a blank line."""
+        if self.output_started:
+            self.standard_output.write("\n")
+        self.output_started = True
+
+    def wrap(self, text: str, width: int, indent: str) -> str:
+        """Wrap `text` to `width`, with every line starting with `indent`."""
+        return textwrap.fill(
+            text,
+            width=width,
+            initial_indent=indent,
+            subsequent_indent=indent,
+            # Trap: by default textwrap splits long words and breaks at
+            # hyphens, which would cut a file path in two and stop a
+            # contributor copying it. A path longer than a line overflows
+            # instead.
+            break_long_words=False,
+            break_on_hyphens=False,
+        )
 
     def show_failure(self, failure: Failure) -> None:
         """Write a failure to standard error as three labelled paragraphs."""
@@ -170,19 +219,7 @@ class Terminal:
         Wrapping happens before colour is added, so escape codes never count
         towards the line length.
         """
-        indent = " " * LABEL_COLUMN_WIDTH
-        wrapped = textwrap.fill(
-            text,
-            width=self.error_width,
-            initial_indent=indent,
-            subsequent_indent=indent,
-            # Trap: by default textwrap splits long words and breaks at
-            # hyphens, which would cut a file path in two and stop a
-            # contributor copying it. A path longer than a line overflows
-            # instead.
-            break_long_words=False,
-            break_on_hyphens=False,
-        )
+        wrapped = self.wrap(text, self.error_width, " " * LABEL_COLUMN_WIDTH)
         padded_label = label.ljust(LABEL_COLUMN_WIDTH)
         if self.error_colour:
             padded_label = label_colour + label + RESET + padded_label[len(label) :]

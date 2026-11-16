@@ -119,6 +119,39 @@ def test_json_failure_is_one_document_on_standard_output() -> None:
     }
 
 
+def test_facts_line_up_and_blocks_are_separated_by_a_blank_line() -> None:
+    standard_output = io.StringIO()
+    standard_error = io.StringIO()
+    terminal = Terminal(standard_output=standard_output, standard_error=standard_error)
+
+    terminal.show_facts([("Eval", "goodall-pilot"), ("Contributor", "Ada Lovelace (ada-lovelace)")])
+    terminal.show_paragraph(
+        "No work block is active. This sentence is long enough that it has to wrap onto a second line at the "
+        "fixed width."
+    )
+
+    assert standard_error.getvalue() == ""
+    assert standard_output.getvalue() == (
+        "Eval         goodall-pilot\n"
+        "Contributor  Ada Lovelace (ada-lovelace)\n"
+        "\n"
+        "No work block is active. This sentence is long enough that it has to wrap onto a\n"
+        "second line at the fixed width.\n"
+    )
+
+
+def test_a_long_fact_wraps_under_its_value_column() -> None:
+    standard_output = io.StringIO()
+    terminal = Terminal(standard_output=standard_output, standard_error=io.StringIO())
+
+    terminal.show_facts([("Why", "word " * 20)])
+
+    assert standard_output.getvalue() == (
+        "Why  word word word word word word word word word word word word word word word\n"
+        "     word word word word word\n"
+    )
+
+
 def test_output_that_is_not_a_terminal_uses_the_fixed_width() -> None:
     assert FIXED_WIDTH == 80
 
