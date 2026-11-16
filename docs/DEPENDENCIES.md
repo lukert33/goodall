@@ -44,6 +44,19 @@ None of these ships to people who install goodall.
 | **ruff** 0.17.5 | Linter and formatter | Astral; `astral-sh/ruff`, ~51,200 stars; MIT; zero dependencies, bundled Rust binary. No published GitHub advisories and no OSV results. | **adopt** (owner approved 2026-11-16) |
 | **mypy** 2.4.1 | Type checker | `python/mypy`, original author Jukka Lehtosalo; ~20,700 stars; MIT; five direct dependencies (`typing_extensions`, `mypy_extensions`, `pathspec`, `librt`, `ast-serialize`). No GitHub advisories. | **adopt** (owner approved 2026-11-16) |
 
+## Adopted: continuous integration
+
+What `.github/workflows/quality-gates.yml` relies on. None of it ships to
+people who install goodall, but it runs this repository's code, so it is held
+to the same standard.
+
+| Component | Purpose | Provenance (checked 2026-11-16) | Decision |
+|---|---|---|---|
+| **GitHub-hosted runner** `ubuntu-24.04` | Machine the gates run on | GitHub; image built from `actions/runner-images` (MIT), latest release `ubuntu24/20261111.370` on 2026-11-11. Named by version rather than `ubuntu-latest`, so the image line changes only when this file and the workflow do. Goodall targets macOS; the tests need only git, sh and Python, so Linux is used. | **adopt** |
+| **actions/checkout** v7.0.1, commit `3d3c42e5aac5ba805825da76410c181273ba90b1` | Fetches the repository into the runner | GitHub; `actions/checkout`, ~9,000 stars; MIT. Released 2026-07-20; the tag is lightweight and points straight at that commit. No published security advisories. Pinned by commit id, with `persist-credentials: false` so the token is not left on disk. | **adopt** |
+| **uv** 0.11.33, installed with pip | Runs the gates, as on a development machine | Same project as the uv row above. Installed into a throwaway virtual environment by `pip install --require-hashes`, against the sha256 of the PyPI wheel `uv-0.11.33-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl` (`9542178978b0b6f16a7ae99e55aca039f493a1edb373a15d7993eab80a28615a`, uploaded 2026-07-28). 0.11.33 is the newest release inside the `uv_build` range in `pyproject.toml`. Every uv below 0.13.4 is affected by GHSA-hq85-5cpj-mr62 (high, 2026-10-20: a compromised certificate authority in uv's bundled list); the workflow sets `UV_NATIVE_TLS` so uv trusts the runner's system store instead. | **adopt** |
+| **astral-sh/setup-uv** | Third-party action that installs uv | — | **rejected**: one more repository with write access to what CI runs; a pinned, hash-checked `pip install` does the same job. |
+
 ### Why pytest, when the standard library has `unittest`
 
 `unittest` would run this project's tests, and rule 1 points at it. The owner
@@ -91,6 +104,11 @@ Recorded so that "not stated" is never mistaken for "confirmed safe".
 - OSV results for mypy (the lookup returned nothing usable).
 - Whether ruff's binary builds are reproducible.
 - Whether pyrefly is still controlled by Meta.
+- Whether the `ubuntu-24.04` runner's system certificate store already
+  distrusts the compromised emSign ECC Root CA - G3 intermediates
+  (GHSA-hq85-5cpj-mr62). `UV_NATIVE_TLS` relies on it doing so.
+- Whether the pip and Python that ship on the runner image are themselves
+  current; they are used only to install uv, whose wheel is hash-checked.
 
 ## Adding or upgrading a dependency
 
