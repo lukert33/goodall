@@ -101,3 +101,34 @@ def test_a_journal_entry_is_written_and_committed_in_a_record_repo_without_a_rem
     assert commit_subjects(record_repo)[0] == "Add journal entry 20261116T093000Z-ada-lovelace-7f3a9c2e"
     assert git(record_repo, "log", "-1", "--format=%an <%ae>") == "Ada Lovelace <ada.lovelace@example.org>\n"
     assert git(record_repo, "status", "--porcelain") == ""
+
+
+def make_remote_and_clone(
+    tmp_path: Path, clone_name: str = "records", contributor_name: str = "Ada Lovelace"
+) -> tuple[Path, Path]:
+    """Make a bare repository standing in for the hosted remote, and a record repo cloned from it."""
+    seed = make_record_repo(tmp_path / "seed")
+    remote = tmp_path / "remote.git"
+    git(tmp_path, "clone", "--quiet", "--bare", str(seed), str(remote))
+    record_repo = clone(tmp_path, remote, clone_name, contributor_name)
+    return remote, record_repo
+
+
+def clone(tmp_path: Path, remote: Path, clone_name: str, contributor_name: str) -> Path:
+    """Clone `remote` into a new record repo called `clone_name`, with its own identity."""
+    record_repo = tmp_path / clone_name
+    git(tmp_path, "clone", "--quiet", str(remote), str(record_repo))
+    set_identity(record_repo, contributor_name)
+    return record_repo
+
+
+def test_a_record_written_in_a_clone_with_a_reachable_remote_is_pushed(tmp_path: Path) -> None:
+    remote, record_repo = make_remote_and_clone(tmp_path)
+
+    outcome = write_record(FakeRunner(), record_repo, journal_entry())
+
+    assert outcome.failures == []
+    assert outcome.committed
+    assert outcome.push_state == PushState.PUSHED
+    assert outcome.pending_commits == 0
+    assert commit_subjects(remote, "main")[0] == "Add journal entry 20261116T093000Z-ada-lovelace-7f3a9c2e"
