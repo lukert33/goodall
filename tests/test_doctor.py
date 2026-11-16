@@ -21,6 +21,7 @@ import pytest
 
 from goodall import cli, exit_codes
 from goodall.fake_runner import FakeRunner
+from goodall.runner import OutputMode
 from goodall.terminal import Terminal
 
 # The command the account check runs, by its full path (see goodall.program_checks).
@@ -555,6 +556,7 @@ def test_contributor_and_main_workstream_are_reported_as_separate_checks(healthy
         "put a secret in the shared env file",
         "remove the shared env file",
         "set a variable in both env files",
+        "refer to an item that does not exist",
     ],
 )
 def test_every_failure_and_warning_has_a_next_step_and_exit_codes_agree(
@@ -583,6 +585,8 @@ def test_every_failure_and_warning_has_a_next_step_and_exit_codes_agree(
     elif break_setup == "set a variable in both env files":
         healthy_account.shared_env_file.write_text("DEFAULT_MODEL=opus\n")
         healthy_account.env_file.write_text("DEFAULT_MODEL=op://Eval/item/field\n")
+    elif break_setup == "refer to an item that does not exist":
+        healthy_account.env_file.write_text("ANTHROPIC_API_KEY=op://Eval/nothing-here/credential\n")
     else:
         healthy_account.eval_config_file.write_text(VALID_EVAL_CONFIG_TEXT.replace("ada-lovelace", "grace-hopper"))
 
@@ -1244,3 +1248,95 @@ def test_an_env_file_with_no_references_has_no_field_to_leave_unverified(healthy
     summary = document["summary"]
     assert isinstance(summary, dict)
     assert summary["unverified"] == 0
+
+
+def test_signed_out_skips_the_item_and_field_checks_naming_the_sign_in_check(healthy_account: EvalAccount) -> None:
+    runner = healthy_runner()
+    runner.answer(OP_WHOAMI, exit_code=1)
+
+    exit_code, document = doctor_json(runner)
+
+    assert exit_code == exit_codes.ERROR
+    for check_id in ["secrets.referenced_items_exist", "secrets.referenced_fields_exist"]:
+        check = check_document(document, check_id)
+        assert check["status"] == "skip"
+        assert check["waiting_for"] == "secrets.secrets_manager_signed_in"
+    # Only the sign-in question was asked.
+    op_commands = []
+    for command in runner.calls:
+        if command.arguments[0] == "op":
+            op_commands.append(command.arguments)
+    assert op_commands == [OP_WHOAMI]
+
+
+def test_a_reference_to_a_vault_this_account_cannot_see_fails_naming_the_variable(
+    healthy_account: EvalAccount,
+) -> None:
+    healthy_account.env_file.write_text(VALID_ENV_FILE_TEXT + "ANTHROPIC_API_KEY_GTM=op://Sales/anthropic/credential\n")
+
+    exit_code, standard_output, _ = run_goodall(["doctor"])
+    _, document = doctor_json()
+
+    assert exit_code == exit_codes.ERROR
+    assert failure_kinds(document, "secrets.referenced_items_exist") == ["secret_reference_vault_missing"]
+    report_text = " ".join(standard_output.split())
+    assert "ANTHROPIC_API_KEY_GTM, on line 6 of the env file" in report_text
+    assert "names a vault this 1Password account cannot see" in report_text
+    assert "Sales" not in standard_output + json.dumps(document)
+
+
+def test_an_answer_from_op_that_goodall_cannot_read_leaves_every_reference_unverified(
+    healthy_account: EvalAccount,
+) -> None:
+    runner = healthy_runner()
+    runner.answer(OP_VAULT_LIST, standard_output="Eval  q2rv4ffgbye6f3nnzcfwh3ab4m\n")
+
+    exit_code, document = doctor_json(runner)
+
+    assert exit_code == exit_codes.SUCCESS
+    assert check_document(document, "secrets.referenced_items_exist")["status"] == "unverified"
+    assert failure_kinds(document, "secrets.referenced_items_exist") == ["secret_reference_not_verified"] * 3
+    detail = check_document(document, "secrets.referenced_items_exist")["detail"]
+    assert isinstance(detail, str)
+    assert "goodall could not read the answer `op vault list` gave" in detail
+
+
+# The only secrets manager commands whose output goodall may read, by the
+# first three words: listings documented to name vaults and items and never
+# to give a field's value. Every other secrets manager command must discard
+# its output. `op item get`, `op read`, `op inject` and `op run` give values
+# and must never be run by goodall doctor at all.
+VALUE_FREE_OP_COMMANDS = [["op", "vault", "list"], ["op", "item", "list"]]
+OP_COMMANDS_THAT_GIVE_VALUES = [["op", "item", "get"], ["op", "read"], ["op", "inject"], ["op", "run"]]
+
+
+@pytest.mark.parametrize(
+    "scenario",
+    ["healthy", "signed out", "no answer", "item listing times out", "missing item", "no references"],
+)
+def test_every_secrets_manager_command_discards_its_output_or_is_a_value_free_listing(
+    healthy_account: EvalAccount, scenario: str
+) -> None:
+    runner = healthy_runner()
+    if scenario == "signed out":
+        runner.answer(OP_WHOAMI, exit_code=1)
+    elif scenario == "no answer":
+        runner.answer_timed_out(OP_WHOAMI)
+    elif scenario == "item listing times out":
+        runner.answer_timed_out(OP_ITEM_LIST_EVAL)
+    elif scenario == "missing item":
+        healthy_account.env_file.write_text(VALID_ENV_FILE_TEXT + "X_KEY=op://Eval/nothing-here/credential\n")
+    elif scenario == "no references":
+        healthy_account.env_file.unlink()
+
+    run_goodall(["doctor"], runner)
+    run_goodall(["doctor", "--json"], runner)
+
+    for command in runner.calls:
+        if command.arguments[0] != "op":
+            continue
+        for value_giving_command in OP_COMMANDS_THAT_GIVE_VALUES:
+            assert command.arguments[: len(value_giving_command)] != value_giving_command
+        if command.output == OutputMode.DISCARD:
+            continue
+        assert command.arguments[:3] in VALUE_FREE_OP_COMMANDS, f"`{command.as_typed}` kept its output"
