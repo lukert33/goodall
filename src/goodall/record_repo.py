@@ -22,7 +22,28 @@ Rules this module keeps, and why:
   made never undoes the write: the record is safe in a local commit and the
   outcome says the push is pending. The next write pushes everything
   pending, because a push sends the whole branch.
-- All git goes through the runner (ADR 0011).
+- All git goes through the runner (ADR 0011). Retrying a push is decided
+  here, not in the runner, because it involves git policy.
+
+Decisions a reader would otherwise have to reverse-engineer (all
+provisional, chosen while the project owner was away):
+
+- Commits are made with the identity configured in git for this
+  repository (its own setting or the contributor's global one). With none,
+  goodall refuses before writing anything rather than let git invent one.
+  There is no AI co-author trailer: goodall the tool commits on a
+  contributor's behalf.
+- When a push is refused because a collaborator pushed first, goodall
+  fetches their branch and merges it with a merge commit (never a rebase,
+  never a forced push), then pushes again, up to `MAXIMUM_PUSH_RETRIES`
+  times. It merges only when no tracked file has uncommitted changes, and
+  undoes a merge that stops part-way, so the local commit always survives.
+- "Pending" is not stored anywhere: it is the commits on the branch that
+  git's remote-tracking branch does not have.
+- Push and fetch give up after `NETWORK_TIMEOUT_SECONDS`; git cannot
+  prompt, and stray `GIT_*` variables are ignored (see `run_git`).
+- `push_pending` is public so a later command can push what is waiting
+  without writing a record.
 """
 
 from dataclasses import dataclass, field

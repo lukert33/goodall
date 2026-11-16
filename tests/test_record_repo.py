@@ -392,3 +392,21 @@ def test_a_record_folder_goodall_may_not_write_in_gets_a_failure_not_an_exceptio
     assert [failure.kind for failure in outcome.failures] == ["record_not_written"]
     assert not outcome.written
     assert not outcome.committed
+
+
+def test_a_push_the_remote_refuses_for_another_reason_is_not_retried_and_stays_pending(tmp_path: Path) -> None:
+    remote, record_repo = make_remote_and_clone(tmp_path)
+    hook = remote / "hooks" / "pre-receive"
+    hook.write_text("#!/bin/sh\necho 'pushes are closed' >&2\nexit 1\n")
+    hook.chmod(0o755)
+    runner = FakeRunner()
+
+    outcome = write_record(runner, record_repo, journal_entry())
+
+    assert [failure.kind for failure in outcome.failures] == ["record_push_failed"]
+    assert outcome.committed
+    assert outcome.push_state == PushState.PENDING
+    assert outcome.pending_commits == 1
+    pushes = [command for command in runner.calls if "push" in command.arguments]
+    assert len(pushes) == 1
+    assert git(record_repo, "rev-list", "--count", "--merges", "HEAD") == "0\n"
