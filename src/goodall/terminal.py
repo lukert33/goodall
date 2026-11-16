@@ -21,8 +21,8 @@ AGENTS.md):
   0012 makes "a check result" one of the things this module offers.
 - Colour is used only when the stream is a terminal, is switched off by the
   `NO_COLOR` environment variable (https://no-color.org), and is never the
-  only signal: the words FAIL, and in a check report pass, warn and skip,
-  are always printed.
+  only signal: the words FAIL, and in a check report pass, warn, skip and
+  unverified, are always printed.
 - Width is measured once, when the `Terminal` is made, and clamped so lines
   stay readable. Output that is not a terminal (a pipe, a file, a test) is
   always the fixed width, so it is the same on every machine.
@@ -63,9 +63,11 @@ RESET = "\x1b[0m"
 
 # In the check report, a check's status word sits in a column after this
 # indent, and everything beneath a check (what happened, what to do next) is
-# indented to line up with the check's summary.
+# indented to line up with the check's summary. The column fits the longest
+# status word, "unverified", and two spaces, so every summary starts in the
+# same place.
 CHECK_INDENT = "  "
-CHECK_DETAIL_INDENT = " " * 8
+CHECK_DETAIL_INDENT = " " * 14
 
 
 @dataclass(frozen=True)
@@ -101,12 +103,19 @@ class CheckStatus(StrEnum):
     - WARN: it is not, but goodall still works in a reduced way, such as
       "not recording" when the log directory is unplugged.
     - SKIP: the check was not run because a check it depends on failed.
+    - UNVERIFIED: the check ran, but goodall could not find out the answer
+      without doing something it must not, such as reading a secret, or
+      without an answer from another program. It is neither a pass nor a
+      failure, so "not checked" is never mistaken for "fine"; like a
+      warning, it carries what happened and a next step, and does not stop
+      the checks that depend on it.
     """
 
     PASS = "pass"
     FAIL = "fail"
     WARN = "warn"
     SKIP = "skip"
+    UNVERIFIED = "unverified"
 
 
 # The word printed for each status. FAIL is in capitals so it stands out with
@@ -116,6 +125,7 @@ STATUS_WORDS = {
     CheckStatus.FAIL: "FAIL",
     CheckStatus.WARN: "warn",
     CheckStatus.SKIP: "skip",
+    CheckStatus.UNVERIFIED: "unverified",
 }
 
 # The colour of each status word, used only when colour is wanted.
@@ -124,6 +134,7 @@ STATUS_COLOURS = {
     CheckStatus.FAIL: BOLD_RED,
     CheckStatus.WARN: BOLD_YELLOW,
     CheckStatus.SKIP: "",
+    CheckStatus.UNVERIFIED: BOLD,
 }
 
 
@@ -139,8 +150,8 @@ class CheckResult:
       reworded.
     - `group` is the heading the check is shown under, such as "Settings".
     - `failures` says what is wrong, in goodall's usual what, why and next
-      form. It is empty unless the status is FAIL or WARN, and never empty
-      when it is: a failed check always carries a next step.
+      form. It is empty unless the status is FAIL, WARN or UNVERIFIED, and
+      never empty when it is: such a check always carries a next step.
     - `waiting_for` is set only when the status is SKIP: the id of the
       failed check this one depends on.
     - `note` is something a person should know about a check that passed,
@@ -208,6 +219,7 @@ class CheckCounts:
     warned: int
     failed: int
     skipped: int
+    unverified: int
 
 
 def count_checks(results: list[CheckResult]) -> CheckCounts:
@@ -216,6 +228,7 @@ def count_checks(results: list[CheckResult]) -> CheckCounts:
     warned = 0
     failed = 0
     skipped = 0
+    unverified = 0
     for result in results:
         if result.status == CheckStatus.PASS:
             passed += 1
@@ -223,9 +236,11 @@ def count_checks(results: list[CheckResult]) -> CheckCounts:
             warned += 1
         elif result.status == CheckStatus.FAIL:
             failed += 1
+        elif result.status == CheckStatus.UNVERIFIED:
+            unverified += 1
         else:
             skipped += 1
-    return CheckCounts(passed=passed, warned=warned, failed=failed, skipped=skipped)
+    return CheckCounts(passed=passed, warned=warned, failed=failed, skipped=skipped, unverified=unverified)
 
 
 def clamp_width(measured_columns: int) -> int:
@@ -397,8 +412,11 @@ class Terminal:
             group_blocks.append(group_text)
 
         counts = count_checks(results)
+        # Unverified comes last, after the four counts that came first, so
+        # the line still starts as it always did.
         counts_line = (
-            f"{counts.passed} passed, {counts.warned} warned, {counts.failed} failed, {counts.skipped} skipped\n"
+            f"{counts.passed} passed, {counts.warned} warned, {counts.failed} failed, {counts.skipped} skipped, "
+            f"{counts.unverified} unverified\n"
         )
         self.standard_output.write("\n".join(group_blocks) + "\n" + counts_line)
 

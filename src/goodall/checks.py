@@ -17,9 +17,12 @@ How dependencies work, and why:
   broken thing (missing local settings, say) shows as one failure, and the
   contributor is pointed straight at it.
 - A warning skips nothing: a warning means goodall still works, in a
-  reduced way, so whatever depends on it can still be checked.
-- A check function can only pass, fail or warn (`passed`, `failed`,
-  `warned`). Skipping is decided here, never by a check, so a skip always
+  reduced way, so whatever depends on it can still be checked. Nor does a
+  check goodall could not verify (`could_not_verify`): not knowing is not a
+  failure.
+- A check function can only pass, fail, warn or say it could not verify
+  (`passed`, `failed`, `warned`, `could_not_verify`). Skipping is decided
+  here, never by a check, so a skip always
   means a failure elsewhere in the same report. That is why `goodall
   doctor`'s exit code can look at failures alone.
 
@@ -80,9 +83,9 @@ class CheckContext:
 class CheckOutcome:
     """What one check function found: a status, and what is wrong when something is.
 
-    Make one with `passed`, `failed` or `warned` rather than directly, so a
-    failure or warning always carries at least one next step, and only a
-    pass carries a note.
+    Make one with `passed`, `failed`, `warned` or `could_not_verify` rather
+    than directly, so anything but a pass always carries at least one next
+    step, and only a pass carries a note.
     """
 
     status: CheckStatus
@@ -120,6 +123,19 @@ def warned(failures: list[Failure]) -> CheckOutcome:
     if not failures:
         raise ValueError("A check that warns must say what is wrong and what to do next.")
     return CheckOutcome(status=CheckStatus.WARN, failures=failures)
+
+
+def could_not_verify(failures: list[Failure]) -> CheckOutcome:
+    """The outcome of a check that could not find out the answer, such as when finding out would mean reading a secret.
+
+    It is neither a pass nor a failure, so "not checked" is never mistaken
+    for "fine". Each of `failures` says what could not be checked, why, and
+    how the contributor can check it themselves. Raises ValueError when
+    `failures` is empty, for the same reason as `failed`.
+    """
+    if not failures:
+        raise ValueError("A check that could not verify must say what it could not check and what to do next.")
+    return CheckOutcome(status=CheckStatus.UNVERIFIED, failures=failures)
 
 
 # A check function looks at one thing, using what earlier checks put in the

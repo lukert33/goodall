@@ -48,7 +48,7 @@ import shlex
 import stat
 from pathlib import Path
 
-from goodall.checks import Check, CheckContext, CheckOutcome, failed, passed, warned
+from goodall.checks import Check, CheckContext, CheckOutcome, could_not_verify, failed, passed, warned
 from goodall.env_files import EnvEntry, EnvFileNotRead, EnvLineProblem, read_env_file
 from goodall.local_settings import LocalSettings
 from goodall.program_checks import SECRETS_MANAGER_INSTALLED
@@ -58,10 +58,14 @@ from goodall.secrets_manager import (
     REFERENCE_FORMS,
     SIGN_IN_STEPS,
     WHERE_TO_FIND_A_REFERENCE,
+    WHY_FIELDS_CANNOT_BE_CHECKED,
+    ItemAnswer,
+    ItemState,
     SignInAnswer,
     SignInState,
     check_signed_in,
     is_well_formed_secret_reference,
+    look_up_referenced_items,
     looks_like_a_secret_reference,
 )
 from goodall.settings_checks import LOCAL_SETTINGS_VALID, RECORD_REPO_FOUND, valid_local_settings
@@ -74,6 +78,8 @@ ENV_FILE_PRIVATE = "secrets.env_file_private"
 SHARED_ENV_FILE_HOLDS_NO_SECRETS = "secrets.shared_env_file_holds_no_secrets"
 NO_VARIABLE_IN_BOTH_ENV_FILES = "secrets.no_variable_in_both_env_files"
 SECRETS_MANAGER_SIGNED_IN = "secrets.secrets_manager_signed_in"
+REFERENCED_ITEMS_EXIST = "secrets.referenced_items_exist"
+REFERENCED_FIELDS_EXIST = "secrets.referenced_fields_exist"
 
 # A run of characters that API keys and tokens are made of: letters, digits,
 # and the -, _ and + that their encodings use. See `looks_like_a_random_token`.
@@ -547,6 +553,158 @@ def secrets_manager_not_signed_in_failure(local_settings: LocalSettings, answer:
     )
 
 
+def check_referenced_items_exist(context: CheckContext) -> CheckOutcome:
+    """The item each secret reference in the env file points at exists in the secrets manager.
+
+    One check for every reference, rather than one check per reference, so
+    the report stays the same length however many secrets an eval uses;
+    each problem names its variable and line, so a researcher can tell which
+    one it is. The reference itself is never shown: it names a vault and an
+    item, which tell a reader where to look.
+
+    A reference goodall could not check fails no one: it is reported as
+    unverified, so "not checked" is never mistaken for "fine" or "broken".
+    When some references are missing and others unverified, the check
+    fails and lists both.
+    """
+    local_settings = valid_local_settings(context)
+    entries = context.env_file_entries
+    if entries is None:
+        raise RuntimeError(f"{REFERENCED_ITEMS_EXIST} must list {ENV_FILE_HOLDS_ONLY_REFERENCES} as a prerequisite.")
+    if not entries:
+        return passed(note="The env file refers to no secrets, so there is no item to look for.")
+
+    references = []
+    for entry in entries:
+        references.append(entry.value)
+    answers = look_up_referenced_items(local_settings.secrets_manager, references, context.runner)
+
+    problems: list[Failure] = []
+    unverified: list[Failure] = []
+    for entry, answer in zip(entries, answers, strict=True):
+        if answer.state in [ItemState.MISSING, ItemState.VAULT_MISSING]:
+            problems.append(referenced_item_missing_failure(local_settings, entry, answer))
+        elif answer.state in [ItemState.AMBIGUOUS, ItemState.COULD_NOT_VERIFY]:
+            unverified.append(referenced_item_not_verified_failure(local_settings, entry, answer))
+    if problems:
+        return failed(problems + unverified)
+    if unverified:
+        return could_not_verify(unverified)
+    return passed()
+
+
+def check_referenced_fields_exist(context: CheckContext) -> CheckOutcome:
+    """The field each secret reference names exists in its item.
+
+    A check of its own, rather than part of the item check, so the report
+    says exactly what was checked: the items were, and passed; the fields
+    were not. Today it can never pass when the env file has references,
+    because 1Password, the one secrets manager, cannot say whether a field
+    exists without handing over its value (goodall.secrets_manager). It
+    says so as "unverified", never as a pass: a misspelt field name shows
+    only when a program is launched with the secret.
+    """
+    local_settings = valid_local_settings(context)
+    entries = context.env_file_entries
+    if entries is None:
+        raise RuntimeError(f"{REFERENCED_FIELDS_EXIST} must come after {ENV_FILE_HOLDS_ONLY_REFERENCES}.")
+    if not entries:
+        return passed(note="The env file refers to no secrets, so there is no field to look for.")
+    return could_not_verify([referenced_fields_not_verified_failure(local_settings, entries)])
+
+
+def referenced_fields_not_verified_failure(local_settings: LocalSettings, entries: list[EnvEntry]) -> Failure:
+    """What to say about the fields goodall cannot check: which variables, why, and how to check by hand."""
+    display_name = DISPLAY_NAMES[local_settings.secrets_manager]
+    variables = []
+    for entry in entries:
+        variables.append(f"{entry.name} (line {entry.line_number})")
+    return Failure(
+        kind="secret_reference_field_not_verified",
+        what_happened=(
+            f"Goodall checked that each item exists, but not the field each reference names, because "
+            f"{WHY_FIELDS_CANNOT_BE_CHECKED[local_settings.secrets_manager]}. Not checked: "
+            f"{', '.join(variables)}."
+        ),
+        why=(
+            "No secret may enter goodall (ADR 0010), so goodall reports what it could not check rather than "
+            "read a secret to find out."
+        ),
+        what_to_do_next=(
+            f"Nothing, if you copied each reference with Copy Secret Reference in {display_name} and have not "
+            "renamed the field since. Otherwise, copy each one that way and paste it over its value in the env "
+            "file."
+        ),
+    )
+
+
+def referenced_item_not_verified_failure(local_settings: LocalSettings, entry: EnvEntry, answer: ItemAnswer) -> Failure:
+    """What to say about a secret reference whose item goodall could not check.
+
+    The next step lets a researcher check it by hand, since goodall could
+    not; for a name two items share, it says how to make the reference
+    unambiguous.
+    """
+    display_name = DISPLAY_NAMES[local_settings.secrets_manager]
+    where_to_find = WHERE_TO_FIND_A_REFERENCE[local_settings.secrets_manager]
+    if answer.state == ItemState.AMBIGUOUS:
+        what_to_do_next = (
+            f"{where_to_find}, and paste it as the value of {entry.name} on line {entry.line_number}; if the name "
+            f"is shared, {display_name} puts the item's id in the reference instead of its name, which settles it. "
+            "Or rename one of the items. Then run goodall doctor again."
+        )
+    else:
+        what_to_do_next = (
+            f"Run goodall doctor again. If it still cannot check, open {display_name} and confirm that the item "
+            f"the reference for {entry.name} names is there."
+        )
+    return Failure(
+        kind="secret_reference_not_verified",
+        what_happened=(
+            f"Goodall could not check the item that {entry.name} (line {entry.line_number}) of the env file refers "
+            f"to, because {answer.reason}."
+        ),
+        why=(
+            f"Goodall asks {display_name} only questions whose answer holds no secret; when that answer does not "
+            "come, it says so rather than guess."
+        ),
+        what_to_do_next=what_to_do_next,
+    )
+
+
+def referenced_item_missing_failure(local_settings: LocalSettings, entry: EnvEntry, answer: ItemAnswer) -> Failure:
+    """The failure for a secret reference whose item, or whose vault, the secrets manager does not have."""
+    display_name = DISPLAY_NAMES[local_settings.secrets_manager]
+    env_file = env_file_path(local_settings)
+    where = f"{entry.name}, on line {entry.line_number} of the env file at {env_file}"
+    if answer.state == ItemState.VAULT_MISSING:
+        kind = "secret_reference_vault_missing"
+        what_happened = (
+            f"The secret reference for {where}, names a vault this {display_name} account cannot see. Goodall "
+            "does not show the reference."
+        )
+    else:
+        kind = "secret_reference_item_missing"
+        what_happened = (
+            f"The secret reference for {where}, names an item that is not in its vault in {display_name}. "
+            "Goodall does not show the reference."
+        )
+    return Failure(
+        kind=kind,
+        what_happened=what_happened,
+        why=(
+            f"A program launched with {entry.name} would get no secret, because {display_name} cannot find "
+            "what the reference points at."
+        ),
+        what_to_do_next=(
+            f"{WHERE_TO_FIND_A_REFERENCE[local_settings.secrets_manager]}, and paste it as the value of "
+            f"{entry.name} on line {entry.line_number}. If the item was deleted, archived or moved to a vault "
+            "this account cannot see, restore it or ask whoever shares the vault for access. Then run goodall "
+            "doctor again."
+        ),
+    )
+
+
 SECRETS_CHECKS = [
     Check(
         id=ENV_FILE_HOLDS_ONLY_REFERENCES,
@@ -582,5 +740,19 @@ SECRETS_CHECKS = [
         summary="The secrets manager is signed in",
         prerequisites=[SECRETS_MANAGER_INSTALLED, ENV_FILE_HOLDS_ONLY_REFERENCES],
         run=check_secrets_manager_signed_in,
+    ),
+    Check(
+        id=REFERENCED_ITEMS_EXIST,
+        group=GROUP,
+        summary="Each secret reference points at an item that exists",
+        prerequisites=[SECRETS_MANAGER_SIGNED_IN, ENV_FILE_HOLDS_ONLY_REFERENCES],
+        run=check_referenced_items_exist,
+    ),
+    Check(
+        id=REFERENCED_FIELDS_EXIST,
+        group=GROUP,
+        summary="Each secret reference names a field that exists",
+        prerequisites=[REFERENCED_ITEMS_EXIST],
+        run=check_referenced_fields_exist,
     ),
 ]
