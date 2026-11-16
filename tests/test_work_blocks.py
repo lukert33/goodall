@@ -429,3 +429,18 @@ def test_a_work_block_idle_for_less_than_the_idle_limit_is_still_active(eval_acc
 
     assert status.exit_code == exit_codes.SUCCESS
     assert eval_account.work_block_files() == []
+
+
+def test_stop_the_morning_after_closes_the_forgotten_work_block_at_its_last_heartbeat_and_exits_0(
+    eval_account: EvalAccount,
+) -> None:
+    run_goodall(eval_account, ["start"])
+    eval_account.clock.now = datetime(2026, 11, 17, 8, 30, tzinfo=UTC)
+
+    stop = run_goodall(eval_account, ["stop"])
+
+    assert stop.exit_code == exit_codes.SUCCESS, stop.standard_error
+    assert stop.standard_error == ""
+    assert "was left running" in stop.everything_printed
+    [record] = eval_account.work_block_records()
+    assert record["end_state"] == "inferred"

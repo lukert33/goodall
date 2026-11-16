@@ -170,6 +170,13 @@ def run_stop(terminal: Terminal, runner: Runner, clock: Clock) -> int:
     settling = settle(runner, eval_reading, now)
     show_settling(terminal, settling)
     active = work_blocks.active_work_block(log_directory, now)
+    if active is None and settling.closings:
+        # The work block the person meant to stop had been forgotten, and
+        # settling has just closed it at its last heartbeat and said so.
+        # That is what they asked for, as long as its record is written.
+        if settling.warnings:
+            return exit_codes.ERROR
+        return exit_codes.SUCCESS
     if active is None:
         terminal.show_failure(nothing_to_stop_failure())
         return exit_codes.ERROR
