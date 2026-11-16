@@ -100,6 +100,50 @@ def add_journal_entry(terminal: Terminal, runner: Runner, request: EntryRequest)
     return check_and_write(runner, eval_reading, entry, facts=[])
 
 
+@dataclass(frozen=True)
+class InterventionDetails:
+    """What `goodall intervene` needs beyond the text, as typed on the command line.
+
+    Each is None when its option was left out.
+    """
+
+    category: str | None
+    decision: str | None
+
+
+def run_intervene(terminal: Terminal, runner: Runner, request: EntryRequest, details: InterventionDetails) -> int:
+    """Add an intervention to the record repo, say what happened, and return the exit code."""
+    result = add_intervention(terminal, runner, request, details)
+    show_result(terminal, result, request.as_json)
+    return result.exit_code
+
+
+def add_intervention(
+    terminal: Terminal, runner: Runner, request: EntryRequest, details: InterventionDetails
+) -> EntryResult:
+    """Build an intervention from the request, check it, and write it into the record repo."""
+    record_type = records.INTERVENTION_RECORD_TYPE
+    text = get_entry_text(terminal, request, "intervention", "goodall intervene")
+    if isinstance(text, Failure):
+        return stopped(record_type, exit_codes.USAGE_ERROR, [text])
+    eval_reading = find_eval_for_this_account()
+    if isinstance(eval_reading, list):
+        return stopped(record_type, exit_codes.ERROR, eval_reading)
+    assert details.category is not None and details.decision is not None
+    now = datetime.now(UTC)
+    intervention = records.build_intervention(
+        contributor=eval_reading.contributor.id,
+        occurred_at=now,
+        written_at=now,
+        category=details.category,
+        decision=details.decision,
+        body=text,
+        work_block=current_work_block_id(),
+    )
+    facts = [("Category", details.category), ("Decision", details.decision)]
+    return check_and_write(runner, eval_reading, intervention, facts)
+
+
 def current_work_block_id() -> str | None:
     """The id of the work block this account is in now, or None when there is none.
 

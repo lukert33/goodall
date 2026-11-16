@@ -427,3 +427,43 @@ def test_journal_refuses_text_longer_than_the_limit_and_keeps_text_at_the_limit(
     assert refused_file_run.exit_code == exit_codes.USAGE_ERROR
     assert kept_run.exit_code == exit_codes.SUCCESS
     assert len(eval_account.journal_files()) == 1
+
+
+# ---------------------------------------------------------------------------
+# goodall intervene
+# ---------------------------------------------------------------------------
+
+
+def test_intervene_records_the_category_decision_and_text_and_commits_it(eval_account: EvalAccount) -> None:
+    run = run_goodall(
+        [
+            "intervene",
+            "--category",
+            "agent-limitation",
+            "--decision",
+            "modify",
+            "The agent tried to delete a failing assertion; I told it to fix the date parsing instead.",
+        ]
+    )
+
+    assert run.exit_code == exit_codes.SUCCESS, run.standard_error
+    assert run.standard_error == ""
+    [intervention_file] = eval_account.intervention_files()
+    text = intervention_file.read_text()
+    assert 'record_type = "intervention"' in text
+    assert 'contributor = "ada-lovelace"' in text
+    assert 'category = "agent-limitation"' in text
+    assert 'decision = "modify"' in text
+    for absent_field in ["work_block", "claude_session", "interrupted", "question_outcome"]:
+        assert absent_field not in text
+    # Recorded as it happens, so it occurred when it was written.
+    occurred_line = next(line for line in text.splitlines() if line.startswith("occurred_at = "))
+    written_line = next(line for line in text.splitlines() if line.startswith("written_at = "))
+    assert occurred_line.removeprefix("occurred_at = ") == written_line.removeprefix("written_at = ")
+    assert text.endswith(
+        "+++\n\nThe agent tried to delete a failing assertion; I told it to fix the date parsing instead.\n"
+    )
+    assert eval_account.commit_subjects()[0] == f"Add intervention {intervention_file.stem}"
+    assert run.standard_output.startswith("Recorded your intervention.")
+    assert "Category  agent-limitation" in run.standard_output
+    assert "Decision  modify" in run.standard_output

@@ -31,7 +31,7 @@ from pathlib import Path
 
 from goodall import exit_codes
 from goodall.doctor import run_doctor
-from goodall.entries import EntryRequest, run_journal
+from goodall.entries import EntryRequest, InterventionDetails, run_intervene, run_journal
 from goodall.runner import RealRunner, Runner
 from goodall.status import run_status
 from goodall.terminal import Failure, Terminal
@@ -99,7 +99,40 @@ def build_parser() -> argparse.ArgumentParser:
     add_entry_text_arguments(journal, "What was decided or done, and by whom.")
     journal.set_defaults(command_name="journal")
 
-    intervene = commands.add_parser("intervene", help="Log a researcher intervention in the record repo.")
+    intervene = commands.add_parser(
+        "intervene",
+        help="Add an intervention to the record repo: a moment you stepped in for or over an agent.",
+        description=(
+            "Add an intervention: a moment when you overrode, corrected, redirected or rescued an agent, "
+            "or had to act because the agent could not."
+        ),
+        epilog=(
+            "examples:\n"
+            "  goodall intervene --category agent-limitation --decision modify \\\n"
+            '      "It tried to delete a failing test; I told it to fix the date parsing."\n'
+            "  pbpaste | goodall intervene --category infrastructure --decision escalate\n"
+            "  goodall intervene --category policy-mandated --decision approve --file ~/Desktop/review.txt\n"
+            "\n"
+            "decisions:\n"
+            "  approve    you reviewed what the agent was about to do and let it go ahead\n"
+            "  modify     you changed what the agent did or was about to do\n"
+            "  reject     you refused one action, and the agent carried on otherwise\n"
+            "  escalate   you took a step over because the agent could not, or handed it on\n"
+            "  terminate  you stopped the agent's work on the task altogether"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    add_entry_text_arguments(intervene, "What happened and why.")
+    intervene.add_argument(
+        "--category",
+        metavar="<category>",
+        help="Which of the eval's intervention categories this is, from intervention_categories in eval.toml.",
+    )
+    intervene.add_argument(
+        "--decision",
+        metavar="<decision>",
+        help="What you decided: approve, modify, reject, escalate or terminate (see below).",
+    )
     intervene.set_defaults(command_name="intervene")
 
     hook = commands.add_parser("hook", help="Handle a Claude Code hook event (called by Claude Code, not by people).")
@@ -206,8 +239,11 @@ def main(argv: list[str] | None = None, terminal: Terminal | None = None, runner
     if command_name == "doctor":
         return run_doctor(terminal, runner, as_json=arguments.json)
     if command_name == "journal":
-        return run_journal(
-            terminal, runner, EntryRequest(text=arguments.text, as_json=arguments.json, text_file=arguments.file)
-        )
+        entry_request = EntryRequest(text=arguments.text, as_json=arguments.json, text_file=arguments.file)
+        return run_journal(terminal, runner, entry_request)
+    if command_name == "intervene":
+        entry_request = EntryRequest(text=arguments.text, as_json=arguments.json, text_file=arguments.file)
+        intervention_details = InterventionDetails(category=arguments.category, decision=arguments.decision)
+        return run_intervene(terminal, runner, entry_request, intervention_details)
 
     return run_stub(command_name, terminal)
