@@ -67,6 +67,11 @@ jobs:
       - name: Tests
         run: uv run pytest
 
+      - name: Stress tests
+        # About 20 seconds. Heavy bursts against the telemetry receiver, with
+        # every request accounted for; skipped by the plain test run above.
+        run: uv run pytest -m stress
+
       - name: Lint
         run: uv run ruff check .
 
