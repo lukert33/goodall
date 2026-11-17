@@ -26,13 +26,13 @@ Design decisions a reader would otherwise reverse-engineer:
 """
 
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Protocol
 
 from goodall.activitywatch import parse_activitywatch_export
-from goodall.human_actions import parse_human_actions
+from goodall.human_actions import Interruption, parse_human_actions
 
 
 class HumanAction(Protocol):
@@ -118,7 +118,7 @@ def human_actions_in_time_range(
     range_start = as_utc(start)
     range_end = as_utc(end)
     timed_actions: list[tuple[datetime, HumanAction]] = []
-    for action in actions:
+    for action in merge_repeated_interruptions(actions):
         began = time_of(action)
         if began is not None and range_start <= began < range_end:
             timed_actions.append((began, action))
@@ -128,6 +128,120 @@ def human_actions_in_time_range(
     for _began, action in timed_actions:
         in_range.append(action)
     return in_range
+
+
+# Two interruptions in the same Claude session that do not both name a tool
+# call are taken as one act when they are at most this many seconds apart.
+# Claude Code writes the two records of one Escape within a fraction of a
+# second; two separate presses of Escape are rarely this close.
+INTERRUPTION_MERGE_WINDOW_SECONDS = 2.0
+
+
+@dataclass(frozen=True, kw_only=True)
+class MergedInterruption:
+    """One interruption that the raw records hold more than once.
+
+    Pressing Escape while a subagent runs is written both in the main
+    transcript and in the subagent's, so parsing both finds it twice. The raw
+    records and each file's own parse keep both; this derived record counts
+    the act once, and `stands_for` keeps every original action, oldest first.
+    `timestamp` is the earliest original's, and `interrupted_tool_call_id`
+    the first one any original names.
+    """
+
+    session_id: str | None
+    timestamp: str | None
+    interrupted_tool_call_id: str | None
+    stands_for: tuple[Interruption, ...]
+    source: str = field(default="claude_code_transcript", init=False)
+    kind: str = field(default="interruption", init=False)
+    rule: str = field(default="merge_repeated_interruptions", init=False)
+    duration_seconds: float | None = field(default=None, init=False)
+
+
+def merge_repeated_interruptions(actions: Sequence[HumanAction]) -> list[HumanAction]:
+    """Rule: replace interruptions that are the same act with one `MergedInterruption`.
+
+    Two interruptions are the same act when they are in the same Claude
+    session (the same `session_id`; a subagent's entries carry its main
+    session's id) and either both name an interrupted tool call and it is the
+    same call, or at least one names none and they are at most
+    `INTERRUPTION_MERGE_WINDOW_SECONDS` apart. So two calls stopped close
+    together stay two. Everything else passes through unchanged, in order.
+    """
+    interruptions: list[tuple[datetime, Interruption]] = []
+    for action in actions:
+        if isinstance(action, Interruption):
+            began = time_of(action)
+            if began is not None and action.session_id is not None:
+                interruptions.append((began, action))
+    interruptions.sort(key=lambda timed_interruption: timed_interruption[0])
+
+    groups: list[list[tuple[datetime, Interruption]]] = []
+    for timed_interruption in interruptions:
+        matching_group = None
+        for group in groups:
+            for member in group:
+                if are_the_same_interruption(member, timed_interruption):
+                    matching_group = group
+                    break
+            if matching_group is not None:
+                break
+        if matching_group is None:
+            groups.append([timed_interruption])
+        else:
+            matching_group.append(timed_interruption)
+
+    # Each repeated original is replaced by its group's merged record, placed
+    # where the group's earliest original was.
+    replacement_by_original: dict[int, HumanAction | None] = {}
+    for group in groups:
+        if len(group) < 2:
+            continue
+        originals = []
+        for _began, interruption in group:
+            originals.append(interruption)
+        merged = MergedInterruption(
+            session_id=originals[0].session_id,
+            timestamp=originals[0].timestamp,
+            interrupted_tool_call_id=first_tool_call_id(originals),
+            stands_for=tuple(originals),
+        )
+        replacement_by_original[id(originals[0])] = merged
+        for later_original in originals[1:]:
+            replacement_by_original[id(later_original)] = None
+
+    merged_actions: list[HumanAction] = []
+    for action in actions:
+        if id(action) not in replacement_by_original:
+            merged_actions.append(action)
+            continue
+        replacement = replacement_by_original[id(action)]
+        if replacement is not None:
+            merged_actions.append(replacement)
+    return merged_actions
+
+
+def are_the_same_interruption(first: tuple[datetime, Interruption], second: tuple[datetime, Interruption]) -> bool:
+    """True when two interruptions are one act, by the rule in `merge_repeated_interruptions`."""
+    first_time, first_interruption = first
+    second_time, second_interruption = second
+    if first_interruption.session_id != second_interruption.session_id:
+        return False
+    first_call = first_interruption.interrupted_tool_call_id
+    second_call = second_interruption.interrupted_tool_call_id
+    if first_call is not None and second_call is not None:
+        return first_call == second_call
+    seconds_apart = abs((second_time - first_time).total_seconds())
+    return seconds_apart <= INTERRUPTION_MERGE_WINDOW_SECONDS
+
+
+def first_tool_call_id(interruptions: list[Interruption]) -> str | None:
+    """Return the first interrupted tool call id any of these interruptions names."""
+    for interruption in interruptions:
+        if interruption.interrupted_tool_call_id is not None:
+            return interruption.interrupted_tool_call_id
+    return None
 
 
 def as_utc(moment: datetime) -> datetime:

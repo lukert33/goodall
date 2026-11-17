@@ -10,14 +10,39 @@ from goodall.human_activity import human_actions_in_time_range, summarise_human_
 actions = human_actions_in_time_range(
     datetime(2026, 11, 17, 9, tzinfo=UTC),
     datetime(2026, 11, 17, 17, tzinfo=UTC),
-    transcript_paths=[...],             # Claude Code transcripts
-    activitywatch_export_paths=[...],   # ActivityWatch exports
+    transcript_paths=[...],  # Claude Code transcripts
+    activitywatch_export_paths=[...],  # ActivityWatch exports
 )
 summary = summarise_human_actions(actions)
 ```
 
 An action is in the range when it began at or after the start and before the
 end. Times with no zone are taken as UTC. Actions come back oldest first.
+
+## Repeated interruptions are merged here, and only here
+
+Pressing Escape while a subagent runs is recorded in the main transcript and
+in the subagent's, so parsing both finds the same interruption twice. Raw
+transcripts and `parse_human_actions` on each file keep both. The derived list
+from `human_actions_in_time_range` (and so the summary) counts the act once,
+by the rule `merge_repeated_interruptions`:
+
+Two `interruption` actions are the same act when they have the same
+`session_id` (a subagent's entries carry its main session's id) and either
+
+- both name an interrupted tool call, and it is the same call; or
+- at least one names none, and they are at most
+  `INTERRUPTION_MERGE_WINDOW_SECONDS` (2.0) seconds apart.
+
+So two tool calls stopped close together stay two. The act becomes one
+`MergedInterruption` (`kind` `interruption`, `rule`
+`merge_repeated_interruptions`) at the earliest original's time, whose
+`stands_for` lists every original action. Known gap: when both records name a
+call, as when the main transcript's cancelled result names the subagent's
+launching call and the subagent's names its own inner call, they stay two.
+The structure scan found that about a third of subagent entries carry a
+`sessionId` different from their folder's session, for reasons not yet known;
+those are never merged with their main session.
 
 ## Sources
 

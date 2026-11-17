@@ -8,10 +8,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from goodall.activitywatch import parse_activitywatch_export
-from goodall.human_actions import parse_human_actions
+from goodall.human_actions import Interruption, parse_human_actions
 from goodall.human_activity import (
+    INTERRUPTION_MERGE_WINDOW_SECONDS,
     PROVISIONAL_CATEGORIES,
     HumanActionSummary,
+    MergedInterruption,
     category_of,
     human_actions_in_time_range,
     summarise_human_actions,
@@ -49,6 +51,48 @@ def test_actions_from_every_source_come_back_together_in_time_order() -> None:
         ("activitywatch_export", "browser_page_focus", "2026-04-01T09:04:00Z"),
         # The range's end is not part of it: the 09:05 action is left out.
     ]
+
+
+def test_one_interruption_seen_by_a_main_agent_and_its_subagent_counts_once() -> None:
+    # Pressing Escape while a subagent runs is recorded in the main
+    # transcript and in the subagent's. The raw records and each file's own
+    # parse keep both; the derived list counts the act once.
+    main_transcript = TRANSCRIPTS / "session-u.jsonl"
+    subagent_transcript = TRANSCRIPTS / "session-u" / "subagents" / "agent-example.jsonl"
+    assert len(parse_human_actions(main_transcript).actions) == 5
+    assert len(parse_human_actions(subagent_transcript).actions) == 1
+
+    actions = human_actions_in_time_range(
+        at("2026-03-11T00:00:00"),
+        at("2026-03-12T00:00:00"),
+        transcript_paths=[main_transcript, subagent_transcript],
+    )
+
+    kinds = []
+    for action in actions:
+        kinds.append(action.kind)
+    assert kinds == ["typed_prompt", "interruption", "typed_prompt", "interruption", "interruption"]
+    merged = actions[1]
+    assert isinstance(merged, MergedInterruption)
+    assert merged.rule == "merge_repeated_interruptions"
+    assert merged.timestamp == "2026-03-11T10:00:30.000Z"
+    assert merged.session_id == "session-u"
+    # Every original action stays reachable through the merged one.
+    stood_for = []
+    for original in merged.stands_for:
+        assert isinstance(original, Interruption)
+        stood_for.append((original.line_number, original.interrupted_tool_call_id))
+    assert stood_for == [(3, None), (3, "toolu_example_61")]
+    # Two interruptions close together that name different tool calls were
+    # two calls stopped, and stay two.
+    second_call = actions[3]
+    third_call = actions[4]
+    assert isinstance(second_call, Interruption)
+    assert isinstance(third_call, Interruption)
+    assert second_call.interrupted_tool_call_id == "toolu_example_52"
+    assert third_call.interrupted_tool_call_id == "toolu_example_53"
+    assert summarise_human_actions(actions).actions_by_kind["interruption"] == 3
+    assert INTERRUPTION_MERGE_WINDOW_SECONDS == 2.0
 
 
 def test_every_kind_any_source_produces_has_a_provisional_category() -> None:
