@@ -30,10 +30,10 @@ from goodall import exit_codes
 def build_parser() -> argparse.ArgumentParser:
     """Build the parser for every planned goodall command.
 
-    Each runnable command stores its full name (for example "session start")
+    Each runnable command stores its full name (for example "export scout")
     as `command_name`, which `main` uses to report which stub ran. A command
-    that only groups others (`session`, `export`) stores its own parser as
-    `group_parser`, so `goodall session` on its own can print that group's
+    that only groups others (`export`) stores its own parser as
+    `group_parser`, so `goodall export` on its own can print that group's
     help.
     """
     parser = argparse.ArgumentParser(
@@ -48,18 +48,21 @@ def build_parser() -> argparse.ArgumentParser:
     doctor = commands.add_parser("doctor", help="Check this account and eval setup without changing anything.")
     doctor.set_defaults(command_name="doctor")
 
-    session = commands.add_parser("session", help="Start, end or inspect a work block (a logged stretch of work).")
-    session.set_defaults(group_parser=session)
-    session_commands = session.add_subparsers(title="session commands", metavar="<session command>")
+    # The three work-block commands are top-level, not grouped, because a
+    # contributor types them every day and the shortest names win.
+    start = commands.add_parser("start", help="Begin a work block, which opens the prompt gate.")
+    start.add_argument(
+        "--workstream",
+        metavar="<name>",
+        help="The workstream this work block is for. Defaults to your main workstream from local settings.",
+    )
+    start.set_defaults(command_name="start")
 
-    session_start = session_commands.add_parser("start", help="Begin a work block, which opens the prompt gate.")
-    session_start.set_defaults(command_name="session start")
+    stop = commands.add_parser("stop", help="End the current work block, which closes the prompt gate.")
+    stop.set_defaults(command_name="stop")
 
-    session_end = session_commands.add_parser("end", help="End the current work block, which closes the prompt gate.")
-    session_end.set_defaults(command_name="session end")
-
-    session_status = session_commands.add_parser("status", help="Show whether a work block is active.")
-    session_status.set_defaults(command_name="session status")
+    status = commands.add_parser("status", help="Show whether a work block is active.")
+    status.set_defaults(command_name="status")
 
     journal = commands.add_parser("journal", help="Add an entry to the eval journal in the record repo.")
     journal.set_defaults(command_name="journal")
@@ -84,7 +87,7 @@ def build_parser() -> argparse.ArgumentParser:
     export_scout = export_commands.add_parser("scout", help="Build an Inspect Scout database from the raw record.")
     export_scout.set_defaults(command_name="export scout")
 
-    dry_run = commands.add_parser("dry-run", help="Rehearse a full session end to end without recording a real eval.")
+    dry_run = commands.add_parser("dry-run", help="Rehearse a whole work block without recording a real eval.")
     dry_run.set_defaults(command_name="dry-run")
 
     teardown = commands.add_parser("teardown", help="Remove goodall's setup from this account after an eval.")
@@ -129,7 +132,7 @@ def main(argv: list[str] | None = None) -> int:
 
     command_name = getattr(arguments, "command_name", None)
     if command_name is None:
-        # No command, or a group like `session` without its subcommand:
+        # No command, or a group like `export` without its subcommand:
         # show the most specific help available and treat it as a usage error.
         group_parser = getattr(arguments, "group_parser", parser)
         group_parser.print_help(sys.stderr)
