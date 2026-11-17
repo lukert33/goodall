@@ -65,6 +65,40 @@ Goodall is not published to a package index yet, so today every route
 installs from a copy of this repository and builds it with `uv_build` (below),
 which pip and pipx fetch for themselves.
 
+## Programs goodall runs or works alongside
+
+These are separate programs, installed by whoever owns the Mac. None is a
+Python package inside goodall, so goodall's own runtime dependency count stays
+at zero. They are listed because each one runs on the same machine, with the
+same account's access, as the eval.
+
+Checked live on **2026-11-17** against each project's GitHub repository and
+security advisories, the PyPI JSON API, OSV.dev and 1Password's release notes.
+
+| Program | Needed when | Provenance (checked 2026-11-17) | Decision |
+|---|---|---|---|
+| **git** | Always. Goodall commits and pushes records with it (ADR 0001). | The Git project, maintained by Junio C Hamano with a large contributor base; `git/git` is a mirror of the mailing-list repository, ~64,400 stars; GPL-2.0 (from the project's own licence file, not re-read today; GitHub's detector reports none). Newest release v2.56.1. 33 published advisories, most fixed promptly. One is open: GHSA-vp2w-7xxj-jvxr (high, 2026-11-10), code execution when cloning an attacker's repository with `--recurse-submodules`, no patch yet. Goodall never clones, so it does not take that path; a researcher cloning a record repo by hand should not use that option on a repository they do not trust. | **adopt** |
+| **Claude Code** | Always. It is the agent tool goodall records (ADR 0002). | Anthropic; `anthropics/claude-code`, ~156,000 stars; no open-source licence in the repository, so treat it as proprietary. Newest release v2.1.326 (2026-11-16), with releases most days. 36 published advisories between 2025-06 and 2026-10 (29 high, 4 medium, 3 low), covering sandbox escapes, writes outside the workspace and plugin pinning; each names a fixed release. Goodall depends on its hook input and transcript layout, which Anthropic does not promise to keep stable. | **adopt**: it is the subject of the eval, so there is no alternative to weigh. Keep it updated. |
+| **1Password's command-line tool, `op`** | Only when the env file holds a secret reference (ADR 0006). | 1Password (AgileBits Inc.); closed source, proprietary, so the code cannot be reviewed. Newest stable release 2.42.0 (2026-11-03). Known issues: CVE-2022-32550 (medium, fixed in 2.3.0); CVE-2024-42219 (2024-08, a local process on macOS could impersonate a trusted 1Password integration such as the command-line tool; fixed in the 1Password app 8.10.36). An independent researcher's 2023 disclosure about `op` on shared machines was not given a CVE or a fix. Goodall runs only `op whoami`, `op vault list` and `op item list`, and never a command that returns a secret value. | **adopt**, conditional. "Or an equivalent secrets manager" remains the intent; `op` is the only one supported. |
+| **GitHub's command-line tool, `gh`** | `goodall doctor` requires it today, but no goodall code runs it. | GitHub; `cli/cli`, ~47,100 stars; MIT. Newest release v2.104.0 (2026-11-12). 17 published advisories, two high (GHSA-8xvp-7hj6-mcj9, 2026-05; GHSA-p2h2-3vg9-4p87, 2024-11), the rest low or medium, each fixed in a release. It holds a GitHub token with whatever access the account granted it. | **undecided**: required but unused. Either name the planned use or drop the check until one exists. |
+
+Versions on the machine goodall is developed on, 2026-11-17: git 2.55.0, `gh`
+2.101.0, `op` 2.34.1. All three are behind the newest release.
+
+### Planned, not adopted
+
+No goodall code uses these yet. The facts are here so the decision can be made
+before the code is written.
+
+| Program or package | What it would give | Provenance (checked 2026-11-17) | Decision |
+|---|---|---|---|
+| **inspect-ai** 0.3.290 | The transcript and event format goodall exports to (AGENTS.md invariant 8: an optional extra, imported only by export code) | UK AI Security Institute; `UKGovernmentBEIS/inspect_ai`, ~3,300 stars; MIT; Python 3.11 or newer. 40 direct dependencies; installing it alone resolves to 80 packages. No GitHub advisories and no OSV results. Releases several times a week, and the version number is still below 1.0. | **awaiting the owner** |
+| **inspect-scout** 0.6.2 | Analysis of agent transcripts; the target of the planned `goodall export scout` | Meridian Labs; `meridianlabs-ai/inspect_scout`, 90 stars, created 2025-09; MIT. Most commits come from two people who are also core Inspect maintainers. 30 direct dependencies including `inspect-ai`, `duckdb`, `pandas` and `pyarrow`; installed together with `inspect-ai` the total is 95 packages. No GitHub advisories and no OSV results. Young, with few outside users so far. | **awaiting the owner** |
+| **ActivityWatch** v0.14.3 | A record of which application and window had focus, as corroboration of what the human did. Decided early to be optional. | `ActivityWatch/activitywatch`, ~19,700 stars; MPL-2.0. Newest release 2026-11-15. Largely one maintainer: Erik Bjäreholt has about 990 commits, the next human contributor 27. Two advisories, both high and both old: a DNS rebinding attack on its local server (2022) and shell execution from a website on macOS (2021). It runs a local web server and records window titles, which can contain private text. | **not yet assessed**: decide when the integration is designed. The single-maintainer rule (standing rule 4) applies. |
+
+The 95 packages would be installed only by someone who asks for the export
+extra. A researcher who only records an eval would not get them.
+
 ## Adopted: development and build tools
 
 None of these is needed to install or run goodall, with the one exception
@@ -126,6 +160,7 @@ governance or release practice changes.
 | **pyright** (PyPI package) | Type checker | The PyPI package is a third-party wrapper around Microsoft's checker and downloads Node at run time when Node is absent. Unacceptable on a credential-holding machine. |
 | **pyrefly** 1.4.1 | Type checker | A credible runner-up: zero dependencies, MIT, marked production-stable. Younger than mypy, and its move from Meta's organisation to `pyrefly-org` could not be fully traced. Revisit if mypy becomes a burden. |
 | **black + flake8** | Formatter and linter | Two tools with several dependencies between them; `ruff` covers both with none. |
+| **OpenTelemetry Collector** v0.165.0 | Receives Claude Code's telemetry and writes it to files | `open-telemetry/opentelemetry-collector`, ~7,800 stars; Apache-2.0; a CNCF project. Four advisories, two of them published 2026-11-12. Rejected in ADR 0002: a separately downloaded binary and its configuration would have to be installed and kept running in every eval account, where a small standard-library receiver inside goodall does the one job needed. Goodall's output stays convertible to the Collector's format. |
 
 ## Could not verify
 
@@ -141,6 +176,14 @@ Recorded so that "not stated" is never mistaken for "confirmed safe".
 - Whether the `ubuntu-24.04` runner's system certificate store already
   distrusts the compromised emSign ECC Root CA - G3 intermediates
   (GHSA-hq85-5cpj-mr62). `UV_NATIVE_TLS` relies on it doing so.
+- 1Password's own list of security advisories. The search returned news
+  reports and vulnerability databases, not 1Password's advisory pages, so the
+  `op` row may be incomplete.
+- Git's licence and Claude Code's licence terms were not read today.
+- Whether GHSA-vp2w-7xxj-jvxr in git has been patched since it was published.
+- Who else maintains ActivityWatch day to day, beyond commit counts.
+- The 80 and 95 package totals come from one resolution for Python 3.12 on
+  2026-11-17 and will drift.
 - Whether goodall installs and runs correctly through pipx or through pip in
   a virtual environment. Only uv has been used.
 - Advisory GHSA-hq85-5cpj-mr62 itself: it was reported by the agent that
