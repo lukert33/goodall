@@ -20,7 +20,8 @@ transcripts in November 2026.
 
 - `labels`: one `EntryLabel` per entry, in transcript order, with
   `line_number`, `entry_id` (the entry's `uuid`, or none), `entry_type` (the
-  entry's `type`), `actor_label`, `rule_name`, `mixed` and `identity`.
+  entry's `type`), `actor_label`, `rule_name`, `mixed`, `identity` and
+  `initiated_by`.
 - `unmatched`: one `UnmatchedEntry` per line no rule decided, with
   `line_number`, `entry_id`, `entry_type` and a `reason` that names no
   content: a line that is not JSON or not an object, an entry with no type or
@@ -49,6 +50,16 @@ beside the label, as a tuple of `what:value` parts (`identity_of`):
 Nothing is inferred: when the entry does not say, `identity` is empty. A
 `human` entry never has one, because a transcript does not say which person
 typed.
+
+## Who asked for an entry
+
+`initiated_by` is `human`, `ai`, `harness`, or empty when the record does not
+make it clear. Each rule fixes it: `human` for the person's own actions (and
+the marker closing a refusal), `ai` for tool results (the model called the
+tool), a subagent's instructions and other agents' messages, `harness` for
+injected entries, API errors, bookkeeping and unprompted titles and
+summaries. A model's reply is left empty: what prompted it is not decided
+here.
 
 ## Mixed entries
 
@@ -113,6 +124,22 @@ synthetic and trimmed to the keys the rule looks at.
 
    `{"type":"user","isMeta":true,"origin":{"kind":"peer","name":"example-peer"},"message":{"content":"..."}}`
 
+4c. **Titles and compaction summaries** → `ai`. **A chosen direction, open
+   to revision** like everything about attribution: the label says who chose
+   the words, and `initiated_by` says who asked for them, so harness-initiated
+   model text can be left out of counts of task work.
+
+   | rule | entry | initiated_by |
+   |---|---|---|
+   | `model_summarised_conversation_when_asked` | `isCompactSummary` user entry after a `compact_boundary` with `compactMetadata.trigger: manual` | `human` (the person ran `/compact`, itself a `person_typed_slash_command`) |
+   | `model_summarised_conversation_unprompted` | as above, trigger `auto` | `harness` |
+   | `model_summarised_conversation` | a summary with no boundary just before it | empty |
+   | `model_titled_session` | an `ai-title` entry | `harness` |
+   | `session_title_recorded` | a `custom-title` entry | empty: an app's own title or one the person typed |
+
+   A boundary's trigger applies only to the summary straight after it. These
+   rules come before rule 9, which would otherwise claim a summary.
+
 5. **`harness_wrote_assistant_entry`** → `harness`. An assistant entry Claude
    Code wrote without calling a model: `message.model` is `<synthetic>` or
    `isApiErrorMessage` is true (API errors, for example). Must come before
@@ -154,7 +181,7 @@ synthetic and trimmed to the keys the rule looks at.
     `{"type":"user","isSidechain":true,"message":{"content":"Example instructions for a subagent."}}`
 
 11. **`bookkeeping_entry`** → `harness`. Any other known entry type
-    (`attachment`, `system`, `file-history-snapshot`, `custom-title`,
+    (`attachment`, `system`, `file-history-snapshot`,
     `queue-operation` and the rest of `known_entry_types`): Claude Code keeps
     track of the Claude session, and no one says anything in it.
 
@@ -170,11 +197,9 @@ waiting for evidence" in [human-action-rules.md](human-action-rules.md).
 
 ## Known to be wrong or unknowable in version 2
 
-- **`custom-title`** entries may record a name the person chose, and
-  **`ai-title`** a title a model wrote; both are labelled `harness` as
-  bookkeeping.
-- **Compaction summaries** (`isCompactSummary`) are written by a model but
-  injected by the harness; labelled `harness`.
+- **`custom-title`** entries are labelled `ai` (rule 4c), but may record a
+  name the person typed when renaming a Claude session; the entry does not
+  say which, so `initiated_by` is empty.
 - **Messages from other sessions or a coordinator** (`origin.kind` `peer` or
   `coordinator`) are labelled `ai` (rule 4b). The entry does not prove that
   no person typed the message in the other session; the owner's direction is
