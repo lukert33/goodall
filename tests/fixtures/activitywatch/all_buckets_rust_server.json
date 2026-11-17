@@ -1,0 +1,71 @@
+{
+  "buckets": {
+    "aw-watcher-window_example-host": {
+      "id": "aw-watcher-window_example-host",
+      "type": "currentwindow",
+      "client": "aw-watcher-window",
+      "hostname": "example-host",
+      "created": "2026-04-01T08:00:00Z",
+      "data": {},
+      "metadata": {"start": "2026-04-01T09:00:00Z", "end": "2026-04-01T09:05:00Z"},
+      "last_updated": null,
+      "events": [
+        {"id": 3, "timestamp": "2026-04-01T09:04:00Z", "duration": 60.0, "data": {"app": "Example Browser", "title": "Example private page title", "url": "https://example.com/private-path"}},
+        {"id": 2, "timestamp": "2026-04-01T09:01:00Z", "duration": 180.5, "data": {"app": "Example Editor", "title": "example.py - example-project"}},
+        {"id": 1, "timestamp": "2026-04-01T09:00:00Z", "duration": 60.0, "data": {"title": "A window with no app named"}}
+      ]
+    },
+    "aw-watcher-afk_example-host": {
+      "id": "aw-watcher-afk_example-host",
+      "type": "afkstatus",
+      "client": "aw-watcher-afk",
+      "hostname": "example-host",
+      "created": "2026-04-01T08:00:00Z",
+      "data": {},
+      "metadata": {"start": "2026-04-01T09:00:00Z", "end": "2026-04-01T09:30:00Z"},
+      "last_updated": null,
+      "events": [
+        {"id": 12, "timestamp": "2026-04-01T09:20:00Z", "duration": 600.0, "data": {"status": "not-afk"}},
+        {"id": 11, "timestamp": "2026-04-01T09:05:00Z", "duration": 900.0, "data": {"status": "afk"}},
+        {"id": 10, "timestamp": "2026-04-01T09:00:00Z", "duration": 300.0, "data": {"status": "example-future-status"}}
+      ]
+    },
+    "aw-watcher-web-firefox_example-host": {
+      "id": "aw-watcher-web-firefox_example-host",
+      "type": "web.tab.current",
+      "client": "aw-client-web",
+      "hostname": "example-host",
+      "created": "2026-04-01T08:00:00Z",
+      "data": {},
+      "metadata": {"start": "2026-04-01T09:04:00Z", "end": "2026-04-01T09:05:00Z"},
+      "last_updated": null,
+      "events": [
+        {"id": 21, "timestamp": "2026-04-01T09:04:00Z", "duration": 45.25, "data": {"url": "https://example.com/private-path", "title": "Example private page title", "audible": false, "incognito": false, "tabCount": 7}}
+      ]
+    },
+    "aw-watcher-vscode_example-host": {
+      "id": "aw-watcher-vscode_example-host",
+      "type": "app.editor.activity",
+      "client": "aw-watcher-vscode",
+      "hostname": "example-host",
+      "created": "2026-04-01T08:00:00Z",
+      "data": {},
+      "metadata": {"start": "2026-04-01T09:01:00Z", "end": "2026-04-01T09:04:00Z"},
+      "last_updated": null,
+      "events": [
+        {"id": 31, "timestamp": "2026-04-01T09:01:00Z", "duration": 170.0, "data": {"file": "/work/example-project/example.py", "project": "/work/example-project", "language": "python", "branch": "main"}}
+      ]
+    },
+    "aw-watcher-example-future_example-host": {
+      "id": "aw-watcher-example-future_example-host",
+      "type": "example.future.type",
+      "client": "aw-watcher-example-future",
+      "hostname": "example-host",
+      "created": "2026-04-01T08:00:00Z",
+      "data": {},
+      "events": [
+        {"id": 41, "timestamp": "2026-04-01T09:00:00Z", "duration": 1.0, "data": {"anything": "example"}}
+      ]
+    }
+  }
+}

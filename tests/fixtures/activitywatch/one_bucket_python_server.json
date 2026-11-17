@@ -1,0 +1,18 @@
+{
+  "buckets": {
+    "aw-watcher-window_example-host": {
+      "id": "aw-watcher-window_example-host",
+      "created": "2026-04-02T08:00:00.000000+00:00",
+      "name": null,
+      "type": "currentwindow",
+      "client": "aw-watcher-window",
+      "hostname": "example-host",
+      "data": {},
+      "events": [
+        {"timestamp": "2026-04-02T10:00:30.250000+00:00", "duration": 12.5, "data": {"app": "Example Terminal", "title": "example-shell"}},
+        {"timestamp": "2026-04-02T10:00:00+00:00", "duration": 30.25, "data": {"app": "Example Editor", "title": "excluded"}},
+        {"duration": 5.0, "data": {"app": "Example Editor", "title": "An event with no time"}}
+      ]
+    }
+  }
+}

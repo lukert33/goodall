@@ -48,9 +48,16 @@ from goodall.human_actions import (
 # Raise this whenever a rule below changes, or when the human-action rules it
 # relies on change, so labels made by different rules can be told apart and
 # regenerated (ADR 0004).
-ACTOR_LABEL_RULES_VERSION = "1"
+ACTOR_LABEL_RULES_VERSION = "2"
 
 ActorLabel = Literal["human", "ai", "harness"]
+Initiator = Literal["human", "ai", "harness"] | None
+
+# Values of a user entry's `origin.kind` naming another agent as the sender:
+# an agent in another Claude session ("peer") or one coordinating this session
+# ("coordinator"). Humans are humans and agents are agents, whichever one; the
+# sender's name, when given, goes in the label's identity.
+OTHER_AGENT_ORIGIN_KINDS = ("peer", "coordinator")
 
 
 @dataclass(frozen=True)
@@ -63,8 +70,8 @@ class EntryFacts:
     """
 
     entry_type: str
-    # Kinds of human action `goodall.human_actions` found on this line:
-    # "typed_prompt", "interruption", "tool_call_rejection".
+    # Kinds of human action `goodall.human_actions` found on this line, such
+    # as "typed_prompt", "interruption" or "shell_command".
     human_action_kinds: frozenset[str]
     # The entry's text began with reminder blocks the harness put in front.
     has_prepended_context: bool
@@ -81,16 +88,34 @@ class EntryFacts:
     origin_kind: str | None
     # The model named on an assistant message; None when absent.
     model: str | None
+    # The entry's `agentId`, written on a subagent's entries; None when absent.
+    agent_id: str | None
+    # The name another agent's message gives for its sender (`origin.name`,
+    # or `origin.from`); None when absent.
+    origin_sender_name: str | None
+    # For a compaction summary: what started the compaction, read from the
+    # compaction boundary Claude Code writes just before it ("manual" when
+    # the person asked with /compact, "auto" when Claude Code did it on its
+    # own); None when no boundary came before.
+    compaction_trigger: str | None
 
 
 @dataclass(frozen=True)
 class Rule:
-    """One actor labelling rule: if `test` is true, the entry gets `label`."""
+    """One actor labelling rule: if `test` is true, the entry gets `label`.
+
+    `initiated_by` says who asked for the entry to be written, when that is
+    clear from the rule: "human", "ai" or "harness", or None when the raw
+    record does not make it clear. It is kept apart from the label because
+    the two can differ: a session title is the model's words (`ai`), asked
+    for by the harness, unprompted by the person or the task.
+    """
 
     name: str
     description: str
     label: ActorLabel
     mixed: bool
+    initiated_by: Initiator
     test: Callable[[EntryFacts], bool]
 
 
@@ -145,6 +170,7 @@ ACTOR_LABEL_RULES: tuple[Rule, ...] = (
         description="The person typed this prompt, and the harness added nothing to it.",
         label="human",
         mixed=False,
+        initiated_by="human",
         test=lambda entry: "typed_prompt" in entry.human_action_kinds and not entry.has_prepended_context,
     ),
     Rule(
@@ -152,6 +178,7 @@ ACTOR_LABEL_RULES: tuple[Rule, ...] = (
         description="The person typed this prompt, and the harness put reminder blocks in front of it.",
         label="human",
         mixed=True,
+        initiated_by="human",
         test=lambda entry: "typed_prompt" in entry.human_action_kinds and entry.has_prepended_context,
     ),
     Rule(
@@ -159,6 +186,7 @@ ACTOR_LABEL_RULES: tuple[Rule, ...] = (
         description="The person refused a tool call; the harness wrote the refusal up as a tool result.",
         label="human",
         mixed=True,
+        initiated_by="human",
         test=lambda entry: "tool_call_rejection" in entry.human_action_kinds,
     ),
     Rule(
@@ -166,13 +194,131 @@ ACTOR_LABEL_RULES: tuple[Rule, ...] = (
         description="The person stopped the agent; the harness wrote a fixed marker or a cancelled tool result.",
         label="human",
         mixed=True,
+        initiated_by="human",
         test=lambda entry: "interruption" in entry.human_action_kinds,
+    ),
+    Rule(
+        name="person_ran_shell_command",
+        description="The person ran a shell command with !; the harness wrapped it in tags, often with its output.",
+        label="human",
+        mixed=True,
+        initiated_by="human",
+        test=lambda entry: "shell_command" in entry.human_action_kinds,
+    ),
+    Rule(
+        name="person_typed_slash_command",
+        description="The person typed a slash command; the harness recorded its name and arguments in tags.",
+        label="human",
+        mixed=True,
+        initiated_by="human",
+        test=lambda entry: "slash_command" in entry.human_action_kinds,
+    ),
+    Rule(
+        name="person_approved_tool_call",
+        description="The person allowed a tool call, once or always; the entry also holds the tool's result.",
+        label="human",
+        mixed=True,
+        initiated_by="human",
+        test=lambda entry: bool(entry.human_action_kinds & {"tool_call_approval_once", "tool_call_approval_always"}),
+    ),
+    Rule(
+        name="person_dismissed_permission_prompt",
+        description="The person dismissed a permission prompt; the harness wrote the refusal up as a tool result.",
+        label="human",
+        mixed=True,
+        initiated_by="human",
+        test=lambda entry: "permission_prompt_dismissal" in entry.human_action_kinds,
+    ),
+    Rule(
+        name="person_answered_question",
+        description="The person answered the agent's questions; the entry also holds the questions and a report.",
+        label="human",
+        mixed=True,
+        initiated_by="human",
+        test=lambda entry: "question_answer" in entry.human_action_kinds,
+    ),
+    Rule(
+        name="person_approved_plan",
+        description="The person approved the agent's plan; the harness wrote the approval up as a tool result.",
+        label="human",
+        mixed=True,
+        initiated_by="human",
+        test=lambda entry: "plan_approval" in entry.human_action_kinds,
+    ),
+    Rule(
+        name="person_queued_prompt",
+        description="The person typed this prompt while the agent was busy, and the harness queued it.",
+        label="human",
+        mixed=False,
+        initiated_by="human",
+        test=lambda entry: "queued_prompt" in entry.human_action_kinds,
+    ),
+    Rule(
+        name="person_prompt_blocked_by_hook",
+        description="The person sent a prompt that a hook blocked; the harness wrote the hook's warning.",
+        label="human",
+        mixed=True,
+        initiated_by="human",
+        test=lambda entry: "blocked_prompt" in entry.human_action_kinds,
+    ),
+    Rule(
+        name="another_agent_sent_message",
+        description="Another agent sent this message: an agent in another session, or a coordinating agent.",
+        label="ai",
+        mixed=False,
+        initiated_by="ai",
+        test=lambda entry: entry.entry_type == "user" and entry.origin_kind in OTHER_AGENT_ORIGIN_KINDS,
+    ),
+    # Chosen direction, open to revision: the label says who chose the words,
+    # so titles and compaction summaries are the model's, and `initiated_by`
+    # says who asked for them. These come before the harness rules below,
+    # which would otherwise claim a summary (it is marked isCompactSummary).
+    Rule(
+        name="model_summarised_conversation_when_asked",
+        description="A model summarised the conversation because the person asked with /compact.",
+        label="ai",
+        mixed=False,
+        initiated_by="human",
+        test=lambda entry: entry.is_compact_summary and entry.compaction_trigger == "manual",
+    ),
+    Rule(
+        name="model_summarised_conversation_unprompted",
+        description="A model summarised the conversation because Claude Code compacted it on its own.",
+        label="ai",
+        mixed=False,
+        initiated_by="harness",
+        test=lambda entry: entry.is_compact_summary and entry.compaction_trigger == "auto",
+    ),
+    Rule(
+        name="model_summarised_conversation",
+        description="A model summarised the conversation; nothing in the record says what started it.",
+        label="ai",
+        mixed=False,
+        initiated_by=None,
+        test=lambda entry: entry.is_compact_summary,
+    ),
+    Rule(
+        name="model_titled_session",
+        description="A model wrote a title for the Claude session when Claude Code asked it to.",
+        label="ai",
+        mixed=False,
+        initiated_by="harness",
+        test=lambda entry: entry.entry_type == "ai-title",
+    ),
+    Rule(
+        name="session_title_recorded",
+        description="Claude Code recorded a title for the Claude session; who chose it is not recorded.",
+        label="ai",
+        mixed=False,
+        initiated_by=None,
+        test=lambda entry: entry.entry_type == "custom-title",
     ),
     Rule(
         name="harness_wrote_assistant_entry",
         description="Claude Code wrote this assistant entry itself, such as an API error, without calling a model.",
         label="harness",
         mixed=False,
+        initiated_by="harness",
         test=lambda entry: (
             entry.entry_type == "assistant" and (entry.model == "<synthetic>" or entry.is_api_error_message)
         ),
@@ -182,6 +328,7 @@ ACTOR_LABEL_RULES: tuple[Rule, ...] = (
         description="A model wrote this assistant entry: its words, its thinking, or the tool calls it chose.",
         label="ai",
         mixed=False,
+        initiated_by=None,
         test=lambda entry: entry.entry_type == "assistant" and entry.has_message_content,
     ),
     Rule(
@@ -189,6 +336,7 @@ ACTOR_LABEL_RULES: tuple[Rule, ...] = (
         description="The harness ran tools the model called and reported their results back to it.",
         label="harness",
         mixed=False,
+        initiated_by="ai",
         test=lambda entry: entry.entry_type == "user" and entry.has_tool_results,
     ),
     Rule(
@@ -196,6 +344,7 @@ ACTOR_LABEL_RULES: tuple[Rule, ...] = (
         description="The marker Claude Code writes straight after a refusal, already counted with the refusal.",
         label="harness",
         mixed=False,
+        initiated_by="human",
         test=lambda entry: entry.entry_type == "user" and is_interruption_marker(entry.text_after_context),
     ),
     Rule(
@@ -203,6 +352,7 @@ ACTOR_LABEL_RULES: tuple[Rule, ...] = (
         description="The harness wrote this user entry: a reminder, a command wrapper, a notification or a summary.",
         label="harness",
         mixed=False,
+        initiated_by="harness",
         test=is_harness_injected_user_entry,
     ),
     Rule(
@@ -210,6 +360,7 @@ ACTOR_LABEL_RULES: tuple[Rule, ...] = (
         description="The main agent's model wrote these instructions to start a subagent.",
         label="ai",
         mixed=False,
+        initiated_by="ai",
         test=is_subagent_instructions,
     ),
     Rule(
@@ -217,6 +368,7 @@ ACTOR_LABEL_RULES: tuple[Rule, ...] = (
         description="Claude Code wrote this entry to keep track of the Claude session; no one said anything in it.",
         label="harness",
         mixed=False,
+        initiated_by="harness",
         test=lambda entry: entry.entry_type not in ("user", "assistant"),
     ),
 )
@@ -228,7 +380,10 @@ class EntryLabel:
 
     `entry_id` is the entry's `uuid`, or None for entries that have none.
     `mixed` is true when the entry also holds words from an actor other than
-    `actor_label`.
+    `actor_label`. `identity` says which agent within the label, when the
+    entry says so (see `identity_of`), and is empty otherwise.
+    `initiated_by` says who asked for the entry, as the rule decides (see
+    `Rule`), or None when the record does not make it clear.
     """
 
     line_number: int
@@ -237,6 +392,8 @@ class EntryLabel:
     actor_label: ActorLabel
     rule_name: str
     mixed: bool
+    identity: tuple[str, ...] = ()
+    initiated_by: Initiator = None
 
 
 @dataclass(frozen=True)
@@ -277,6 +434,8 @@ def label_transcript(transcript_path: Path) -> LabelledTranscript:
 
     known_entry_types = claude_code_markers().known_entry_types
     result = LabelledTranscript(labels=[], unmatched=[])
+    # What started the last compaction, until the summary after it is read.
+    compaction_trigger: str | None = None
     with transcript_path.open(encoding="utf-8", errors="replace") as transcript_file:
         for line_number, line in enumerate(transcript_file, start=1):
             if line.strip() == "":
@@ -300,7 +459,19 @@ def label_transcript(transcript_path: Path) -> LabelledTranscript:
                 continue
 
             human_action_kinds = frozenset(human_action_kinds_by_line.get(line_number, set()))
-            facts = facts_from_entry(entry, entry_type, human_action_kinds)
+            # Whether a program sending a prompt counts as the person is
+            # undecided, so no rule may label it, and it is reported instead.
+            if "sdk_prompt" in human_action_kinds:
+                reason = "prompt sent through the SDK: whether that is the person is undecided"
+                result.unmatched.append(UnmatchedEntry(line_number, entry_id, entry_type, reason))
+                continue
+            facts = facts_from_entry(entry, entry_type, human_action_kinds, compaction_trigger)
+            # A compaction boundary's trigger belongs to the summary written
+            # straight after it, and to nothing later.
+            if facts.is_compact_summary:
+                compaction_trigger = None
+            if entry_type == "system" and entry.get("subtype") == "compact_boundary":
+                compaction_trigger = compaction_trigger_of(entry)
             rule = first_matching_rule(facts)
             if rule is None:
                 reason = f"no rule matched this {entry_type} entry"
@@ -308,9 +479,25 @@ def label_transcript(transcript_path: Path) -> LabelledTranscript:
                     reason += f" (origin kind {facts.origin_kind[:60]!r})"
                 result.unmatched.append(UnmatchedEntry(line_number, entry_id, entry_type, reason))
                 continue
-            label = EntryLabel(line_number, entry_id, entry_type, rule.label, rule.name, rule.mixed)
+            label = EntryLabel(
+                line_number,
+                entry_id,
+                entry_type,
+                rule.label,
+                rule.name,
+                rule.mixed,
+                identity=identity_of(facts, rule.label),
+                initiated_by=rule.initiated_by,
+            )
             result.labels.append(label)
     return result
+
+
+def compaction_trigger_of(boundary_entry: dict[str, Any]) -> str | None:
+    """Return a compaction boundary's `compactMetadata.trigger`, such as "manual" or "auto"."""
+    metadata = boundary_entry.get("compactMetadata")
+    trigger = metadata.get("trigger") if isinstance(metadata, dict) else None
+    return trigger if isinstance(trigger, str) else None
 
 
 @dataclass(frozen=True)
@@ -358,7 +545,9 @@ def first_matching_rule(facts: EntryFacts) -> Rule | None:
     return None
 
 
-def facts_from_entry(entry: dict[str, Any], entry_type: str, human_action_kinds: frozenset[str]) -> EntryFacts:
+def facts_from_entry(
+    entry: dict[str, Any], entry_type: str, human_action_kinds: frozenset[str], compaction_trigger: str | None
+) -> EntryFacts:
     """Read the facts the rules use out of one entry.
 
     Text, images and tool results are read only from "user" entries, through
@@ -383,8 +572,15 @@ def facts_from_entry(entry: dict[str, Any], entry_type: str, human_action_kinds:
         has_tool_results = len(user_content.tool_results) > 0
 
     origin = entry.get("origin")
-    origin_kind = origin.get("kind") if isinstance(origin, dict) else None
+    origin_kind = None
+    origin_sender_name = None
+    if isinstance(origin, dict):
+        origin_kind = origin.get("kind")
+        for sender_field in ("name", "from"):
+            if isinstance(origin.get(sender_field), str) and origin_sender_name is None:
+                origin_sender_name = origin[sender_field]
     model = message.get("model") if isinstance(message, dict) else None
+    agent_id = entry.get("agentId")
     return EntryFacts(
         entry_type=entry_type,
         human_action_kinds=human_action_kinds,
@@ -399,4 +595,28 @@ def facts_from_entry(entry: dict[str, Any], entry_type: str, human_action_kinds:
         is_api_error_message=entry.get("isApiErrorMessage") is True,
         origin_kind=origin_kind if isinstance(origin_kind, str) else None,
         model=model if isinstance(model, str) else None,
+        agent_id=agent_id if isinstance(agent_id, str) else None,
+        origin_sender_name=origin_sender_name,
+        compaction_trigger=compaction_trigger if entry.get("isCompactSummary") is True else None,
     )
+
+
+def identity_of(facts: EntryFacts, actor_label: ActorLabel) -> tuple[str, ...]:
+    """Say which agent produced an `ai` entry, when the entry itself says so.
+
+    The actor label stays one of three kinds; this says which one inside the
+    kind, as "what:value" parts: `model:<model>`, `subagent:<agentId>`,
+    `peer:<name>` or `coordinator:<name>`. Nothing is inferred. A `human`
+    entry gets no identity, because a transcript does not say which person
+    typed; a `harness` entry gets none either.
+    """
+    if actor_label != "ai":
+        return ()
+    parts = []
+    if facts.entry_type == "assistant" and facts.model is not None:
+        parts.append(f"model:{facts.model}")
+    if facts.entry_type == "assistant" and facts.is_sidechain and facts.agent_id is not None:
+        parts.append(f"subagent:{facts.agent_id}")
+    if facts.origin_kind in OTHER_AGENT_ORIGIN_KINDS and facts.origin_sender_name is not None:
+        parts.append(f"{facts.origin_kind}:{facts.origin_sender_name}")
+    return tuple(parts)
