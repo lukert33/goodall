@@ -8,9 +8,12 @@ document. Both are built from the same list of `CheckResult` records, so
 they cannot disagree.
 
 Exit code: 1 when any check failed, otherwise 0. Warnings do not fail it: a
-warning means goodall works, in a reduced way. Skips are not counted
-either, because a check is only ever skipped when another check in the same
-report failed (goodall.checks), so a report with a skip already exits 1.
+warning means goodall works, in a reduced way. Nor does a check goodall
+could not verify: it is reported as unverified, which is neither a pass nor
+a failure, and the report says what the contributor can check by hand.
+Skips are not counted either, because a check is only ever skipped when
+another check in the same report failed (goodall.checks), so a report with
+a skip already exits 1.
 
 Doctor is strictly read-only (AGENTS.md invariant 5): it creates, changes
 and deletes nothing, so a contributor can always run it first when
@@ -20,18 +23,21 @@ The JSON document, whose shape agents rely on:
 
     {
       "schema_version": 1,
-      "summary": {"passed": 7, "warned": 0, "failed": 0, "skipped": 0},
+      "summary": {"passed": 7, "warned": 0, "failed": 0, "skipped": 0, "unverified": 0},
       "checks": [CheckResult.as_json(), ...]
     }
 
 `schema_version` is raised whenever a key changes meaning or disappears;
-adding a key does not raise it.
+adding a key does not raise it. Nor does adding a status (and its count),
+because an agent should treat any status other than "pass" and "warn" as
+needing attention, and so reads a new one correctly.
 """
 
 from goodall import exit_codes
 from goodall.checks import Check, CheckContext, run_checks
 from goodall.program_checks import PROGRAM_CHECKS
 from goodall.runner import Runner
+from goodall.secrets_checks import SECRETS_CHECKS
 from goodall.settings_checks import SETTINGS_CHECKS
 from goodall.terminal import CheckResult, Terminal, count_checks
 
@@ -40,9 +46,11 @@ DOCTOR_JSON_SCHEMA_VERSION = 1
 
 # Every check doctor runs, in order. The settings checks come first, because
 # they say which eval this account belongs to; then the checks that run
-# other programs (tools, the eval account, the record repo). Later groups
-# (secrets) are added after them.
-DOCTOR_CHECKS: list[Check] = [*SETTINGS_CHECKS, *PROGRAM_CHECKS]
+# other programs (tools, the eval account, the record repo); then the checks
+# of the env file and the shared env file (secrets). The check that the
+# secrets manager's command is installed is among the secrets checks, since
+# it waits for the env file, though the report shows it under "Tools".
+DOCTOR_CHECKS: list[Check] = [*SETTINGS_CHECKS, *PROGRAM_CHECKS, *SECRETS_CHECKS]
 
 
 def run_doctor(terminal: Terminal, runner: Runner, as_json: bool) -> int:
@@ -74,6 +82,7 @@ def doctor_document(results: list[CheckResult]) -> dict[str, object]:
             "warned": counts.warned,
             "failed": counts.failed,
             "skipped": counts.skipped,
+            "unverified": counts.unverified,
         },
         "checks": check_documents,
     }
