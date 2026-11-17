@@ -10,6 +10,7 @@ contributor's private prompts and must never be copied into fixtures.
 from pathlib import Path
 
 from goodall.human_actions import (
+    RULES_VERSION,
     Interruption,
     ToolCallRejection,
     TypedPrompt,
@@ -27,6 +28,7 @@ def test_typed_prompts_are_found_with_their_entry_and_time() -> None:
         TypedPrompt(
             line_number=1,
             entry_id="u-0001",
+            session_id="session-a",
             timestamp="2026-01-05T09:00:00.000Z",
             text="Please add a greeting function to the example module.",
             image_count=0,
@@ -34,6 +36,7 @@ def test_typed_prompts_are_found_with_their_entry_and_time() -> None:
         TypedPrompt(
             line_number=3,
             entry_id="u-0003",
+            session_id="session-a",
             timestamp="2026-01-05T09:01:00.000Z",
             text="Here is a sketch of the layout I want.",
             image_count=1,
@@ -43,6 +46,7 @@ def test_typed_prompts_are_found_with_their_entry_and_time() -> None:
         TypedPrompt(
             line_number=4,
             entry_id="u-0004",
+            session_id="session-a",
             timestamp="2026-01-05T09:02:00.000Z",
             text="Now add a farewell function too.",
             image_count=0,
@@ -50,12 +54,36 @@ def test_typed_prompts_are_found_with_their_entry_and_time() -> None:
         TypedPrompt(
             line_number=5,
             entry_id="u-0005",
+            session_id="session-a",
             timestamp="2026-01-05T09:03:00.000Z",
             text="And a test for each.",
             image_count=0,
         ),
     ]
     assert result.unfamiliar_entries == []
+
+
+def test_every_action_says_its_source_the_rule_that_found_it_and_its_file() -> None:
+    # These fields let actions from different sources sit in one list and be
+    # regrouped later: which raw record, which rule, which file.
+    transcript_path = FIXTURES / "interruptions.jsonl"
+    result = parse_human_actions(transcript_path)
+
+    rules = [action.rule for action in result.actions]
+    assert rules == [
+        "is_typed_prompt",
+        "interruption_from_marker",
+        "is_typed_prompt",
+        "interruption_from_tool_result",
+        "is_typed_prompt",
+        "interruption_from_marker",
+    ]
+    for action in result.actions:
+        assert action.source == "claude_code_transcript"
+        assert action.transcript_path == transcript_path
+        # A transcript entry is a moment, not a stretch of time.
+        assert action.duration_seconds is None
+    assert result.rules_version == RULES_VERSION == "2"
 
 
 def test_interruptions_say_what_was_interrupted() -> None:
@@ -67,7 +95,9 @@ def test_interruptions_say_what_was_interrupted() -> None:
         Interruption(
             line_number=3,
             entry_id="u-0003",
+            session_id="session-c",
             timestamp="2026-01-07T11:00:04.000Z",
+            rule="interruption_from_marker",
             interrupted="generate",
             interrupted_tool_call_id=None,
         ),
@@ -75,7 +105,9 @@ def test_interruptions_say_what_was_interrupted() -> None:
         Interruption(
             line_number=6,
             entry_id="u-0006",
+            session_id="session-c",
             timestamp="2026-01-07T11:01:30.000Z",
+            rule="interruption_from_tool_result",
             interrupted="tool_call",
             interrupted_tool_call_id="toolu_example_03",
         ),
@@ -84,7 +116,9 @@ def test_interruptions_say_what_was_interrupted() -> None:
         Interruption(
             line_number=9,
             entry_id="u-0009",
+            session_id="session-c",
             timestamp="2026-01-07T11:02:10.000Z",
+            rule="interruption_from_marker",
             interrupted="tool_call",
             interrupted_tool_call_id=None,
         ),
@@ -102,6 +136,7 @@ def test_rejected_tool_calls_carry_the_call_id_and_any_feedback() -> None:
         TypedPrompt(
             line_number=1,
             entry_id="u-0001",
+            session_id="session-d",
             timestamp="2026-01-08T12:00:00.000Z",
             text="Tidy up the example configuration file.",
             image_count=0,
@@ -109,8 +144,10 @@ def test_rejected_tool_calls_carry_the_call_id_and_any_feedback() -> None:
         ToolCallRejection(
             line_number=3,
             entry_id="u-0003",
+            session_id="session-d",
             timestamp="2026-01-08T12:00:20.000Z",
             tool_call_id="toolu_example_05",
+            tool_name="Write",
             feedback=None,
         ),
         # Line 4 is the interruption marker Claude Code writes after a
@@ -119,6 +156,7 @@ def test_rejected_tool_calls_carry_the_call_id_and_any_feedback() -> None:
         TypedPrompt(
             line_number=5,
             entry_id="u-0005",
+            session_id="session-d",
             timestamp="2026-01-08T12:01:00.000Z",
             text="Only change the indentation.",
             image_count=0,
@@ -126,8 +164,10 @@ def test_rejected_tool_calls_carry_the_call_id_and_any_feedback() -> None:
         ToolCallRejection(
             line_number=7,
             entry_id="u-0007",
+            session_id="session-d",
             timestamp="2026-01-08T12:01:30.000Z",
             tool_call_id="toolu_example_06",
+            tool_name="Edit",
             feedback="Use two spaces, not four.",
         ),
         # Line 9 was denied by a permission rule, not by the person.
@@ -173,10 +213,10 @@ def test_unfamiliar_and_malformed_entries_are_reported_and_parsing_continues() -
 
 
 def test_text_the_harness_wrote_is_not_a_human_action() -> None:
-    # Meta entries, slash-command wrappers, command output, injected
-    # reminders, task notifications, tool results, a tool failure, a
-    # compaction summary and a subagent's instructions all sit in "user"
-    # entries, and none of them was typed by the person.
+    # Meta entries, command output, injected reminders, task notifications,
+    # tool results, a tool failure, a compaction summary and a subagent's
+    # instructions all sit in "user" entries, and none of them was typed by
+    # the person.
     result = parse_human_actions(FIXTURES / "harness_lookalikes.jsonl")
 
     assert result.actions == []

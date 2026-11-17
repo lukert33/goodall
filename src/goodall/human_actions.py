@@ -30,7 +30,7 @@ from typing import Any, Literal
 
 # Raise this whenever a detection rule changes, so derived records say which
 # rules produced them (ADR 0004).
-RULES_VERSION = "1"
+RULES_VERSION = "2"
 
 
 @dataclass(frozen=True)
@@ -129,54 +129,117 @@ def claude_code_markers() -> ClaudeCodeMarkers:
     )
 
 
-@dataclass(frozen=True)
+# Every action found here says it came from a Claude Code transcript, so it
+# can sit in one list with actions from other sources (goodall.human_activity).
+SOURCE = "claude_code_transcript"
+
+# Every action record below shares these fields, in this order:
+#
+# - `line_number`, `entry_id` (the entry's `uuid`), `session_id` (the entry's
+#   `sessionId`) and `transcript_path`: where in which raw record it was found.
+#   `transcript_path` is left out of equality, because it says where an action
+#   was read from, not what the person did.
+# - `timestamp`: the entry's own timestamp, as Claude Code wrote it.
+# - `source`, `kind` and `rule`: which kind of raw record, which kind of
+#   action, and the name of the rule function that found it, so that actions
+#   can be counted, merged or renamed later without re-reading transcripts.
+# - `duration_seconds`: always None here; a transcript entry is a moment.
+#
+# The records are keyword-only, so each one reads as a list of named values.
+
+
+@dataclass(frozen=True, kw_only=True)
 class TypedPrompt:
     """A prompt the person typed and sent to the agent."""
 
     line_number: int
     entry_id: str | None
+    session_id: str | None
     timestamp: str | None
     text: str
     image_count: int
+    transcript_path: Path | None = field(default=None, compare=False)
+    source: str = field(default=SOURCE, init=False)
     kind: str = field(default="typed_prompt", init=False)
+    rule: str = field(default="is_typed_prompt", init=False)
+    duration_seconds: float | None = field(default=None, init=False)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class Interruption:
     """The person stopped the agent part-way through.
 
     `interrupted` uses Inspect's InterruptEvent values: "generate" (the model
     was replying) or "tool_call" (a tool was running or about to run).
     Inspect's third value, "between_turns", is never produced: a transcript
-    records nothing when the person stops an agent that is not working.
+    records nothing when the person stops an agent that is not working. Two
+    rules find interruptions, so `rule` says which one did.
     """
 
     line_number: int
     entry_id: str | None
+    session_id: str | None
     timestamp: str | None
+    rule: Literal["interruption_from_marker", "interruption_from_tool_result"]
     interrupted: Literal["generate", "tool_call", "between_turns"]
     interrupted_tool_call_id: str | None
+    transcript_path: Path | None = field(default=None, compare=False)
+    source: str = field(default=SOURCE, init=False)
     kind: str = field(default="interruption", init=False)
+    duration_seconds: float | None = field(default=None, init=False)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class ToolCallRejection:
     """The person refused permission for a tool call the agent asked to make.
 
     `decision` is always "reject", Inspect's ApprovalEvent value. `feedback`
     is what the person typed with the refusal, or None if they typed nothing.
+    `tool_name` is the tool the agent asked for, when the call is in the same
+    transcript.
     """
 
     line_number: int
     entry_id: str | None
+    session_id: str | None
     timestamp: str | None
     tool_call_id: str | None
+    tool_name: str | None
     feedback: str | None
+    transcript_path: Path | None = field(default=None, compare=False)
     decision: Literal["reject"] = field(default="reject", init=False)
+    source: str = field(default=SOURCE, init=False)
     kind: str = field(default="tool_call_rejection", init=False)
+    rule: str = field(default="rejection_from_tool_result", init=False)
+    duration_seconds: float | None = field(default=None, init=False)
 
 
-HumanAction = TypedPrompt | Interruption | ToolCallRejection
+TranscriptAction = TypedPrompt | Interruption | ToolCallRejection
+
+
+@dataclass(frozen=True)
+class EntryPlace:
+    """Where one entry sits in one transcript; every action found in it shares this."""
+
+    transcript_path: Path
+    line_number: int
+    entry_id: str | None
+    session_id: str | None
+    timestamp: str | None
+
+
+def place_of_entry(entry: dict[str, Any], line_number: int, transcript_path: Path) -> EntryPlace:
+    """Read an entry's place, keeping only values of the expected type."""
+    entry_id = entry.get("uuid")
+    session_id = entry.get("sessionId")
+    timestamp = entry.get("timestamp")
+    return EntryPlace(
+        transcript_path=transcript_path,
+        line_number=line_number,
+        entry_id=entry_id if isinstance(entry_id, str) else None,
+        session_id=session_id if isinstance(session_id, str) else None,
+        timestamp=timestamp if isinstance(timestamp, str) else None,
+    )
 
 
 @dataclass(frozen=True)
@@ -192,7 +255,7 @@ class UnfamiliarEntry:
 class ParseResult:
     """Everything `parse_human_actions` found in one transcript."""
 
-    actions: list[HumanAction]
+    actions: list[TranscriptAction]
     unfamiliar_entries: list[UnfamiliarEntry]
     rules_version: str = RULES_VERSION
 
@@ -207,9 +270,7 @@ def parse_human_actions(transcript_path: Path) -> ParseResult:
     """
     markers = claude_code_markers()
     result = ParseResult(actions=[], unfamiliar_entries=[])
-    # Ids of entries that held a rejection, so the interruption marker Claude
-    # Code writes straight after one can be recognised as part of it.
-    rejection_entry_ids: set[str] = set()
+    memory = TranscriptMemory()
     with transcript_path.open(encoding="utf-8", errors="replace") as transcript_file:
         for line_number, line in enumerate(transcript_file, start=1):
             if line.strip() == "":
@@ -231,17 +292,60 @@ def parse_human_actions(transcript_path: Path) -> ParseResult:
                 reason = f"unknown entry type {entry_type[:60]!r}"
                 result.unfamiliar_entries.append(UnfamiliarEntry(line_number, entry_id, reason))
                 continue
+            place = place_of_entry(entry, line_number, transcript_path)
+            if entry_type == "assistant":
+                remember_tool_calls(entry, memory)
+                continue
             if entry_type != "user":
                 continue
             user_content = read_user_content(entry, markers)
             for reason in user_content.unfamiliar_reasons:
                 result.unfamiliar_entries.append(UnfamiliarEntry(line_number, entry_id, reason))
-            actions = actions_from_user_entry(entry, line_number, user_content, markers, rejection_entry_ids)
+            actions = actions_from_user_entry(entry, place, user_content, markers, memory)
             for action in actions:
                 if isinstance(action, ToolCallRejection) and action.entry_id is not None:
-                    rejection_entry_ids.add(action.entry_id)
+                    memory.rejection_entry_ids.add(action.entry_id)
             result.actions.extend(actions)
     return result
+
+
+@dataclass
+class TranscriptMemory:
+    """What the parser remembers from earlier lines while reading later ones.
+
+    Most rules look at one entry alone. These are the exceptions, each kept
+    for one stated reason.
+    """
+
+    # Ids of entries that held a rejection, so the interruption marker Claude
+    # Code writes straight after one can be recognised as part of it.
+    rejection_entry_ids: set[str] = field(default_factory=set)
+    # The tool each tool call asked for, by call id, read from the assistant
+    # entries that made the calls. Only names are kept, never tool inputs.
+    tool_names_by_call_id: dict[str, str] = field(default_factory=dict)
+
+
+def remember_tool_calls(entry: dict[str, Any], memory: TranscriptMemory) -> None:
+    """Note the name of every tool an assistant entry called, by call id."""
+    message = entry.get("message")
+    content = message.get("content") if isinstance(message, dict) else None
+    if not isinstance(content, list):
+        return
+    for block in content:
+        if not isinstance(block, dict) or block.get("type") != "tool_use":
+            continue
+        tool_call_id = block.get("id")
+        tool_name = block.get("name")
+        if isinstance(tool_call_id, str) and isinstance(tool_name, str):
+            memory.tool_names_by_call_id[tool_call_id] = tool_name
+
+
+def tool_name_for(tool_result: dict[str, Any], memory: TranscriptMemory) -> str | None:
+    """Return the name of the tool a tool result answers, if its call was seen."""
+    tool_call_id = tool_result.get("tool_use_id")
+    if not isinstance(tool_call_id, str):
+        return None
+    return memory.tool_names_by_call_id.get(tool_call_id)
 
 
 @dataclass
@@ -314,41 +418,43 @@ def tool_result_text(tool_result: dict[str, Any]) -> str:
 
 def actions_from_user_entry(
     entry: dict[str, Any],
-    line_number: int,
+    place: EntryPlace,
     content: UserContent,
     markers: ClaudeCodeMarkers,
-    rejection_entry_ids: set[str],
-) -> list[HumanAction]:
+    memory: TranscriptMemory,
+) -> list[TranscriptAction]:
     """Return the human actions in one "user" entry, by applying each rule."""
 
     # An entry carrying tool results is the harness reporting back to the
     # model. It is a human action only when the result shows the person
     # stepped in.
     if content.tool_results:
-        actions: list[HumanAction] = []
+        actions: list[TranscriptAction] = []
         for tool_result in content.tool_results:
-            rejection = rejection_from_tool_result(entry, line_number, tool_result, markers)
+            rejection = rejection_from_tool_result(place, tool_result, markers, memory)
             if rejection is not None:
                 actions.append(rejection)
-            interruption = interruption_from_tool_result(entry, line_number, tool_result, markers)
+            interruption = interruption_from_tool_result(place, tool_result, markers)
             if interruption is not None:
                 actions.append(interruption)
         return actions
 
-    interruption = interruption_from_marker(entry, line_number, content.text, markers)
+    interruption = interruption_from_marker(place, content.text, markers)
     if interruption is not None:
         # The marker Claude Code writes straight after a rejection is the end
         # of that rejection, not a second thing the person did.
-        if entry.get("parentUuid") in rejection_entry_ids:
+        if entry.get("parentUuid") in memory.rejection_entry_ids:
             return []
         return [interruption]
 
     typed_text = strip_prepended_context(content.text, markers)
     if is_typed_prompt(entry, typed_text, content.image_count, markers):
         prompt = TypedPrompt(
-            line_number=line_number,
-            entry_id=entry.get("uuid"),
-            timestamp=entry.get("timestamp"),
+            line_number=place.line_number,
+            entry_id=place.entry_id,
+            session_id=place.session_id,
+            timestamp=place.timestamp,
+            transcript_path=place.transcript_path,
             text=typed_text,
             image_count=content.image_count,
         )
@@ -356,9 +462,7 @@ def actions_from_user_entry(
     return []
 
 
-def interruption_from_marker(
-    entry: dict[str, Any], line_number: int, text: str, markers: ClaudeCodeMarkers
-) -> Interruption | None:
+def interruption_from_marker(place: EntryPlace, text: str, markers: ClaudeCodeMarkers) -> Interruption | None:
     """Rule: an entry whose whole text is an interruption marker is an interruption.
 
     The marker does not name the tool call that was stopped, so the id is left
@@ -372,16 +476,19 @@ def interruption_from_marker(
     else:
         return None
     return Interruption(
-        line_number=line_number,
-        entry_id=entry.get("uuid"),
-        timestamp=entry.get("timestamp"),
+        line_number=place.line_number,
+        entry_id=place.entry_id,
+        session_id=place.session_id,
+        timestamp=place.timestamp,
+        transcript_path=place.transcript_path,
+        rule="interruption_from_marker",
         interrupted=interrupted,
         interrupted_tool_call_id=None,
     )
 
 
 def interruption_from_tool_result(
-    entry: dict[str, Any], line_number: int, tool_result: dict[str, Any], markers: ClaudeCodeMarkers
+    place: EntryPlace, tool_result: dict[str, Any], markers: ClaudeCodeMarkers
 ) -> Interruption | None:
     """Rule: an error tool result with the cancellation text is an interruption.
 
@@ -393,17 +500,21 @@ def interruption_from_tool_result(
         return None
     if not tool_result_text(tool_result).startswith(markers.cancelled_tool_result_prefix):
         return None
+    tool_call_id = tool_result.get("tool_use_id")
     return Interruption(
-        line_number=line_number,
-        entry_id=entry.get("uuid"),
-        timestamp=entry.get("timestamp"),
+        line_number=place.line_number,
+        entry_id=place.entry_id,
+        session_id=place.session_id,
+        timestamp=place.timestamp,
+        transcript_path=place.transcript_path,
+        rule="interruption_from_tool_result",
         interrupted="tool_call",
-        interrupted_tool_call_id=tool_result.get("tool_use_id"),
+        interrupted_tool_call_id=tool_call_id if isinstance(tool_call_id, str) else None,
     )
 
 
 def rejection_from_tool_result(
-    entry: dict[str, Any], line_number: int, tool_result: dict[str, Any], markers: ClaudeCodeMarkers
+    place: EntryPlace, tool_result: dict[str, Any], markers: ClaudeCodeMarkers, memory: TranscriptMemory
 ) -> ToolCallRejection | None:
     """Rule: an error tool result with the rejection text is a rejection.
 
@@ -422,11 +533,15 @@ def rejection_from_tool_result(
     lead_in_position = text.find(markers.rejection_feedback_lead_in)
     if lead_in_position != -1:
         feedback = text[lead_in_position + len(markers.rejection_feedback_lead_in) :].strip() or None
+    tool_call_id = tool_result.get("tool_use_id")
     return ToolCallRejection(
-        line_number=line_number,
-        entry_id=entry.get("uuid"),
-        timestamp=entry.get("timestamp"),
-        tool_call_id=tool_result.get("tool_use_id"),
+        line_number=place.line_number,
+        entry_id=place.entry_id,
+        session_id=place.session_id,
+        timestamp=place.timestamp,
+        transcript_path=place.transcript_path,
+        tool_call_id=tool_call_id if isinstance(tool_call_id, str) else None,
+        tool_name=tool_name_for(tool_result, memory),
         feedback=feedback,
     )
 

@@ -1,4 +1,4 @@
-# Human-action rules, version 1
+# Human-action rules, version 2
 
 These are the rules `goodall.human_actions` uses to find what the person did in
 one Claude Code transcript. Each rule is a function in
@@ -13,14 +13,27 @@ version.
 ## What comes back
 
 `parse_human_actions(path)` returns `actions`, in transcript order, and
-`unfamiliar_entries`. Every action has `kind`, `line_number`, `entry_id` (the
-entry's `uuid`) and `timestamp`.
+`unfamiliar_entries`. Every action has these common fields:
 
-| kind | extra fields |
-|---|---|
-| `typed_prompt` | `text`, `image_count` |
-| `interruption` | `interrupted` (`"generate"` or `"tool_call"`), `interrupted_tool_call_id` |
-| `tool_call_rejection` | `tool_call_id`, `decision` (always `"reject"`), `feedback` |
+- `source`: always `claude_code_transcript`.
+- `kind`: one of the kinds below.
+- `rule`: the name of the rule function that found it.
+- `line_number`, `entry_id` (the entry's `uuid`), `session_id` (the entry's
+  `sessionId`) and `transcript_path`: where it was found.
+- `timestamp`: the entry's timestamp, as written.
+- `duration_seconds`: always empty; a transcript entry is a moment.
+
+`source`, `kind` and `rule` are there so kinds can be merged or renamed after
+looking at real results, without re-reading transcripts.
+
+| kind | rule | extra fields |
+|---|---|---|
+| `typed_prompt` | `is_typed_prompt` | `text`, `image_count` |
+| `interruption` | `interruption_from_marker`, `interruption_from_tool_result` | `interrupted` (`"generate"` or `"tool_call"`), `interrupted_tool_call_id` |
+| `tool_call_rejection` | `rejection_from_tool_result` | `tool_call_id`, `tool_name`, `decision` (always `"reject"`), `feedback` |
+
+`tool_name` is read from the assistant entry that made the call, when it is in
+the same transcript; only the name is kept, never the tool's input.
 
 `interrupted` and `decision` use the values of Inspect's InterruptEvent and
 ApprovalEvent.
