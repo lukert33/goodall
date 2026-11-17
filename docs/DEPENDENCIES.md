@@ -9,6 +9,24 @@ The facts below were checked live on **2026-11-16** against the PyPI JSON API,
 each project's GitHub repository and security advisories, and OSV.dev. Check
 again before adding or upgrading anything.
 
+## At a glance
+
+What has to be on the Mac, or may be, for goodall to work. Whoever owns the
+Mac installs these: an eval account is a standard macOS user account and
+cannot install software itself. The linked sections give the reasons and the
+checks behind each row.
+
+| What | Needed? | What it is for |
+|---|---|---|
+| [Python 3.12 or newer](#adopted-runtime) | Required | Runs goodall. The Python that comes with macOS is too old. |
+| [An installer: uv, or an alternative](#needed-to-install) | Required to install | Puts goodall and a new enough Python on the Mac. uv is the documented route; pipx or pip are allowed. Use uv 0.13.4 or newer. |
+| [git](#programs-goodall-runs-or-works-alongside) | Required | Saves the eval's records and sends them to the record repo. |
+| [Claude Code](#programs-goodall-runs-or-works-alongside) | Required | The AI agent tool whose work goodall records. |
+| [GitHub's `gh`](#programs-goodall-runs-or-works-alongside) | Required by `goodall doctor` | Lets `goodall doctor` check the GitHub sign-in, so goodall never handles the token itself. |
+| [1Password's `op`](#programs-goodall-runs-or-works-alongside) | Required only when the eval uses secrets | Looks up secrets the eval needs, without goodall storing them. |
+| [`inspect-ai` and `inspect-scout`](#approved-not-yet-used) | Optional, only for the export | Turns records into a form the Inspect analysis tools read. Brings 95 packages, so only those who export install them. |
+| [ActivityWatch](#activitywatch-the-highest-risk-recommendation) | Optional, recommended | Notes which app and window were in use, to back up what the human did. |
+
 ## Standing rules
 
 1. **Standard library first.** If the standard library does the job acceptably,
