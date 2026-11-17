@@ -1,55 +1,72 @@
-"""Copying Claude Code's transcripts into the log directory, verbatim and in Claude Code's own layout.
+"""Copying Claude Code's transcripts, and what it keeps beside them, into the log directory, verbatim.
 
 A transcript is a raw record (ADR 0003): goodall copies it byte for byte and
-never rewrites, redacts or re-encodes it. The copy keeps the layout of
-Claude Code's projects folder, so the copied folder can be read by anything
-that reads that folder, Inspect Scout's claude_code importer included:
+never rewrites, redacts or re-encodes it. The copy keeps Claude Code's own
+layout (ADR 0015), so the copied projects folder can be read by anything
+that reads such a folder, Inspect Scout's claude_code importer included:
 
-    <Claude projects folder>/<project folder>/<session id>.jsonl
-    <Claude projects folder>/<project folder>/<session id>/...   everything, at any depth:
+    In Claude Code's config folder (~/.claude, or CLAUDE_CONFIG_DIR):
+    projects/<project folder>/<session id>.jsonl
+    projects/<project folder>/<session id>/...   everything, at any depth:
         custom-title.json, subagents/, tool-results/ (text, images, pdf-<id>/ pages), ...
+    projects/<project folder>/MEMORY.md and memory/...   the project's memory
       are copied to
-    <log directory>/transcripts/<project folder>/<session id>.jsonl
-    <log directory>/transcripts/<project folder>/<session id>/...
+    <log directory>/transcripts/<project folder>/...   at the same paths
+
+    history.jsonl                  the prompt history, across Claude sessions
+    file-history/<session id>/...  a Claude session's file-edit backups
+      (CLAUDE_CONFIG_FOLDER_ALLOW_LIST: nothing else in the config folder) are copied to
+    <log directory>/claude-config/<config folder's path, dashed>/...   at the same paths
 
     and goodall keeps, beside them:
     <log directory>/superseded-transcripts/<moment>/...   earlier copies that were replaced
+    <log directory>/superseded-claude-config/<moment>/... the same, for claude-config/
     <log directory>/transcript-sync/failed-copies.jsonl   copies hooks could not make
     <log directory>/transcript-sync/reported/...          those, once goodall status said so
-    <log directory>/transcript-sync/locks/<session id>.lock
-    <log directory>/transcript-sync/claude-projects-folders.json   where hooks found Claude Code
+    <log directory>/transcript-sync/locks/...             one per Claude session, project and config folder
+    <log directory>/transcript-sync/claude-config-folders.json   where hooks found Claude Code
 
-Who calls it: `goodall hook` (goodall.hook) copies one Claude session's
-files after PostToolUse, Stop and SessionEnd, with `copy_from_hook`; and
-`goodall start`, `stop` and `status` run `sweep`, which copies every Claude
-session the hooks missed (a Claude Code killed with SIGKILL fires no hook).
-This module is on the hook path, so it imports only the standard library
+Who calls it: `goodall hook` (goodall.hook) copies, after PostToolUse, Stop
+and SessionEnd, one Claude session's files, its project's memory, its
+file-edit backups and the prompt history, with `copy_from_hook`; and
+`goodall start`, `stop` and `status` run `sweep`, which copies everything
+the hooks missed (a Claude Code killed with SIGKILL fires no hook). This
+module is on the hook path, so it imports only the standard library
 (ADR 0005) and starts no program.
 
-Where the Claude projects folder is: `projects` inside Claude Code's own
-folder, which is `~/.claude` unless the environment variable
-CLAUDE_CONFIG_DIR names another. CLAUDE_CONFIG_DIR is Claude Code's own
-setting, not goodall's; goodall honours it so it looks where Claude Code
-writes, and tests point it (and HOME) at tmp_path so the real home folder,
-which holds a person's private prompts, stays out of reach. The hooks
-inherit Claude Code's environment, so they always look in the right place,
-but a terminal may not have the same CLAUDE_CONFIG_DIR. So each hook that
-copies remembers its projects folder in the log directory, and the sweep
-covers every folder a hook remembered, the default `~/.claude/projects`, and
-the terminal's own: a person never needs to know the variable exists.
+Where Claude Code's config folder is: `~/.claude` unless the environment
+variable CLAUDE_CONFIG_DIR names another, with transcripts in `projects`
+inside it. CLAUDE_CONFIG_DIR is Claude Code's own setting, not goodall's;
+goodall honours it so it looks where Claude Code writes, and tests point it
+(and HOME) at tmp_path so the real home folder, which holds a person's
+private prompts, stays out of reach. The hooks inherit Claude Code's
+environment, so they always look in the right place, but a terminal may not
+have the same CLAUDE_CONFIG_DIR. So each hook that copies remembers its
+config folder in the log directory, and the sweep covers every folder a
+hook remembered, the default `~/.claude`, and the terminal's own: a person
+never needs to know the variable exists.
 
 Decisions a reader would otherwise reverse-engineer (the layout is ADR 0015):
 
 - Goodall copies everything Claude Code keeps for a Claude session, not
-  only the transcripts: tool results, images and whatever a later version
-  adds. Storage is the cost of a complete raw record, and a file left out
-  now cannot be copied after Claude Code deletes it.
-- Goodall copies only from inside the Claude projects folder. The path a
-  hook names comes from outside goodall, so a path that resolves anywhere
-  else, through `..` or a symbolic link, is refused. Inside a Claude
-  session's folder, symbolic links are never followed, special files are
-  never opened, and both are skipped and noted for `goodall status`, as
-  are files that cannot be read; the rest is still copied.
+  only the transcripts: tool results, images, file-edit backups, the
+  project's memory and the prompt history, and whatever a later version
+  adds inside a session's folder. Storage is the cost of a complete raw
+  record, and a file left out now cannot be copied after Claude Code
+  deletes it.
+- Goodall copies only from inside a Claude config folder it found itself,
+  and there only from the projects folder and the places
+  CLAUDE_CONFIG_FOLDER_ALLOW_LIST names: never settings, credentials or
+  the other folders beside them. The path a hook names comes from outside
+  goodall, so a path that resolves anywhere else, through `..` or a
+  symbolic link, is refused. Inside what is copied, symbolic links are
+  never followed, special files are never opened, and both are skipped and
+  noted for `goodall status`, as are files that cannot be read; the rest
+  is still copied.
+- The prompt history is copied by every hook that copies, not only by the
+  sweep. It changes once per prompt, so only the first hook after a prompt
+  copies it again: about 2 ms for a 5 MB history and 19 ms for 50 MB,
+  measured on an SSD; unchanged, it costs two stats.
 - Files are copied to a temporary file in the destination folder, which is
   then renamed over the copy. A rename is atomic, so a copy interrupted at
   any moment, even by SIGKILL, leaves the old copy or the new one, never a
@@ -67,11 +84,12 @@ Decisions a reader would otherwise reverse-engineer (the layout is ADR 0015):
   Transcripts are append-only in normal use, so a source that is shorter
   than the copy, or no longer begins with it, means something rewrote it
   (compaction, an edit, a different Claude Code version). The earlier copy
-  is then moved to `superseded-transcripts/<moment in UTC>/` at the same
-  relative path, and the new copy takes its place. Kept copies sit outside
-  `transcripts/`, because an importer walking `transcripts/` would read a
-  kept copy as a second Claude session with the same id. Trap: an importer
-  pointed at the whole log directory would still find them.
+  is then moved to `superseded-transcripts/<moment in UTC>/` (or
+  `superseded-claude-config/`) at the same relative path, and the new copy
+  takes its place. Kept copies sit outside `transcripts/`, because an
+  importer walking `transcripts/` would read a kept copy as a second Claude
+  session with the same id. Trap: an importer pointed at the whole log
+  directory would still find them.
 - Copies are readable by this macOS user account only (0600, folders
   0700), as goodall.work_blocks does, because transcripts hold a person's
   prompts.

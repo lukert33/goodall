@@ -20,7 +20,14 @@ copied whether or not one is, byte for byte, into `transcripts/` in the log
 directory, in the same folder layout as Claude Code's own `projects` folder
 (ADR 0015). Goodall copies everything Claude Code keeps for a Claude
 session: the transcript and the whole of the session's folder beside it,
-subagent transcripts and tool results included.
+subagent transcripts and tool results included, and each project's memory
+(`MEMORY.md` and `memory/`). From the rest of Claude Code's folder it copies
+two things and nothing else: the prompt history, `history.jsonl`, and each
+Claude session's file-edit backups, `file-history/<session id>/`. These go
+into `claude-config/` in the log directory, in a folder named after Claude
+Code's folder (`-Users-ada--claude` for `/Users/ada/.claude`), at the same
+paths as in Claude Code's folder. Settings, credentials and everything else
+there are never read.
 A Claude Code that is killed fires no hook, so `goodall start`, `goodall stop`
 and `goodall status` also copy any transcript that changed since it was last
 copied. A copy that fails inside a hook is silent in Claude Code and noted in
@@ -30,10 +37,10 @@ copied. A copy that fails inside a hook is silent in Claude Code and noted in
 Goodall finds Claude Code's transcripts wherever Claude Code keeps them, with
 nothing for you to set. The hooks run inside Claude Code, so they look where
 it writes, and each one that copies notes that folder in
-`transcript-sync/claude-projects-folders.json` in the log directory.
+`transcript-sync/claude-config-folders.json` in the log directory.
 `goodall start`, `goodall stop` and `goodall status` then cover every folder
-noted there, as well as `~/.claude/projects` and the folder your terminal's
-own settings point to.
+noted there, as well as `~/.claude` and the folder your terminal's own
+settings point to.
 
 ## The settings
 
