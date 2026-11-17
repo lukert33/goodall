@@ -410,7 +410,10 @@ def relative_config_directory_failure() -> Failure:
     """
     return Failure(
         kind="config_directory_not_absolute",
-        what_happened=f"{CONFIG_DIRECTORY_VARIABLE} is not an absolute path. Goodall does not show its value, in case it is a secret.",
+        what_happened=(
+            f"{CONFIG_DIRECTORY_VARIABLE} is not an absolute path. "
+            "Goodall does not show its value, in case it is a secret."
+        ),
         why=(
             "Goodall would look for local settings relative to whichever folder a command started in, "
             "so two commands could find two different evals."

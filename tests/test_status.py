@@ -21,7 +21,6 @@ import pytest
 from goodall import cli, exit_codes
 from goodall.terminal import Terminal
 
-
 # An obviously made-up key, used wherever a test checks that goodall never repeats a value.
 SYNTHETIC_SECRET = "sk-ant-api03-SYNTHETICsyntheticSYNTHETIC"
 

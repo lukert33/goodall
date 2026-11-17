@@ -1005,6 +1005,22 @@ def test_a_line_in_the_env_file_that_is_not_name_equals_value_is_reported_with_i
     assert "is not in the form NAME=value" in detail
 
 
+@pytest.mark.parametrize("file_name", ["env_file", "shared_env_file"])
+def test_an_empty_value_in_either_env_file_is_refused_with_the_placeholder_advice(
+    healthy_account: EvalAccount, file_name: str
+) -> None:
+    env_file = getattr(healthy_account, file_name)
+    env_file.write_text(env_file.read_text() + "SYNTHETICsyntheticSYNTHETIC0123456789x9=\n")
+
+    exit_code, standard_output, standard_error = run_goodall(["doctor", "--json"])
+
+    assert exit_code == exit_codes.ERROR
+    assert "SYNTHETICsynthetic" not in standard_output + standard_error
+    message = " ".join(standard_output.split())
+    assert "give the variable a value" in message
+    assert "any short word will do" in message
+
+
 def test_an_unreadable_env_file_fails_saying_why(healthy_account: EvalAccount) -> None:
     healthy_account.env_file.unlink()
     healthy_account.env_file.mkdir()

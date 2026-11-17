@@ -208,8 +208,9 @@ def read_line(stripped_line: str, line_number: int) -> EnvEntry | EnvLineProblem
         return EnvLineProblem(
             line_number=line_number,
             problem=(
-                "has nothing after the =. A key or token pasted on a line of its own can look like this, so "
-                "goodall does not read it as a variable"
+                "has nothing after the =, so give the variable a value. If it is only a placeholder, any short "
+                "word will do, such as foo. Goodall refuses an empty value because a key or token pasted on a "
+                "line of its own can look like one"
             ),
         )
     return EnvEntry(name=name, value=value, line_number=line_number)
