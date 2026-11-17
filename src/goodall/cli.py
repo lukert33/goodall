@@ -252,18 +252,38 @@ def add_entry_text_arguments(parser: argparse.ArgumentParser, text_help: str) ->
     )
 
 
+# What a person does by hand while a stub is not built. Working rule in
+# AGENTS.md (until goodall reaches version 0.9): a message may point at a
+# command that is not built, provided its stub says how to do the same step by
+# hand. So a command that a message points at needs a real entry here, and
+# tests/test_cli.py fails when it has none.
+BY_HAND_STEPS = {
+    "onboard": (
+        "write this account's local-settings.toml in ~/.config/goodall (goodall status names each setting it "
+        "needs and shows an example line), and add the Claude Code hooks as docs/claude-code-hooks.md in the "
+        "goodall repo shows."
+    ),
+}
+NOTHING_BY_HAND = "Nothing for now: this command will come in a later version of goodall."
+
+
 def run_stub(command_name: str, terminal: Terminal) -> int:
-    """Report that a planned command has no implementation yet.
+    """Report that a planned command has no implementation yet, and what to do by hand.
 
     Returns ERROR rather than USAGE_ERROR because the user typed a valid
     command; it is goodall that cannot do it yet.
     """
+    by_hand = BY_HAND_STEPS.get(command_name)
+    if by_hand is None:
+        by_hand = NOTHING_BY_HAND
+    else:
+        by_hand = by_hand[0].upper() + by_hand[1:]
     terminal.show_failure(
         Failure(
             kind="not_built",
             what_happened=f"goodall {command_name} is not built yet. Nothing was changed.",
             why="This command is planned, but nobody has written it yet.",
-            what_to_do_next="Check bd ready in the goodall repo for progress.",
+            what_to_do_next=f"Check bd ready in the goodall repo for progress. By hand: {by_hand}",
         )
     )
     return exit_codes.ERROR

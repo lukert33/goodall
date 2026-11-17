@@ -94,6 +94,8 @@ first.
   still has delivery to finish (shown as a warning); exit `1` only when it
   did not happen and has to be redone or fixed first.
 - Every failure message says what to do next.
+- Until goodall reaches version 0.9, a message may point at a command that is not
+  built yet, provided that command's stub says how to do the same step by hand.
 
 ## Code style
 

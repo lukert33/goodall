@@ -13,6 +13,7 @@ is added to the parser it must be added here too, or
 import argparse
 import contextlib
 import io
+from pathlib import Path
 
 from goodall import cli, exit_codes
 from goodall.fake_runner import FakeRunner
@@ -148,6 +149,37 @@ def test_every_stub_returns_error_and_names_itself() -> None:
         exit_code, output = run_goodall(arguments_for(command_name))
         assert exit_code == exit_codes.ERROR, f"goodall {command_name} returned {exit_code}"
         assert f"goodall {command_name} is not built yet" in output
+
+
+def test_every_stub_says_what_to_do_by_hand_in_the_meantime() -> None:
+    for command_name in PLANNED_COMMANDS:
+        if command_name in BUILT_COMMANDS:
+            continue
+        _, output = run_goodall(arguments_for(command_name))
+        assert "By hand:" in output, f"goodall {command_name} gives no by-hand way"
+
+
+def test_onboard_stub_names_the_two_by_hand_steps() -> None:
+    _, output = run_goodall(["onboard"])
+    assert "local-settings.toml" in output
+    assert "docs/claude-code-hooks.md" in output
+
+
+def test_a_stub_that_a_goodall_message_points_at_has_a_real_by_hand_way() -> None:
+    # Until goodall reaches 0.9 (AGENTS.md), a message may point at a command
+    # that is not built, but only if that command's stub says how to do the
+    # step by hand. The default "Nothing for now" does not count.
+    source_folder = Path(cli.__file__).parent
+    source_text = ""
+    for source_file in source_folder.glob("*.py"):
+        if source_file.name != "cli.py":
+            source_text += source_file.read_text()
+    for command_name in PLANNED_COMMANDS:
+        if command_name in BUILT_COMMANDS:
+            continue
+        if f"goodall {command_name}" in source_text:
+            _, output = run_goodall(arguments_for(command_name))
+            assert "Nothing for now" not in output, f"a message points at goodall {command_name}, which has no way"
 
 
 class KeyboardInput(io.StringIO):
