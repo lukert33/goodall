@@ -80,24 +80,65 @@ security advisories, the PyPI JSON API, OSV.dev and 1Password's release notes.
 | **git** | Always. Goodall commits and pushes records with it (ADR 0001). | The Git project, maintained by Junio C Hamano with a large contributor base; `git/git` is a mirror of the mailing-list repository, ~64,400 stars; GPL-2.0 (from the project's own licence file, not re-read today; GitHub's detector reports none). Newest release v2.56.1. 33 published advisories, most fixed promptly. One is open: GHSA-vp2w-7xxj-jvxr (high, 2026-11-10), code execution when cloning an attacker's repository with `--recurse-submodules`, no patch yet. Goodall never clones, so it does not take that path; a researcher cloning a record repo by hand should not use that option on a repository they do not trust. | **adopt** |
 | **Claude Code** | Always. It is the agent tool goodall records (ADR 0002). | Anthropic; `anthropics/claude-code`, ~156,000 stars; no open-source licence in the repository, so treat it as proprietary. Newest release v2.1.326 (2026-11-16), with releases most days. 36 published advisories between 2025-06 and 2026-10 (29 high, 4 medium, 3 low), covering sandbox escapes, writes outside the workspace and plugin pinning; each names a fixed release. Goodall depends on its hook input and transcript layout, which Anthropic does not promise to keep stable. | **adopt**: it is the subject of the eval, so there is no alternative to weigh. Keep it updated. |
 | **1Password's command-line tool, `op`** | Only when the env file holds a secret reference (ADR 0006). | 1Password (AgileBits Inc.); closed source, proprietary, so the code cannot be reviewed. Newest stable release 2.42.0 (2026-11-03). Known issues: CVE-2022-32550 (medium, fixed in 2.3.0); CVE-2024-42219 (2024-08, a local process on macOS could impersonate a trusted 1Password integration such as the command-line tool; fixed in the 1Password app 8.10.36). An independent researcher's 2023 disclosure about `op` on shared machines was not given a CVE or a fix. Goodall runs only `op whoami`, `op vault list` and `op item list`, and never a command that returns a secret value. | **adopt**, conditional. "Or an equivalent secrets manager" remains the intent; `op` is the only one supported. |
-| **GitHub's command-line tool, `gh`** | `goodall doctor` requires it today, but no goodall code runs it. | GitHub; `cli/cli`, ~47,100 stars; MIT. Newest release v2.104.0 (2026-11-12). 17 published advisories, two high (GHSA-8xvp-7hj6-mcj9, 2026-05; GHSA-p2h2-3vg9-4p87, 2024-11), the rest low or medium, each fixed in a release. It holds a GitHub token with whatever access the account granted it. | **undecided**: required but unused. Either name the planned use or drop the check until one exists. |
+| **GitHub's command-line tool, `gh`** | Always: `goodall doctor` requires it. No goodall code runs it yet. | GitHub; `cli/cli`, ~47,100 stars; MIT. Newest release v2.104.0 (2026-11-12). 17 published advisories, two high (GHSA-8xvp-7hj6-mcj9, 2026-05; GHSA-p2h2-3vg9-4p87, 2024-11), the rest low or medium, each fixed in a release. It holds a GitHub token with whatever access the account granted it. | **adopt** (owner approved 2026-11-17, on the basis that GitHub publishes it) |
+
+The owner approved the git, Claude Code and `op` rows on 2026-11-17 as well.
 
 Versions on the machine goodall is developed on, 2026-11-17: git 2.55.0, `gh`
 2.101.0, `op` 2.34.1. All three are behind the newest release.
 
-### Planned, not adopted
+### Approved, not yet used
 
-No goodall code uses these yet. The facts are here so the decision can be made
-before the code is written.
+No goodall code uses these yet. They are approved so the builds that need them
+are not held up. Each still gets its row in `uv.lock`, or its install
+instructions, in the change that first uses it.
 
 | Program or package | What it would give | Provenance (checked 2026-11-17) | Decision |
 |---|---|---|---|
-| **inspect-ai** 0.3.290 | The transcript and event format goodall exports to (AGENTS.md invariant 8: an optional extra, imported only by export code) | UK AI Security Institute; `UKGovernmentBEIS/inspect_ai`, ~3,300 stars; MIT; Python 3.11 or newer. 40 direct dependencies; installing it alone resolves to 80 packages. No GitHub advisories and no OSV results. Releases several times a week, and the version number is still below 1.0. | **awaiting the owner** |
-| **inspect-scout** 0.6.2 | Analysis of agent transcripts; the target of the planned `goodall export scout` | Meridian Labs; `meridianlabs-ai/inspect_scout`, 90 stars, created 2025-09; MIT. Most commits come from two people who are also core Inspect maintainers. 30 direct dependencies including `inspect-ai`, `duckdb`, `pandas` and `pyarrow`; installed together with `inspect-ai` the total is 95 packages. No GitHub advisories and no OSV results. Young, with few outside users so far. | **awaiting the owner** |
-| **ActivityWatch** v0.14.3 | A record of which application and window had focus, as corroboration of what the human did. Decided early to be optional. | `ActivityWatch/activitywatch`, ~19,700 stars; MPL-2.0. Newest release 2026-11-15. Largely one maintainer: Erik Bjäreholt has about 990 commits, the next human contributor 27. Two advisories, both high and both old: a DNS rebinding attack on its local server (2022) and shell execution from a website on macOS (2021). It runs a local web server and records window titles, which can contain private text. | **not yet assessed**: decide when the integration is designed. The single-maintainer rule (standing rule 4) applies. |
+| **inspect-ai** 0.3.290 | The transcript and event format goodall exports to (AGENTS.md invariant 8: an optional extra, imported only by export code) | UK AI Security Institute; `UKGovernmentBEIS/inspect_ai`, ~3,300 stars; MIT; Python 3.11 or newer. 40 direct dependencies; installing it alone resolves to 80 packages. No GitHub advisories and no OSV results. Releases several times a week, and the version number is still below 1.0. | **adopt** as an optional extra (owner approved 2026-11-17, on the basis that it comes from the UK AI Security Institute's ecosystem) |
+| **inspect-scout** 0.6.2 | Analysis of agent transcripts; the target of the planned `goodall export scout` | Meridian Labs; `meridianlabs-ai/inspect_scout`, 90 stars, created 2025-09; MIT. Most commits come from two people who are also core Inspect maintainers. 30 direct dependencies including `inspect-ai`, `duckdb`, `pandas` and `pyarrow`; installed together with `inspect-ai` the total is 95 packag| **ActivityWatch** v0.14.3 | A record of which application and window had focus, as corroboration of what the human did. Optional for an eval. | `ActivityWatch/activitywatch`, ~19,700 stars; MPL-2.0. Two advisories, both high and both old: a DNS rebinding attack on its local server (2022) and shell execution from a website on macOS (2021). It runs a local web server and records window titles, which can contain private text. See "ActivityWatch: the highest-risk recommendation" below. | **adopt** as an optional, recommended program (owner approved 2026-11-17, knowing it is largely one maintainer's project) |ndow titles, which can contain private text. | **not yet assessed**: decide when the integration is designed. The single-maintainer rule (standing rule 4) applies. |
 
 The 95 packages would be installed only by someone who asks for the export
 extra. A researcher who only records an eval would not get them.
+
+### ActivityWatch: the highest-risk recommendation
+
+Of everything goodall recommends, ActivityWatch carries the most risk: it is
+largely one person's project, it runs a local web server, and it records
+window titles. Standing rule 4 asks for a stated justification before a
+single-maintainer project is adopted. The owner's justification is the
+project's age and the activity around it, set out here as checked on
+2026-11-17.
+
+- **Life of the project.** The repository was created on 2016-04-27 and its
+  first release, v0.1, followed on 2016-06-29. It has 77 releases over ten
+  years. Erik Bjäreholt founded it and still leads it; Johan Bjäreholt is the
+  second long-term author, mostly on the Rust server (266 commits there to
+  Erik's 386).
+- **Size of the community.** ~19,700 stars, 1,078 forks, 37 contributors to
+  the main repository, and 61 repositories in the organisation (server,
+  web interface, watchers for windows, input and browsers, an Android app).
+  Twelve of those repositories were pushed to in the three days before the
+  check. It takes donations through GitHub Sponsors, Open Collective, Patreon
+  and Liberapay.
+- **Activity over time, main repository commits per year.** 2021: 78.
+  2022: 131. 2023: 107. 2024: 35. 2025: 10. 2026: 195 to date.
+- **The quiet stretch.** No stable release appeared between v0.13.2
+  (2024-10-05) and v0.14.0 (2026-10-06), two years, and 2025 saw ten commits.
+  Four releases have followed since 2026-10-06.
+- **Who is doing the recent work.** Of the 191 commits in 2026 that could be
+  attributed, 80 came from `TimeToBuildBob`, an account whose profile says it
+  is an AI agent working with Erik Bjäreholt; 66 from Erik Bjäreholt; 36 from
+  an automated dependency updater; and 9 from five other people. Of the last
+  100 merged pull requests (2026-08-20 to 2026-11-15), 40 were the agent's,
+  28 Erik Bjäreholt's, 8 the updater's and 8 from six other people.
+
+Read together: a ten-year-old project with a large user base and a founder
+who is still shipping, whose current burst of activity is mostly the founder
+and his AI agent. If Erik Bjäreholt stepped away, it is not clear who would
+publish security fixes. That is the risk being accepted. Goodall keeps it
+optional so that an eval can run without it, and revisits this row if a year
+passes without a release.
 
 ## Adopted: development and build tools
 
