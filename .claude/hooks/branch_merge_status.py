@@ -30,6 +30,15 @@ Design decisions a reader would otherwise have to reverse-engineer:
   same branch name was merged: that is a reused name, not a finished branch.
 - The default branch is left alone. Whether an agent may commit there is a
   separate rule (AGENTS.md, "Git").
+- The gate runs before the command does, so a command such as
+  `git switch -c next origin/main && git commit ...` would otherwise be judged
+  by the branch it is leaving. A `git switch` or `git checkout` earlier in the
+  same line, joined to the commit by `&&` all the way, moves the judgement to
+  the branch it switches to. Only a few plain forms are recognised; anything
+  else (unknown options, detached checkouts, `git switch -`, checking out
+  files) falls back to the branch checked out now. Wrongly refusing a commit
+  is cheap; wrongly allowing one onto a finished branch is what this hook
+  exists to prevent.
 - Standard library only, and it calls `subprocess` directly. This file is
   repository tooling that runs before the `goodall` package is importable, so
   the package's runner gateway (AGENTS.md invariant 9) does not apply to it.
@@ -59,21 +68,40 @@ REMINDER_CACHE_FILENAME = "goodall-branch-merge-status.json"
 DEFAULT_BRANCH_NAMES = {"main", "master"}
 GUARDED_GIT_SUBCOMMANDS = {"commit", "push"}
 
+# The options of `git switch` and `git checkout` that create (or reset) a
+# branch, followed by its name: `git switch -c <name> [<start-point>]`.
+BRANCH_CREATING_OPTIONS = {
+    "switch": {"-c", "--create", "-C", "--force-create"},
+    "checkout": {"-b", "-B"},
+}
+# Options that change nothing about which branch ends up checked out.
+QUIET_OPTIONS = {"-q", "--quiet"}
+
 # git options that take a separate value, so the value is not mistaken for
 # the subcommand: `git -C some/dir commit`, `git -c user.name=x commit`.
 GIT_OPTIONS_WITH_A_VALUE = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path"}
 
-# Splits one shell line into its separate commands. Good enough for the
+# Splits one shell line into its separate commands, keeping the separators
+# (the brackets make `re.split` return them too). Good enough for the
 # commands agents write; it does not try to be a full shell parser.
-SHELL_COMMAND_SEPARATORS = re.compile(r"&&|\|\||;|\||\n")
+SHELL_COMMAND_SEPARATORS = re.compile(r"(&&|\|\||;|\||\n)")
+# Only after `&&` is the previous command known to have succeeded, so only
+# then can a branch switch earlier in the line be trusted to have happened.
+SEPARATOR_THAT_NEEDS_SUCCESS = "&&"
 
 
 @dataclass
 class GuardedGitCall:
-    """A `git commit` or `git push` found in a Bash command."""
+    """A `git commit` or `git push` found in a Bash command.
+
+    `branch` is the branch an earlier `git switch` / `git checkout` in the
+    same command will have moved to, or "" to judge the branch checked out
+    in `directory` now.
+    """
 
     subcommand: str
     directory: Path
+    branch: str = ""
 
 
 @dataclass
@@ -120,14 +148,14 @@ def split_into_words(shell_command: str) -> list[str]:
         return shell_command.split()
 
 
-def find_git_subcommand(words: list[str]) -> tuple[str, str]:
-    """Return (subcommand, directory given with -C) for a `git ...` command.
+def find_git_subcommand(words: list[str]) -> tuple[str, str, list[str]]:
+    """Return (subcommand, directory given with -C, the subcommand's arguments).
 
-    Returns ("", "") when the words are not a git command. The directory is
-    "" when no `-C` was given.
+    Returns ("", "", []) when the words are not a git command. The directory
+    is "" when no `-C` was given.
     """
     if not words or Path(words[0]).name != "git":
-        return "", ""
+        return "", "", []
 
     directory = ""
     index = 1
@@ -141,8 +169,59 @@ def find_git_subcommand(words: list[str]) -> tuple[str, str]:
         if word.startswith("-"):
             index += 1
             continue
-        return word, directory
-    return "", directory
+        return word, directory, words[index + 1 :]
+    return "", directory, []
+
+
+def branch_after_switch(subcommand: str, arguments: list[str], directory: Path) -> str:
+    """The branch a `git switch` / `git checkout` leaves checked out, or "" if unsure.
+
+    Recognises only these forms, optionally with `-q`:
+      git switch -c <name> [<start-point>]     (also -C, --create, --force-create)
+      git checkout -b <name> [<start-point>]   (also -B)
+      git switch <name>
+      git checkout <name>   only when <name> is an existing local branch,
+                            because `git checkout <path>` changes files, not
+                            the branch.
+    Everything else returns "", which means "judge the branch checked out
+    now". A created branch is still looked up on GitHub, because a new local
+    branch can reuse the name of one whose pull request was merged.
+    """
+    creating_options = BRANCH_CREATING_OPTIONS[subcommand]
+    created_branch = ""
+    other_words: list[str] = []
+
+    index = 0
+    while index < len(arguments):
+        argument = arguments[index]
+        if argument in QUIET_OPTIONS:
+            index += 1
+            continue
+        # The name must come straight after the creating option, and before
+        # any start point, as in the documented form.
+        creating_comes_first = not created_branch and not other_words
+        if argument in creating_options and creating_comes_first and index + 1 < len(arguments):
+            created_branch = arguments[index + 1]
+            index += 2
+            continue
+        if argument.startswith("-"):
+            # An option not listed above, `-` (the previous branch) or `--`
+            # (paths follow).
+            return ""
+        other_words.append(argument)
+        index += 1
+
+    if created_branch:
+        if created_branch.startswith("-") or len(other_words) > 1:
+            return ""
+        return created_branch
+
+    if len(other_words) != 1:
+        return ""
+    target = other_words[0]
+    if subcommand == "checkout" and not local_branch_exists(target, directory):
+        return ""
+    return target
 
 
 def find_guarded_git_calls(bash_command: str, starting_directory: Path) -> list[GuardedGitCall]:
@@ -151,12 +230,25 @@ def find_guarded_git_calls(bash_command: str, starting_directory: Path) -> list[
     Follows `cd some/dir` earlier in the same line, and `git -C some/dir`,
     because agents usually write `cd <worktree> && git commit ...` and the
     branch that matters is the one in that directory.
+
+    Also follows `git switch` / `git checkout` earlier in the line (see
+    `branch_after_switch`), remembering per directory which branch the
+    command will have moved to. That memory is dropped at any separator
+    other than `&&`: after `;`, `||` or `|` the switch may have failed and
+    the commit would then land on the branch checked out now.
     """
     calls: list[GuardedGitCall] = []
     current_directory = starting_directory
+    # Keyed by the resolved directory, so `cd repo && git -C repo ...` agree.
+    branch_after_switch_by_directory: dict[Path, str] = {}
 
-    for shell_command in SHELL_COMMAND_SEPARATORS.split(bash_command):
-        words = split_into_words(shell_command.strip())
+    # `re.split` with a bracketed pattern gives [command, separator, command, ...].
+    pieces = SHELL_COMMAND_SEPARATORS.split(bash_command)
+    for index in range(0, len(pieces), 2):
+        if index > 0 and pieces[index - 1] != SEPARATOR_THAT_NEEDS_SUCCESS:
+            branch_after_switch_by_directory.clear()
+
+        words = split_into_words(pieces[index].strip())
         if not words:
             continue
 
@@ -164,12 +256,23 @@ def find_guarded_git_calls(bash_command: str, starting_directory: Path) -> list[
             current_directory = (current_directory / words[1]).expanduser()
             continue
 
-        subcommand, dash_c_directory = find_git_subcommand(words)
+        subcommand, dash_c_directory, arguments = find_git_subcommand(words)
+        directory = current_directory
+        if dash_c_directory:
+            directory = (current_directory / dash_c_directory).expanduser()
+
+        if subcommand in BRANCH_CREATING_OPTIONS:
+            target_branch = branch_after_switch(subcommand, arguments, directory)
+            if target_branch:
+                branch_after_switch_by_directory[directory.resolve()] = target_branch
+            else:
+                # Unsure where this switch leads, so forget any earlier one
+                # and judge the branch checked out now.
+                branch_after_switch_by_directory.pop(directory.resolve(), None)
+
         if subcommand in GUARDED_GIT_SUBCOMMANDS:
-            directory = current_directory
-            if dash_c_directory:
-                directory = (current_directory / dash_c_directory).expanduser()
-            calls.append(GuardedGitCall(subcommand=subcommand, directory=directory))
+            branch = branch_after_switch_by_directory.get(directory.resolve(), "")
+            calls.append(GuardedGitCall(subcommand=subcommand, directory=directory, branch=branch))
 
     return calls
 
@@ -215,6 +318,14 @@ def current_branch(directory: Path) -> str:
     return output.strip()
 
 
+def local_branch_exists(branch: str, directory: Path) -> bool:
+    """Whether `branch` is a local branch in the repository at `directory`."""
+    succeeded, _output, _problem = run_command(
+        ["git", "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"], directory, GIT_TIMEOUT_SECONDS
+    )
+    return succeeded
+
+
 def git_directory(directory: Path) -> Path | None:
     """Where git keeps this checkout's private files (differs per worktree)."""
     succeeded, output, _problem = run_command(
@@ -249,9 +360,13 @@ def parse_pull_requests(github_output: str) -> list[PullRequest] | None:
     return pull_requests
 
 
-def look_up_branch_status(directory: Path) -> BranchStatus:
-    """Ask git which branch this is, then ask GitHub about its pull requests."""
-    branch = current_branch(directory)
+def look_up_branch_status(directory: Path, branch: str = "") -> BranchStatus:
+    """Ask GitHub about a branch's pull requests.
+
+    `branch` defaults to the one checked out in `directory`, asked of git.
+    """
+    if not branch:
+        branch = current_branch(directory)
     if not branch or branch in DEFAULT_BRANCH_NAMES:
         return BranchStatus(verdict="not-applicable", branch=branch)
 
@@ -419,7 +534,7 @@ def run_gate(hook_input: dict[str, object]) -> int:
         return EXIT_ALLOW
 
     for call in find_guarded_git_calls(bash_command, directory_from_hook_input(hook_input)):
-        status = look_up_branch_status(call.directory)
+        status = look_up_branch_status(call.directory, call.branch)
         if status.verdict == "merged":
             print(f"Blocked `git {call.subcommand}`. " + describe_finished_branch(status), file=sys.stderr)
             return EXIT_BLOCK

@@ -15,9 +15,12 @@ goodall = "goodall.cli:main"
 
 # Build backend. uv_build ships inside uv itself, so building adds no package
 # beyond the tool this project already relies on. The range matches the uv
-# version in use; raise both together. See docs/DEPENDENCIES.md.
+# version in use; raise both together. The floor is 0.13.4 because every uv
+# below it trusts a compromised certificate authority (GHSA-hq85-5cpj-mr62),
+# so the range never names a uv that should not be in use. See
+# docs/DEPENDENCIES.md.
 [build-system]
-requires = ["uv_build>=0.11.28,<0.12"]
+requires = ["uv_build>=0.13.4,<0.14"]
 build-backend = "uv_build"
 
 # Development-only tools. None of these ships to users. Each has an "adopt"
@@ -31,6 +34,10 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Heavy tests carry the "stress" marker and are skipped by a plain `uv run pytest`;
+# run them with `uv run pytest -m stress`. --strict-markers makes a misspelt marker an error.
+addopts = "-m 'not stress' --strict-markers"
+markers = ["stress: heavy repeated load tests, skipped unless selected with -m stress"]
 
 [tool.ruff]
 line-length = 120
