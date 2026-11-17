@@ -31,6 +31,7 @@ looking at real results, without re-reading transcripts.
 | `typed_prompt` | `is_typed_prompt` | `text`, `image_count` |
 | `interruption` | `interruption_from_marker`, `interruption_from_tool_result` | `interrupted` (`"generate"` or `"tool_call"`), `interrupted_tool_call_id` |
 | `tool_call_rejection` | `rejection_from_tool_result` | `tool_call_id`, `tool_name`, `decision` (always `"reject"`), `feedback` |
+| `shell_command` | `shell_command_from_bash_input` | `text` (the command as typed), `output_line_number`, `output_entry_id` |
 
 `tool_name` is read from the assistant entry that made the call, when it is in
 the same transcript; only the name is kept, never the tool's input.
@@ -59,11 +60,23 @@ Only entries of type `user` can hold a human action. Within one:
 4. **Prepended context** (`strip_prepended_context`). Leading
    `<system-reminder>...</system-reminder>` blocks are removed; what is left is
    what the person typed.
-5. **Typed prompt** (`is_typed_prompt`). What is left after rule 4 counts
-   unless: the entry has `isMeta`, `isCompactSummary` or `isSidechain` true; its
-   `origin.kind` is present and not `human`; the text begins with a harness
-   wrapper tag (`<command-name>`, `<command-message>`, `<local-command-...>`,
-   `<task-notification>`, `<bash-...>`); or there is neither text nor an image.
+5. **From the person** (`is_from_the_person`). Shared by every rule that reads
+   what the person typed: an entry is ruled out when it has `isMeta`,
+   `isCompactSummary` or `isSidechain` true, or its `origin.kind` is present
+   and not `human`.
+6. **Shell command** (`shell_command_from_bash_input`). An entry from the
+   person whose text (after rule 4) begins with `<bash-input>`: the person ran
+   `!command`. `text` is what is inside the tags. If `<bash-stdout>` or
+   `<bash-stderr>` follows in the same entry (newer Claude Code), the output
+   link is that entry.
+7. **Shell command output** (`link_shell_command_output`). In older Claude
+   Code the output is the next entry, beginning with `<bash-stdout>` or
+   `<bash-stderr>`, whose `parentUuid` is the command's entry. The command's
+   output link then names that entry. Output is never copied.
+8. **Typed prompt** (`is_typed_prompt`). What is left after rule 4 counts
+   when rule 5 allows it, unless the text begins with a harness wrapper tag
+   (`<command-name>`, `<command-message>`, `<local-command-...>`,
+   `<task-notification>`, `<bash-...>`), or there is neither text nor an image.
    `userType` is not used: it is `external` on every user entry.
 
 ## Unfamiliar entries
@@ -73,14 +86,13 @@ not JSON or not an object, an entry with no type or an unknown type, a user
 entry with no message content, an unknown content block type, an unknown
 `origin.kind`. Blank lines are skipped. Parsing always carries on.
 
-## Not detected in version 1
+## Not detected in version 2
 
 - **Permission approvals.** Newer transcripts carry `permissionDecision` on
   tool results, with `source` values such as `user_temporary` and
   `user_permanent`, which look like the person's approvals. Not yet used.
-- **Slash commands and shell commands** the person typed (`/command`, `!command`).
-  They are recorded inside wrapper tags and are excluded, even when
-  `origin.kind` is `human`.
+- **Slash commands** the person typed (`/command`). They are recorded inside
+  wrapper tags and are excluded, even when `origin.kind` is `human`.
 - **Interruptions between turns**, which leave nothing in a transcript.
 - **Prompts refused by the prompt gate**, which leave a `queue-operation`
   entry, not a user entry.

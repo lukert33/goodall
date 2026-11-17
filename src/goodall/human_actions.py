@@ -24,7 +24,7 @@ Design decisions a reader would otherwise reverse-engineer:
 """
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Literal
 
@@ -66,6 +66,11 @@ class ClaudeCodeMarkers:
     # a human action; the rest are known not to, and any other type is
     # reported as unfamiliar.
     known_entry_types: tuple[str, ...]
+    # The tags around a shell command the person ran with `!`, and the tags
+    # that begin the command's output.
+    shell_command_opening_tag: str
+    shell_command_closing_tag: str
+    shell_output_opening_tags: tuple[str, ...]
     # Block types known to appear in a "user" entry's message content.
     known_content_block_types: tuple[str, ...]
     # Values of a "user" entry's `origin.kind`; only "human" is the person.
@@ -110,6 +115,9 @@ def claude_code_markers() -> ClaudeCodeMarkers:
             "artifact-autoreact-ledger",
             "artifact-comment-monitor",
         ),
+        shell_command_opening_tag="<bash-input>",
+        shell_command_closing_tag="</bash-input>",
+        shell_output_opening_tags=("<bash-stdout>", "<bash-stderr>"),
         known_content_block_types=("text", "image", "document", "tool_result"),
         known_origin_kinds=("human", "task-notification", "peer", "coordinator"),
         prepended_context_opening_tag="<system-reminder>",
@@ -214,7 +222,32 @@ class ToolCallRejection:
     duration_seconds: float | None = field(default=None, init=False)
 
 
-TranscriptAction = TypedPrompt | Interruption | ToolCallRejection
+@dataclass(frozen=True, kw_only=True)
+class ShellCommand:
+    """A shell command the person ran themselves inside Claude Code, with `!`.
+
+    `text` is the command as typed: it is the person's own work, kept like a
+    prompt's text. The command's output is not copied; `output_line_number`
+    and `output_entry_id` point at the entry holding it, which is the same
+    entry in newer Claude Code versions and the next one in older versions,
+    or are None when no output was recorded.
+    """
+
+    line_number: int
+    entry_id: str | None
+    session_id: str | None
+    timestamp: str | None
+    text: str
+    output_line_number: int | None
+    output_entry_id: str | None
+    transcript_path: Path | None = field(default=None, compare=False)
+    source: str = field(default=SOURCE, init=False)
+    kind: str = field(default="shell_command", init=False)
+    rule: str = field(default="shell_command_from_bash_input", init=False)
+    duration_seconds: float | None = field(default=None, init=False)
+
+
+TranscriptAction = TypedPrompt | Interruption | ToolCallRejection | ShellCommand
 
 
 @dataclass(frozen=True)
@@ -301,11 +334,14 @@ def parse_human_actions(transcript_path: Path) -> ParseResult:
             user_content = read_user_content(entry, markers)
             for reason in user_content.unfamiliar_reasons:
                 result.unfamiliar_entries.append(UnfamiliarEntry(line_number, entry_id, reason))
+            link_shell_command_output(entry, place, user_content.text, result.actions, memory, markers)
             actions = actions_from_user_entry(entry, place, user_content, markers, memory)
             for action in actions:
                 if isinstance(action, ToolCallRejection) and action.entry_id is not None:
                     memory.rejection_entry_ids.add(action.entry_id)
-            result.actions.extend(actions)
+                if isinstance(action, ShellCommand) and action.entry_id is not None and action.output_entry_id is None:
+                    memory.shell_command_positions[action.entry_id] = len(result.actions)
+                result.actions.append(action)
     return result
 
 
@@ -323,6 +359,9 @@ class TranscriptMemory:
     # The tool each tool call asked for, by call id, read from the assistant
     # entries that made the calls. Only names are kept, never tool inputs.
     tool_names_by_call_id: dict[str, str] = field(default_factory=dict)
+    # Where in the action list each shell command with no output yet sits, by
+    # its entry id, so older versions' separate output entry can be linked.
+    shell_command_positions: dict[str, int] = field(default_factory=dict)
 
 
 def remember_tool_calls(entry: dict[str, Any], memory: TranscriptMemory) -> None:
@@ -448,6 +487,10 @@ def actions_from_user_entry(
         return [interruption]
 
     typed_text = strip_prepended_context(content.text, markers)
+    shell_command = shell_command_from_bash_input(entry, place, typed_text, markers)
+    if shell_command is not None:
+        return [shell_command]
+
     if is_typed_prompt(entry, typed_text, content.image_count, markers):
         prompt = TypedPrompt(
             line_number=place.line_number,
@@ -460,6 +503,64 @@ def actions_from_user_entry(
         )
         return [prompt]
     return []
+
+
+def shell_command_from_bash_input(
+    entry: dict[str, Any], place: EntryPlace, typed_text: str, markers: ClaudeCodeMarkers
+) -> ShellCommand | None:
+    """Rule: an entry from the person that begins with a shell-command tag is a shell command.
+
+    Claude Code records a `!command` as the command inside `<bash-input>`
+    tags, followed by its output in `<bash-stdout>` and `<bash-stderr>` tags
+    in the same entry (newer versions) or in the next entry (older versions,
+    linked by `link_shell_command_output`). The tag must open the text: a
+    prompt that mentions it part-way through is a prompt.
+    """
+    if not is_from_the_person(entry):
+        return None
+    if not typed_text.startswith(markers.shell_command_opening_tag):
+        return None
+    closing_position = typed_text.find(markers.shell_command_closing_tag)
+    if closing_position == -1:
+        return None
+    command = typed_text[len(markers.shell_command_opening_tag) : closing_position]
+    after_command = typed_text[closing_position + len(markers.shell_command_closing_tag) :].lstrip()
+    output_in_same_entry = after_command.startswith(markers.shell_output_opening_tags)
+    return ShellCommand(
+        line_number=place.line_number,
+        entry_id=place.entry_id,
+        session_id=place.session_id,
+        timestamp=place.timestamp,
+        transcript_path=place.transcript_path,
+        text=command,
+        output_line_number=place.line_number if output_in_same_entry else None,
+        output_entry_id=place.entry_id if output_in_same_entry else None,
+    )
+
+
+def link_shell_command_output(
+    entry: dict[str, Any],
+    place: EntryPlace,
+    text: str,
+    actions: list[TranscriptAction],
+    memory: TranscriptMemory,
+    markers: ClaudeCodeMarkers,
+) -> None:
+    """Rule: output whose parent is a shell command with no output yet is that command's output.
+
+    Older Claude Code versions write a `!command`'s output as a separate entry
+    whose parent is the command's entry. The command's record is replaced by
+    one that points at the output entry. The output is not copied.
+    """
+    if not text.lstrip().startswith(markers.shell_output_opening_tags):
+        return
+    parent_id = entry.get("parentUuid")
+    if not isinstance(parent_id, str) or parent_id not in memory.shell_command_positions:
+        return
+    position = memory.shell_command_positions.pop(parent_id)
+    command = actions[position]
+    if isinstance(command, ShellCommand) and command.output_line_number is None:
+        actions[position] = replace(command, output_line_number=place.line_number, output_entry_id=place.entry_id)
 
 
 def interruption_from_marker(place: EntryPlace, text: str, markers: ClaudeCodeMarkers) -> Interruption | None:
@@ -567,13 +668,11 @@ def strip_prepended_context(text: str, markers: ClaudeCodeMarkers) -> str:
     return remainder
 
 
-def is_typed_prompt(entry: dict[str, Any], typed_text: str, image_count: int, markers: ClaudeCodeMarkers) -> bool:
-    """Rule: decide whether a "user" entry holding text was typed by the person.
+def is_from_the_person(entry: dict[str, Any]) -> bool:
+    """Rule: rule out "user" entries that the entry itself says the person did not write.
 
-    `typed_text` is the entry's text with any prepended context already
-    removed. The trap: Claude Code writes `userType: "external"` on every user
-    entry, injected or not, so that field cannot tell them apart. The checks
-    below run from the most to the least reliable signal.
+    Shared by every rule that reads what the person typed into a user entry.
+    It says only who did not write an entry; each rule then checks the text.
     """
     # Claude Code marks some injected entries outright.
     if entry.get("isMeta") is True or entry.get("isCompactSummary") is True:
@@ -587,10 +686,23 @@ def is_typed_prompt(entry: dict[str, Any], typed_text: str, image_count: int, ma
     origin = entry.get("origin")
     if isinstance(origin, dict) and origin.get("kind") != "human":
         return False
-    # Wrappers the harness writes: slash-command records, command output,
-    # task notifications. These are checked even when origin says "human",
-    # because a slash command the person typed is recorded in a wrapper and
-    # version 1 does not count slash commands as typed prompts.
+    return True
+
+
+def is_typed_prompt(entry: dict[str, Any], typed_text: str, image_count: int, markers: ClaudeCodeMarkers) -> bool:
+    """Rule: decide whether a "user" entry holding text was typed by the person.
+
+    `typed_text` is the entry's text with any prepended context already
+    removed. The trap: Claude Code writes `userType: "external"` on every user
+    entry, injected or not, so that field cannot tell them apart. The checks
+    below run from the most to the least reliable signal.
+    """
+    if not is_from_the_person(entry):
+        return False
+    # Wrappers the harness writes: slash-command records, shell commands and
+    # their output, task notifications. These are checked even when origin
+    # says "human", because what the person typed inside a wrapper is a
+    # different kind of action, found by its own rule.
     for prefix in markers.harness_text_prefixes:
         if typed_text.startswith(prefix):
             return False

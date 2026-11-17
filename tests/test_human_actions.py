@@ -12,6 +12,7 @@ from pathlib import Path
 from goodall.human_actions import (
     RULES_VERSION,
     Interruption,
+    ShellCommand,
     ToolCallRejection,
     TypedPrompt,
     UnfamiliarEntry,
@@ -210,6 +211,58 @@ def test_unfamiliar_and_malformed_entries_are_reported_and_parsing_continues() -
     # only an origin of "human" counts as the person.
     prompt_lines = [action.line_number for action in result.actions]
     assert prompt_lines == [1, 8, 10]
+
+
+def test_shell_commands_the_person_ran_are_found_with_a_link_to_their_output() -> None:
+    result = parse_human_actions(FIXTURES / "shell_commands.jsonl")
+
+    assert result.actions == [
+        # Newer Claude Code writes the command and its output in one entry.
+        ShellCommand(
+            line_number=1,
+            entry_id="u-0001",
+            session_id="session-g",
+            timestamp="2026-03-02T10:00:00.000Z",
+            text="ls example-folder",
+            output_line_number=1,
+            output_entry_id="u-0001",
+        ),
+        # Older Claude Code writes the output as the next entry. The link
+        # names that entry; the output itself is not copied.
+        ShellCommand(
+            line_number=3,
+            entry_id="u-0003",
+            session_id="session-g",
+            timestamp="2026-03-02T10:01:00.000Z",
+            text="make example",
+            output_line_number=4,
+            output_entry_id="u-0004",
+        ),
+        # Near miss: a prompt that mentions the tag part-way through is a prompt.
+        TypedPrompt(
+            line_number=5,
+            entry_id="u-0005",
+            session_id="session-g",
+            timestamp="2026-03-02T10:02:00.000Z",
+            text="Why does the text <bash-input> appear in the example log?",
+            image_count=0,
+        ),
+        # Line 6 is marked meta, so the harness wrote it. Line 7 is output
+        # with no command before it. Neither is the person.
+        # A command with no output yet has no link.
+        ShellCommand(
+            line_number=8,
+            entry_id="u-0008",
+            session_id="session-g",
+            timestamp="2026-03-02T10:05:00.000Z",
+            text="git status",
+            output_line_number=None,
+            output_entry_id=None,
+        ),
+    ]
+    assert result.actions[0].kind == "shell_command"
+    assert result.actions[0].rule == "shell_command_from_bash_input"
+    assert result.unfamiliar_entries == []
 
 
 def test_text_the_harness_wrote_is_not_a_human_action() -> None:
