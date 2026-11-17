@@ -105,8 +105,20 @@ prompt.
   `UserPromptSubmit` returns it. This is Claude Code's code for refusing a
   prompt; goodall's own commands use 3 for "the prompt gate is closed"
   (AGENTS.md), but Claude Code would let a prompt through on 3.
-- `1`: the hook command is missing its event name. Claude Code shows the
-  message and carries on.
+- `1`: neither the hook command nor what Claude Code sent names an event
+  goodall handles. Goodall prints nothing, so nothing reaches Claude, and
+  Claude Code carries on. The moment is noted in
+  `hook-problems/hook-problems.jsonl` in the log directory (when goodall is
+  set up and the log directory can be reached), and the next
+  `goodall status`, `start` or `stop` warns once that the hook settings need
+  checking against this page.
+
+A command written as a bare `goodall hook`, with no event, still works: goodall
+takes the event from `hook_event_name` in what Claude Code sends, and behaves
+exactly as if it had been named. When both name an event and they disagree,
+the command line wins. A command naming an event goodall does not handle,
+such as `goodall hook PreToolUse`, leaves a heartbeat, exits 0 silently, and
+is noted the same way.
 
 ## Checking it works
 

@@ -17,6 +17,15 @@ One line looks like:
 `problem` is one of a fixed set of words (PROBLEMS). The hook's input is
 never stored, not a byte of it: it holds the person's prompt.
 
+Two kinds of problem are noted:
+
+- Input the prompt gate could not read (INPUT_PROBLEMS).
+- A hook that ran without being told which Claude Code event it was for,
+  or for an event goodall does not handle (EVENT_PROBLEMS): its command in
+  Claude Code's settings is wrong, so prompts may flow unrecorded or
+  ungated. `event` is then null, because the name, if any, came from input
+  goodall cannot vouch for.
+
 Why it exists (the owner's decision, 2026-11-17): when the prompt gate
 cannot read what Claude Code sent with a prompt, perhaps because a newer
 Claude Code changed the shape of its input, it lets the prompt through while
@@ -34,9 +43,11 @@ Decisions a reader would otherwise reverse-engineer (PROVISIONAL):
   first command that settles reads the file, says how many times and since
   when, and moves the file into `reported/`, kept, not deleted. If it
   happens again, the next command says so again.
-- Only the prompt gate writes here. Other events with unreadable input
-  still leave a heartbeat without a Claude session, silently, as before; a
-  line per tool call would flood the file while saying nothing new.
+- Unreadable input is noted only by the prompt gate. Other events with
+  unreadable input still leave a heartbeat without a Claude session,
+  silently, as before; a line per tool call would flood the file while
+  saying nothing new. An unknown event is noted by every hook, because
+  each one means the hook settings need fixing.
 """
 
 import json
@@ -54,7 +65,12 @@ REPORTED_FOLDER_NAME = "reported"
 # it was not one JSON object; it named no Claude session; or what it named is
 # not a Claude session id (a lowercase UUID).
 INPUT_PROBLEMS = ("empty", "not_json", "no_session_id", "session_id_not_uuid")
-PROBLEMS = INPUT_PROBLEMS
+
+# Why a hook did not know which event it was for: neither its command line
+# nor its input named one; or the one named is not an event goodall handles.
+EVENT_PROBLEMS = ("no_event_name", "event_not_known")
+
+PROBLEMS = INPUT_PROBLEMS + EVENT_PROBLEMS
 
 # Readable and writable by this macOS user account only, like everything
 # else goodall keeps in the log directory.
@@ -63,7 +79,7 @@ FOLDER_PERMISSIONS = 0o700
 
 
 def record_hook_problem(
-    log_directory: Path, now: datetime, event_name: str, work_block_id: str | None, problem: str
+    log_directory: Path, now: datetime, event_name: str | None, work_block_id: str | None, problem: str
 ) -> None:
     """Append one line saying a hook met `problem`, so `goodall status` can say so later.
 
@@ -96,12 +112,17 @@ def record_hook_problem(
 class HookProblems:
     """What the problems file said when a command took it: how many of each kind, and since when.
 
-    `filed_at` is where the lines were moved and are kept, or the file
-    itself when moving it failed.
+    `unreadable_inputs` counts prompts whose input could not be read, and
+    `unknown_events` hooks that did not know their event; each `..._since`
+    is the earliest moment of that kind, None when there were none or no
+    time could be read. `filed_at` is where the lines were moved and are
+    kept, or the file itself when moving it failed.
     """
 
     unreadable_inputs: int
-    first_at: datetime | None
+    unreadable_inputs_since: datetime | None
+    unknown_events: int
+    unknown_events_since: datetime | None
     filed_at: Path
 
 
@@ -119,15 +140,22 @@ def take_hook_problems(log_directory: Path, now: datetime) -> HookProblems | Non
     except OSError:
         return None
     unreadable_inputs = 0
-    first_at = None
+    unreadable_inputs_since = None
+    unknown_events = 0
+    unknown_events_since = None
     for line in text.splitlines():
         if line.strip() == "":
             continue
-        unreadable_inputs += 1
-        at = read_moment(line)
-        if at is not None and (first_at is None or at < first_at):
-            first_at = at
-    if unreadable_inputs == 0:
+        problem, at = read_line(line)
+        if problem in EVENT_PROBLEMS:
+            unknown_events += 1
+            if at is not None and (unknown_events_since is None or at < unknown_events_since):
+                unknown_events_since = at
+        else:
+            unreadable_inputs += 1
+            if at is not None and (unreadable_inputs_since is None or at < unreadable_inputs_since):
+                unreadable_inputs_since = at
+    if unreadable_inputs == 0 and unknown_events == 0:
         return None
 
     filed_at = problems_file
@@ -141,18 +169,30 @@ def take_hook_problems(log_directory: Path, now: datetime) -> HookProblems | Non
         filed_at = reported_file
     except OSError:
         pass
-    return HookProblems(unreadable_inputs=unreadable_inputs, first_at=first_at, filed_at=filed_at)
+    return HookProblems(
+        unreadable_inputs=unreadable_inputs,
+        unreadable_inputs_since=unreadable_inputs_since,
+        unknown_events=unknown_events,
+        unknown_events_since=unknown_events_since,
+        filed_at=filed_at,
+    )
 
 
-def read_moment(line: str) -> datetime | None:
-    """The `at` of one line, or None when the line or its time cannot be read."""
+def read_line(line: str) -> tuple[str | None, datetime | None]:
+    """The `problem` and `at` of one line; None for either part that cannot be read."""
     try:
         values = json.loads(line)
     except json.JSONDecodeError:
-        return None
-    if not isinstance(values, dict) or not isinstance(values.get("at"), str):
-        return None
-    try:
-        return datetime.fromisoformat(values["at"]).astimezone(UTC)
-    except ValueError:
-        return None
+        return None, None
+    if not isinstance(values, dict):
+        return None, None
+    problem = values.get("problem")
+    if not isinstance(problem, str):
+        problem = None
+    at = None
+    if isinstance(values.get("at"), str):
+        try:
+            at = datetime.fromisoformat(values["at"]).astimezone(UTC)
+        except ValueError:
+            at = None
+    return problem, at
