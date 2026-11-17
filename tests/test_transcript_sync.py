@@ -15,12 +15,20 @@ was seen to use in the hook spike (goodall-fs9.1, `bd memories transcript`):
                                                    (with .meta.json and .prefix.json beside it)
 """
 
+import io
 import json
 import os
 import subprocess
 import sys
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
+
+import pytest
+
+from goodall import cli
+from goodall.fake_runner import FakeRunner
+from goodall.terminal import Terminal
 
 CLAUDE_SESSION = "0f6c1d2e-3a4b-4c5d-8e9f-a0b1c2d3e4f5"
 PROJECT_FOLDER_NAME = "-Users-ada-work"
@@ -59,12 +67,44 @@ class EvalAccount:
         return self.log_directory / "transcripts"
 
 
+EVAL_CONFIG_TEXT = """\
+schema_version = 1
+name = "goodall-pilot"
+description = "A test eval."
+workstreams = ["research"]
+intervention_categories = ["infrastructure"]
+
+[[contributors]]
+id = "ada-lovelace"
+display_name = "Ada Lovelace"
+
+[[scope]]
+repository = "github.com/your-org/goodall-pilot-app"
+paths = ["**"]
+"""
+
+
+def git(working_directory: Path, *arguments: str) -> None:
+    """Run git for the test's own setup, free of any GIT_ variable the test run inherited."""
+    environment = {}
+    for name, value in os.environ.items():
+        if not name.startswith("GIT_"):
+            environment[name] = value
+    subprocess.run(["git", *arguments], cwd=working_directory, env=environment, capture_output=True, check=True)
+
+
 def make_eval_account(tmp_path: Path) -> EvalAccount:
-    """Local settings naming a record repo and a log directory, and an empty Claude projects folder."""
+    """Local settings, a record repo holding the eval config, a log directory, and an empty Claude projects folder."""
     config_directory = tmp_path / "goodall-config"
     config_directory.mkdir()
     record_repo = tmp_path / "records"
     record_repo.mkdir()
+    git(record_repo, "init", "--quiet", "--initial-branch=main")
+    git(record_repo, "config", "user.name", "Ada Lovelace")
+    git(record_repo, "config", "user.email", "ada.lovelace@example.org")
+    (record_repo / "eval.toml").write_text(EVAL_CONFIG_TEXT)
+    git(record_repo, "add", "eval.toml")
+    git(record_repo, "commit", "--quiet", "-m", "Start the record repo")
     log_directory = tmp_path / "logs"
     log_directory.mkdir()
     (config_directory / "local-settings.toml").write_text(
@@ -254,3 +294,88 @@ def test_a_transcript_that_grew_between_two_hooks_is_copied_again_in_full(tmp_pa
     }
     # Growth is the normal case, so nothing is kept aside for it.
     assert not (eval_account.log_directory / "superseded-transcripts").exists()
+
+
+# ---------------------------------------------------------------------------
+# The sweep: goodall start, stop and status copy whatever the hooks missed
+# ---------------------------------------------------------------------------
+
+MONDAY_MORNING = datetime(2026, 11, 16, 9, 30, tzinfo=UTC)
+
+
+@dataclass(frozen=True)
+class GoodallRun:
+    """What one run of a goodall command did, as the person who ran it would see it."""
+
+    exit_code: int
+    standard_output: str
+    standard_error: str
+
+    @property
+    def everything_printed(self) -> str:
+        """Both streams, with each run of spaces and line breaks made one space, for phrase checks."""
+        return " ".join((self.standard_output + "\n" + self.standard_error).split())
+
+
+def run_goodall(eval_account: EvalAccount, monkeypatch: pytest.MonkeyPatch, arguments: list[str]) -> GoodallRun:
+    """Run a goodall command in this process, with a captured terminal, the fake runner and a fixed clock."""
+    monkeypatch.setenv("GOODALL_CONFIG_DIR", str(eval_account.config_directory))
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(eval_account.claude_config_directory))
+    for name in list(os.environ):
+        if name.startswith("GIT_"):
+            monkeypatch.delenv(name)
+    runner = FakeRunner()
+    runner.answer(["claude", "--version"], standard_output="2.1.274 (Claude Code)\n")
+    standard_output = io.StringIO()
+    standard_error = io.StringIO()
+    terminal = Terminal(standard_output=standard_output, standard_error=standard_error)
+    exit_code = cli.main(arguments, terminal=terminal, runner=runner, clock=lambda: MONDAY_MORNING)
+    return GoodallRun(exit_code, standard_output.getvalue(), standard_error.getvalue())
+
+
+def test_goodall_start_copies_a_transcript_left_behind_by_a_killed_claude_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    eval_account = make_eval_account(tmp_path)
+    eval_account.transcript.write_bytes(FIRST_LINES)
+    run_hook(eval_account, "PostToolUse", hook_input(eval_account, "PostToolUse", tool_name="Bash"))
+    # Claude Code was killed (SIGKILL fires no hook) after writing more.
+    with eval_account.transcript.open("ab") as transcript:
+        transcript.write(MORE_LINES)
+    expected_subagent_files = write_subagent_files(eval_account)
+
+    start = run_goodall(eval_account, monkeypatch, ["start"])
+
+    assert start.exit_code == 0, start.standard_error
+    assert files_and_bytes(eval_account.copied_transcripts) == {
+        f"{PROJECT_FOLDER_NAME}/{CLAUDE_SESSION}.jsonl": FIRST_LINES + MORE_LINES,
+        **expected_subagent_files,
+    }
+    assert "Brought the copy of 1 Claude session's transcript up to date in the log directory." in (
+        start.everything_printed
+    )
+
+
+def test_goodall_status_copies_every_claude_session_in_every_project_folder_and_says_so_only_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    eval_account = make_eval_account(tmp_path)
+    eval_account.transcript.write_bytes(FIRST_LINES)
+    other_project_folder = eval_account.project_folder.parent / "-Users-ada-other"
+    other_project_folder.mkdir()
+    other_session = "5b8e2a71-9c04-4d3f-b6a2-17e0c9d4f8a3"
+    (other_project_folder / f"{other_session}.jsonl").write_bytes(MORE_LINES)
+    # Not a Claude session's transcript, so not copied.
+    (other_project_folder / "notes.jsonl").write_bytes(b"{}\n")
+
+    first_status = run_goodall(eval_account, monkeypatch, ["status"])
+    second_status = run_goodall(eval_account, monkeypatch, ["status"])
+
+    assert files_and_bytes(eval_account.copied_transcripts) == {
+        f"{PROJECT_FOLDER_NAME}/{CLAUDE_SESSION}.jsonl": FIRST_LINES,
+        f"-Users-ada-other/{other_session}.jsonl": MORE_LINES,
+    }
+    assert "Brought the copies of 2 Claude sessions' transcripts up to date in the log directory." in (
+        first_status.everything_printed
+    )
+    assert "transcript" not in second_status.everything_printed

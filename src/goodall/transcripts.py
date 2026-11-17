@@ -57,8 +57,11 @@ import enum
 import os
 import secrets
 import stat
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+
+from goodall import records
 
 # The folder in the log directory that mirrors Claude Code's projects folder.
 TRANSCRIPTS_FOLDER_NAME = "transcripts"
@@ -80,6 +83,15 @@ CHUNK_BYTES = 1024 * 1024
 
 # Temporary files end with this, so a leftover one is easy to recognise.
 TEMPORARY_SUFFIX = ".goodall-tmp"
+
+
+class FileOutcome(enum.Enum):
+    """What copying one file did."""
+
+    UNCHANGED = "unchanged"
+    COPIED = "copied"
+    # The earlier copy was not the start of the source, so it was kept aside.
+    COPIED_AND_EARLIER_COPY_KEPT = "copied_and_earlier_copy_kept"
 
 
 def claude_projects_folder() -> Path:
@@ -126,22 +138,99 @@ class TranscriptPathRefused(ValueError):
     """A hook named a transcript path goodall will not copy from; the message says why, without the path."""
 
 
+@dataclass
+class SweepResult:
+    """What a sweep did: how many Claude sessions it copied, earlier copies it kept aside, and what failed.
+
+    `problems` holds one plain sentence for each Claude session that could
+    not be copied, naming it and saying what went wrong.
+    """
+
+    claude_sessions_copied: int = 0
+    earlier_copies_kept: int = 0
+    problems: list[str] = field(default_factory=list)
+
+
+def sweep(projects_folder: Path, log_directory: Path, now: datetime) -> SweepResult:
+    """Copy every Claude session in every project folder that has changed since it was last copied.
+
+    `goodall start`, `stop` and `status` run this, because a Claude Code
+    killed with SIGKILL, or a Mac that lost power, fires no hook, and the
+    sweep is then the only thing that copies what the hooks missed.
+
+    It covers every Claude session in the Claude projects folder, not only
+    those a work block's heartbeats named: an eval account is used for the
+    eval and nothing else (ADR 0008), so copying too much is the safer
+    mistake. A Claude session is a `<session id>.jsonl` file, or a
+    `<session id>/` folder, directly inside a project folder; anything else
+    is left alone. Unchanged files cost two stats each and are not read.
+    """
+    result = SweepResult()
+    for project_folder_name in list_folders(projects_folder):
+        for claude_session in list_claude_sessions(projects_folder / project_folder_name):
+            try:
+                outcomes = copy_claude_session(projects_folder, log_directory, project_folder_name, claude_session, now)
+            except OSError as error:
+                result.problems.append(f"Claude session {claude_session}: {error.strerror or error}.")
+                continue
+            if FileOutcome.COPIED in outcomes or FileOutcome.COPIED_AND_EARLIER_COPY_KEPT in outcomes:
+                result.claude_sessions_copied += 1
+            result.earlier_copies_kept += outcomes.count(FileOutcome.COPIED_AND_EARLIER_COPY_KEPT)
+    return result
+
+
+def list_folders(folder: Path) -> list[str]:
+    """The names of the real folders (not symbolic links) directly inside `folder`, sorted; none when it is missing."""
+    folder_status = status_or_none(folder)
+    if folder_status is None or not stat.S_ISDIR(folder_status.st_mode):
+        return []
+    folder_names = []
+    with os.scandir(folder) as entries:
+        for entry in entries:
+            if entry.is_dir(follow_symlinks=False):
+                folder_names.append(entry.name)
+    return sorted(folder_names)
+
+
+def list_claude_sessions(project_folder: Path) -> list[str]:
+    """The Claude session ids in one project folder: from `<id>.jsonl` files and `<id>/` folders, sorted."""
+    claude_sessions = set()
+    with os.scandir(project_folder) as entries:
+        for entry in entries:
+            name = entry.name
+            if entry.is_file(follow_symlinks=False) and name.endswith(".jsonl"):
+                name = name.removesuffix(".jsonl")
+            elif not entry.is_dir(follow_symlinks=False):
+                continue
+            if records.CLAUDE_SESSION_ID_PATTERN.fullmatch(name):
+                claude_sessions.add(name)
+    return sorted(claude_sessions)
+
+
 def copy_claude_session(
     projects_folder: Path, log_directory: Path, project_folder_name: str, claude_session: str, now: datetime
-) -> None:
+) -> list[FileOutcome]:
     """Copy one Claude session's files into the same places under the log directory's `transcripts` folder.
 
     The files are the transcript, `<session id>.jsonl`, and every file in
     `<session id>/subagents/` (each subagent's transcript, with its
     `.meta.json` and `.prefix.json`). Anything else in `<session id>/`,
-    and any folder inside `subagents/`, is not copied.
+    and any folder inside `subagents/`, is not copied. A file that is not
+    there (yet, or any more) is skipped. Returns what happened to each file
+    copied or left alone.
     """
     relative_paths = [Path(project_folder_name) / f"{claude_session}.jsonl"]
     subagents_folder = Path(project_folder_name) / claude_session / SUBAGENTS_FOLDER_NAME
     for subagent_file_name in list_regular_files(projects_folder / subagents_folder):
         relative_paths.append(subagents_folder / subagent_file_name)
+    outcomes = []
     for relative_path in relative_paths:
-        copy_file(projects_folder, log_directory, relative_path, now)
+        try:
+            outcomes.append(copy_file(projects_folder, log_directory, relative_path, now))
+        except FileNotFoundError as error:
+            if error.filename != str(projects_folder / relative_path):
+                raise
+    return outcomes
 
 
 def list_regular_files(folder: Path) -> list[str]:
@@ -176,15 +265,6 @@ def make_folders(log_directory: Path, folder_names: list[str]) -> Path:
         folder = folder / folder_name
         folder.mkdir(mode=FOLDER_PERMISSIONS, exist_ok=True)
     return folder
-
-
-class FileOutcome(enum.Enum):
-    """What copying one file did."""
-
-    UNCHANGED = "unchanged"
-    COPIED = "copied"
-    # The earlier copy was not the start of the source, so it was kept aside.
-    COPIED_AND_EARLIER_COPY_KEPT = "copied_and_earlier_copy_kept"
 
 
 def copy_file(projects_folder: Path, log_directory: Path, relative_path: Path, now: datetime) -> FileOutcome:
