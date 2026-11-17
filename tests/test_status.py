@@ -21,6 +21,9 @@ import pytest
 from goodall import cli, exit_codes
 from goodall.terminal import Terminal
 
+# An obviously made-up key, used wherever a test checks that goodall never repeats a value.
+SYNTHETIC_SECRET = "sk-ant-api03-SYNTHETICsyntheticSYNTHETIC"
+
 
 def run_goodall(arguments: list[str]) -> tuple[int, str, str]:
     """Run goodall with a captured terminal.
@@ -117,9 +120,29 @@ def test_relative_override_is_refused(tmp_path: Path, monkeypatch: pytest.Monkey
 
     assert exit_code == exit_codes.ERROR
     assert standard_output == ""
-    assert standard_error.startswith("FAIL  GOODALL_CONFIG_DIR is set to relative/goodall-config")
+    assert standard_error.startswith("FAIL  GOODALL_CONFIG_DIR is not an absolute path")
     assert "absolute" in standard_error
     assert files_under(tmp_path) == []
+
+
+@pytest.mark.parametrize("extra_arguments", [[], ["--json"]])
+def test_relative_override_is_never_repeated_back_because_it_may_be_a_pasted_secret(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, extra_arguments: list[str]
+) -> None:
+    # Someone who pastes a key into the wrong variable must not see goodall
+    # print it (ADR 0006), so the message names the variable and nothing else.
+    monkeypatch.setenv("GOODALL_CONFIG_DIR", SYNTHETIC_SECRET)
+    monkeypatch.chdir(tmp_path)
+
+    exit_code, standard_output, standard_error = run_goodall(["status", *extra_arguments])
+
+    assert exit_code == exit_codes.ERROR
+    assert "SYNTHETIC" not in standard_output + standard_error
+    message = " ".join((standard_output + standard_error).split())
+    assert "GOODALL_CONFIG_DIR" in message
+    assert "full path starting with /" in message
+    assert "for example /Users/you/goodall-config" in message
+    assert "unset it" in message
 
 
 def test_status_json_reports_the_same_failure_on_standard_output(empty_config_directory: Path) -> None:
@@ -478,7 +501,45 @@ def test_relative_folder_setting_is_reported(eval_account: EvalAccount) -> None:
     _, _, standard_error = run_goodall(["status"])
 
     assert "record_repo" in standard_error
-    assert "evals/goodall-pilot-records" in standard_error
+    assert "full path" in standard_error
+    assert failure_kinds() == ["local_settings_value_invalid"]
+
+
+def test_a_folder_setting_that_is_not_a_path_is_never_echoed(eval_account: EvalAccount) -> None:
+    # A value that is not a full path may be a key pasted into the wrong
+    # setting, so it is shown only once it is known to be a path.
+    pasted_secret = "sk-ant-api03-SYNTHETICsyntheticSYNTHETIC"
+    eval_account.write_settings(
+        eval_account.valid_settings_text().replace('"~/evals/goodall-pilot-records"', f'"{pasted_secret}"')
+    )
+
+    printed = everything_goodall_printed()
+
+    assert "SYNTHETICsynthetic" not in printed
+    assert "record_repo" in printed
+    assert failure_kinds() == ["local_settings_value_invalid"]
+
+
+@pytest.mark.parametrize("setting_name", ["record_repo", "log_directory"])
+def test_a_folder_setting_with_a_null_character_is_a_failure_not_a_crash(
+    eval_account: EvalAccount, setting_name: str
+) -> None:
+    # TOML can hold a null character (written \u0000), which no path on macOS
+    # can contain; asking the disk about such a path raises ValueError.
+    settings_lines = []
+    for line in eval_account.valid_settings_text().splitlines():
+        if line.startswith(setting_name):
+            line = f'{setting_name} = "/Users/SYNTHETICsynthetic\\u0000/records"'
+        settings_lines.append(line)
+    eval_account.write_settings("\n".join(settings_lines) + "\n")
+    eval_account.write_eval_config(VALID_EVAL_CONFIG_TEXT)
+
+    exit_code, _, standard_error = run_goodall(["status"])
+
+    assert exit_code == exit_codes.ERROR
+    assert standard_error.startswith("FAIL")
+    assert setting_name in standard_error
+    assert "SYNTHETICsynthetic" not in everything_goodall_printed()
     assert failure_kinds() == ["local_settings_value_invalid"]
 
 
@@ -986,6 +1047,11 @@ def test_email_address_in_eval_config_is_rejected_without_being_echoed(
             'description = "op://Eval/anthropic-engineering/credential"',
         ),
         ('paths = ["**"]', 'paths = ["**", "op://Eval/anthropic-engineering/credential"]'),
+        # The same rule as the shared env file's: a scheme written in capitals counts.
+        (
+            'description = "Building a SaaS product to first recurring revenue with AI."',
+            'description = "Keys live at OP://Eval/anthropic-engineering/credential"',
+        ),
     ],
 )
 def test_secret_reference_in_eval_config_is_rejected_without_being_echoed(
@@ -1028,3 +1094,110 @@ def test_every_eval_config_failure_says_what_why_and_next_and_exits_1(
     for failure in document["failures"]:
         assert set(failure) == {"kind", "what_happened", "why", "what_to_do_next"}
         assert str(eval_account.eval_config_file) in failure["what_happened"] + failure["what_to_do_next"]
+
+
+# Every place in local settings and the eval config where a person could
+# paste a key by mistake. Each case is: the synthetic secret, which file it
+# goes in, the text to replace in that file's valid form ("" puts the new
+# text at the start of the file), and what to put there. No case may ever
+# print its secret.
+PASTED_KEY = "sk-ant-api03-SYNTHETICsyntheticSYNTHETIC"
+# A lower-case hex token passes the eval config's name rule, so it tests
+# that following the name rule is not enough to be shown.
+PASTED_HEX_TOKEN = "0123456789abcdef0123456789abcdef"
+
+SECRET_POSITIONS = {
+    "settings unknown key": (PASTED_KEY, "settings", "", f'{PASTED_KEY} = "x"\n'),
+    "settings unknown table": (PASTED_KEY, "settings", "", f'[{PASTED_KEY}]\nvalue = "x"\n'),
+    "settings table declared twice": (PASTED_KEY, "settings", "", f"[{PASTED_KEY}]\n[{PASTED_KEY}]\n"),
+    "settings secrets_manager": (PASTED_KEY, "settings", '"1password"', f'"{PASTED_KEY}"'),
+    "settings schema_version": (PASTED_KEY, "settings", "schema_version = 1", f'schema_version = "{PASTED_KEY}"'),
+    "settings record_repo": (PASTED_KEY, "settings", '"~/evals/goodall-pilot-records"', f'"{PASTED_KEY}"'),
+    "settings main_workstream": (PASTED_KEY, "settings", '"research"', f'"{PASTED_KEY}"'),
+    "settings contributor": (PASTED_KEY, "settings", '"ada-lovelace"', f'"{PASTED_KEY}"'),
+    "settings contributor shaped like a name": (
+        PASTED_HEX_TOKEN,
+        "settings",
+        '"ada-lovelace"',
+        f'"{PASTED_HEX_TOKEN}"',
+    ),
+    "settings main_workstream shaped like a name": (
+        PASTED_HEX_TOKEN,
+        "settings",
+        '"research"',
+        f'"{PASTED_HEX_TOKEN}"',
+    ),
+    "eval config unknown key": (PASTED_KEY, "eval_config", "", f'{PASTED_KEY} = "x"\n'),
+    "eval config unknown key in a block": (
+        PASTED_KEY,
+        "eval_config",
+        'display_name = "Ada Lovelace"\n',
+        f'display_name = "Ada Lovelace"\n{PASTED_KEY} = "x"\n',
+    ),
+    "eval config unknown blocks": (
+        PASTED_KEY,
+        "eval_config",
+        "[[scope]]",
+        f'[[{PASTED_KEY}]]\nnote = "x@example.com"\n\n[[scope]]',
+    ),
+    "eval config key holding a reference": (
+        PASTED_KEY,
+        "eval_config",
+        "[[scope]]",
+        f'[extra]\n{PASTED_KEY} = "op://Eval/item/field"\n\n[[scope]]',
+    ),
+    "eval config table declared twice": (
+        PASTED_KEY,
+        "eval_config",
+        "[[scope]]",
+        f"[{PASTED_KEY}]\n[{PASTED_KEY}]\n\n[[scope]]",
+    ),
+    "eval config workstream": (PASTED_KEY, "eval_config", '"go-to-market"]', f'"{PASTED_KEY}"]'),
+    "eval config repeated workstream shaped like a name": (
+        PASTED_HEX_TOKEN,
+        "eval_config",
+        '"go-to-market"]',
+        f'"{PASTED_HEX_TOKEN}", "{PASTED_HEX_TOKEN}"]',
+    ),
+    "eval config repository": (
+        PASTED_KEY,
+        "eval_config",
+        '"github.com/your-org/goodall-pilot-app"',
+        f'"{PASTED_KEY}"',
+    ),
+}
+
+
+def put_secret_in_place(eval_account: EvalAccount, file_name: str, replace_from: str, replace_to: str) -> None:
+    """Write valid files, then put a pasted secret in one place in one of them."""
+    eval_account.make_valid()
+    if file_name == "settings":
+        valid_text = eval_account.valid_settings_text()
+    else:
+        valid_text = VALID_EVAL_CONFIG_TEXT
+    if replace_from == "":
+        broken_text = replace_to + valid_text
+    else:
+        assert replace_from in valid_text, f"{replace_from!r} is not in the {file_name} file"
+        broken_text = valid_text.replace(replace_from, replace_to, 1)
+    if file_name == "settings":
+        eval_account.write_settings(broken_text)
+    else:
+        eval_account.write_eval_config(broken_text)
+
+
+@pytest.mark.parametrize("position", list(SECRET_POSITIONS))
+def test_a_secret_pasted_anywhere_in_settings_or_eval_config_is_never_shown_by_status(
+    eval_account: EvalAccount, position: str
+) -> None:
+    secret, file_name, replace_from, replace_to = SECRET_POSITIONS[position]
+    put_secret_in_place(eval_account, file_name, replace_from, replace_to)
+
+    exit_code, text_output, text_error = run_goodall(["status"])
+    json_exit_code, json_output, json_error = run_goodall(["status", "--json"])
+
+    assert exit_code == exit_codes.ERROR
+    assert json_exit_code == exit_codes.ERROR
+    for printed in [text_output, text_error, json_output, json_error]:
+        assert secret not in printed
+    assert json.loads(json_output)["failures"] != []

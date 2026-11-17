@@ -159,10 +159,32 @@ def test_every_stub_says_what_to_do_by_hand_in_the_meantime() -> None:
         assert "By hand:" in output, f"goodall {command_name} gives no by-hand way"
 
 
+def test_no_stub_points_a_researcher_at_goodall_s_own_tooling() -> None:
+    # A researcher reads these; goodall's issue tracker means nothing to them.
+    for command_name in PLANNED_COMMANDS:
+        if command_name in BUILT_COMMANDS:
+            continue
+        _, output = run_goodall(arguments_for(command_name))
+        assert "bd " not in output, f"goodall {command_name} mentions bd"
+        assert "goodall repo" not in output, f"goodall {command_name} mentions the goodall repo"
+
+
 def test_onboard_stub_names_the_two_by_hand_steps() -> None:
     _, output = run_goodall(["onboard"])
     assert "local-settings.toml" in output
     assert "docs/claude-code-hooks.md" in output
+
+
+def test_onboard_stub_says_how_to_set_up_an_eval_account_by_hand() -> None:
+    # "Run goodall onboard" is the first next step a new contributor sees,
+    # so the stub must not be a dead end.
+    exit_code, output = run_goodall(["onboard"])
+
+    assert exit_code == exit_codes.ERROR
+    one_line = " ".join(output.split())
+    assert "ask whoever runs the eval" in one_line.lower()
+    assert "local-settings.toml" in one_line
+    assert "~/.config/goodall/" in one_line
 
 
 def test_a_stub_that_a_goodall_message_points_at_has_a_real_by_hand_way() -> None:

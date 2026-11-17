@@ -9,6 +9,8 @@ A test that needs a different location sets or removes the variable itself.
 CLAUDE_CONFIG_DIR is pointed at a fresh empty folder for the same reason:
 goodall copies transcripts out of Claude Code's projects folder, which is
 inside the home folder by default and holds a person's private prompts.
+HOME is pointed at a fresh empty folder too, because the sweep also looks
+in the default `~/.claude/projects` whatever CLAUDE_CONFIG_DIR says.
 """
 
 from pathlib import Path
@@ -26,3 +28,9 @@ def isolated_local_settings(tmp_path_factory: pytest.TempPathFactory, monkeypatc
 def isolated_claude_projects_folder(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> None:
     claude_config_directory = tmp_path_factory.mktemp("isolated-claude-config")
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(Path(claude_config_directory)))
+
+
+@pytest.fixture(autouse=True)
+def isolated_home_folder(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> None:
+    home_folder = tmp_path_factory.mktemp("isolated-home")
+    monkeypatch.setenv("HOME", str(Path(home_folder)))

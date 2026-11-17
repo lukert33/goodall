@@ -72,6 +72,28 @@ def looks_like_a_secret_name(name: str) -> bool:
     return False
 
 
+@dataclass(frozen=True)
+class RequiredProgram:
+    """A program goodall needs, and what to tell a contributor when it is missing.
+
+    - `name` is the command, as found on the PATH.
+    - `described` names it for a person, at the start of a sentence, such
+      as "gh, GitHub's command-line tool,".
+    - `why` says what goodall uses it for.
+    - `how_to_install` says where to get it, as the end of a sentence.
+
+    It lives here, beside `Runner.find_program`, because both the program
+    checks (goodall.program_checks) and the secrets manager module
+    (goodall.secrets_manager) describe programs with it, and the secrets
+    manager module must not import the checks.
+    """
+
+    name: str
+    described: str
+    why: str
+    how_to_install: str
+
+
 class OutputMode(StrEnum):
     """What happens to what a program prints."""
 

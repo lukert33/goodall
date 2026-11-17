@@ -259,9 +259,10 @@ def add_entry_text_arguments(parser: argparse.ArgumentParser, text_help: str) ->
 # tests/test_cli.py fails when it has none.
 BY_HAND_STEPS = {
     "onboard": (
-        "write this account's local-settings.toml in ~/.config/goodall (goodall status names each setting it "
-        "needs and shows an example line), and add the Claude Code hooks as docs/claude-code-hooks.md in the "
-        "goodall repo shows."
+        "ask whoever runs the eval for this eval account's local settings file, local-settings.toml, or write "
+        "it yourself, and put it in the folder ~/.config/goodall/ in this macOS user account's home folder "
+        "(goodall status names each setting it needs and shows an example line). Then add the Claude Code "
+        "hooks as docs/claude-code-hooks.md in goodall's documentation shows, and run goodall status."
     ),
 }
 NOTHING_BY_HAND = "Nothing for now: this command will come in a later version of goodall."
@@ -272,6 +273,11 @@ def run_stub(command_name: str, terminal: Terminal) -> int:
 
     Returns ERROR rather than USAGE_ERROR because the user typed a valid
     command; it is goodall that cannot do it yet.
+
+    The reader is a researcher, so the next step never mentions goodall's
+    own development tools. `goodall onboard` gets a way to set up by hand,
+    because "Run goodall onboard" is the next step when local settings are
+    missing, and that must not lead to a dead end.
     """
     by_hand = BY_HAND_STEPS.get(command_name)
     if by_hand is None:
@@ -282,8 +288,8 @@ def run_stub(command_name: str, terminal: Terminal) -> int:
         Failure(
             kind="not_built",
             what_happened=f"goodall {command_name} is not built yet. Nothing was changed.",
-            why="This command is planned, but nobody has written it yet.",
-            what_to_do_next=f"Check bd ready in the goodall repo for progress. By hand: {by_hand}",
+            why="This command is planned for a later version of goodall.",
+            what_to_do_next=f"By hand: {by_hand}",
         )
     )
     return exit_codes.ERROR
