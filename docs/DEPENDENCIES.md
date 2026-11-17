@@ -47,7 +47,7 @@ instructions use uv, and that is the only route tested.
 
 | Tool | Purpose | Provenance (checked 2026-11-16) | Decision |
 |---|---|---|---|
-| **uv** | Fetches a suitable Python and installs goodall as a command. Also the Python, virtual environment and lockfile manager used to develop goodall. | Astral Software Inc.; `astral-sh/uv`; MIT OR Apache-2.0; self-contained Rust binary. Eight advisories since 2025-08, all in the installer and archive extraction, each fixed in a release (example: GHSA-4gg8-gxpx-9rph, arbitrary file write, 2026-05-18). Every uv below 0.13.4 is affected by GHSA-hq85-5cpj-mr62 (high, 2026-10-20: a compromised certificate authority in uv's bundled list), so install 0.13.4 or newer. | **adopt** as the documented route |
+| **uv** | Fetches a suitable Python and installs goodall as a command. Also the Python, virtual environment and lockfile manager used to develop goodall. | Astral Software Inc.; `astral-sh/uv`; MIT OR Apache-2.0; self-contained Rust binary. Eight advisories since 2025-08, all in the installer and archive extraction, each fixed in a release (example: GHSA-4gg8-gxpx-9rph, arbitrary file write, 2026-05-18). Every uv below 0.13.4 is affected by GHSA-hq85-5cpj-mr62 (high, published 2026-10-20; affected `<0.13.4`, patched `>=0.13.4`): intermediates issued under the `emSign ECC Root CA - G3` root have compromised keys, and uv trusted that root through its bundled certificate list; 0.13.4 removed it. Advisory re-read from GitHub's API on 2026-11-17. Install 0.13.4 or newer; the newest release is 0.13.9 (2026-11-17), and goodall is developed on 0.13.8. | **adopt** as the documented route |
 
 Popular alternatives. None has been tested with goodall, and none has been
 through the provenance check this file requires, so each is the installing
@@ -149,7 +149,7 @@ with.
 
 | Tool | Purpose | Provenance (checked 2026-11-16) | Decision |
 |---|---|---|---|
-| **uv_build** | Build backend (turns the source tree into an installable package) | Astral; ships inside the `uv` executable, so a compatible version downloads nothing extra; zero dependencies; MIT OR Apache-2.0. No advisory is attributed to the build backend. Pure-Python projects only, which is what goodall is. Until goodall is published as a ready-built package, installing it from this repository runs this backend on the installing machine. | **adopt** (owner approved 2026-11-16) |
+| **uv_build** | Build backend (turns the source tree into an installable package) | Astral; ships inside the `uv` executable, so a compatible version downloads nothing extra; zero dependencies; MIT OR Apache-2.0. No advisory is attributed to the build backend. Pure-Python projects only, which is what goodall is. Until goodall is published as a ready-built package, installing it from this repository runs this backend on the installing machine. `pyproject.toml` asks for `>=0.13.4,<0.14`, the line of the uv in use; the floor is the first uv release not affected by GHSA-hq85-5cpj-mr62. Both ends exist on PyPI (0.13.4 uploaded 2026-10-20; 0.13.9, the newest, 2026-11-17; checked 2026-11-17). | **adopt** (owner approved 2026-11-16) |
 | **pytest** 9.2.0 | Test runner | `pytest-dev`, a volunteer group with no single corporate owner; ~14,700 stars; MIT; four direct dependencies (`iniconfig`, `packaging`, `pluggy`, `pygments`). One advisory: CVE-2025-71176 (temporary-directory handling, medium), public 2026-01-22, fixed in 9.0.3 on 2026-04-07. The floor in `pyproject.toml` is 9.0.3 for that reason. | **adopt** (owner approved 2026-11-16) |
 | **ruff** 0.17.5 | Linter and formatter | Astral; `astral-sh/ruff`, ~51,200 stars; MIT; zero dependencies, bundled Rust binary. No published GitHub advisories and no OSV results. | **adopt** (owner approved 2026-11-16) |
 | **mypy** 2.4.1 | Type checker | `python/mypy`, original author Jukka Lehtosalo; ~20,700 stars; MIT; five direct dependencies (`typing_extensions`, `mypy_extensions`, `pathspec`, `librt`, `ast-serialize`). No GitHub advisories. | **adopt** (owner approved 2026-11-16) |
@@ -164,7 +164,7 @@ to the same standard.
 |---|---|---|---|
 | **GitHub-hosted runner** `ubuntu-24.04` | Machine the gates run on | GitHub; image built from `actions/runner-images` (MIT), latest release `ubuntu24/20261111.370` on 2026-11-11. Named by version rather than `ubuntu-latest`, so the image line changes only when this file and the workflow do. Goodall targets macOS; the tests need only git, sh and Python, so Linux is used. | **adopt** |
 | **actions/checkout** v7.0.1, commit `3d3c42e5aac5ba805825da76410c181273ba90b1` | Fetches the repository into the runner | GitHub; `actions/checkout`, ~9,000 stars; MIT. Released 2026-07-20; the tag is lightweight and points straight at that commit. No published security advisories. Pinned by commit id, with `persist-credentials: false` so the token is not left on disk. | **adopt** |
-| **uv** 0.11.33, installed with pip | Runs the gates, as on a development machine | Same project as the uv row above. Installed into a throwaway virtual environment by `pip install --require-hashes`, against the sha256 of the PyPI wheel `uv-0.11.33-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl` (`9542178978b0b6f16a7ae99e55aca039f493a1edb373a15d7993eab80a28615a`, uploaded 2026-07-28). 0.11.33 is the newest release inside the `uv_build` range in `pyproject.toml`. Every uv below 0.13.4 is affected by GHSA-hq85-5cpj-mr62 (high, 2026-10-20: a compromised certificate authority in uv's bundled list); the workflow sets `UV_NATIVE_TLS` so uv trusts the runner's system store instead. | **adopt** |
+| **uv** 0.13.7, installed with pip | Runs the gates, as on a development machine | Same project as the uv row above. Installed into a throwaway virtual environment by `pip install --require-hashes`, against the sha256 of the PyPI wheel `uv-0.13.7-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl` (`2c9bdc4a872b60a93c5f26c0791089ea11585a4f9d3b3c017d78eb8487505e25`, uploaded 2026-11-03; hash and date from the PyPI JSON API on 2026-11-17). 0.13.7 is the newest release inside the `uv_build` range in `pyproject.toml` that was at least two weeks old on that day; 0.13.8 and 0.13.9 were newer. It is not affected by GHSA-hq85-5cpj-mr62, whose fix (0.13.4) removed the compromised authority from uv's bundled certificate list, so the workflow no longer sets `UV_NATIVE_TLS` to use the runner's system store instead. | **adopt** |
 | **astral-sh/setup-uv** | Third-party action that installs uv | — | **rejected**: one more repository with write access to what CI runs; a pinned, hash-checked `pip install` does the same job. |
 
 ### Why pytest, when the standard library has `unittest`
@@ -215,9 +215,6 @@ Recorded so that "not stated" is never mistaken for "confirmed safe".
 - OSV results for mypy (the lookup returned nothing usable).
 - Whether ruff's binary builds are reproducible.
 - Whether pyrefly is still controlled by Meta.
-- Whether the `ubuntu-24.04` runner's system certificate store already
-  distrusts the compromised emSign ECC Root CA - G3 intermediates
-  (GHSA-hq85-5cpj-mr62). `UV_NATIVE_TLS` relies on it doing so.
 - 1Password's own list of security advisories. The search returned news
   reports and vulnerability databases, not 1Password's advisory pages, so the
   `op` row may be incomplete.
@@ -228,8 +225,9 @@ Recorded so that "not stated" is never mistaken for "confirmed safe".
   2026-11-17 and will drift.
 - Whether goodall installs and runs correctly through pipx or through pip in
   a virtual environment. Only uv has been used.
-- Advisory GHSA-hq85-5cpj-mr62 itself: it was reported by the agent that
-  wrote the CI workflow and has not been checked a second time.
+- That uv 0.13.4 and later actually ship without the `emSign ECC Root CA -
+  G3` root. The advisory says so; the bundled list inside the binary was not
+  inspected.
 - Whether the pip and Python that ship on the runner image are themselves
   current; they are used only to install uv, whose wheel is hash-checked.
 
