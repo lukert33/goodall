@@ -90,6 +90,9 @@ first.
 - Exit codes: `0` success, `1` error, `2` usage error, `3` the prompt gate is
   closed. `goodall hook` is the exception: it speaks Claude Code's codes, so it
   refuses a prompt with `2` and never returns `3` (docs/claude-code-hooks.md).
+- Exit `0` when what was asked is done and nothing is lost, even if goodall
+  still has delivery to finish (shown as a warning); exit `1` only when it
+  did not happen and has to be redone or fixed first.
 - Every failure message says what to do next.
 
 ## Code style

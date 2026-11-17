@@ -14,8 +14,9 @@ What each command does, in order:
   create the marker. With one already active it changes nothing, says which
   one and since when, and exits 0, so running it twice is harmless.
 - `goodall stop`: find the eval and settle, as above; then end the active
-  work block cleanly and write its record into the record repo. With none
-  active it says so and exits 1.
+  work block cleanly and write its record into the record repo. If the
+  record cannot be written yet it waits in the log directory, a warning
+  says so, and the exit is still 0. With none active it says so and exits 1.
 
 Settling, which `goodall status` does too: a work block nobody stopped is
 closed at its last heartbeat (end state `inferred`) once it is overdue; a
@@ -158,10 +159,11 @@ def workstream_unknown_failure(eval_for_this_account: EvalForThisAccount) -> Fai
 def run_stop(terminal: Terminal, runner: Runner, clock: Clock) -> int:
     """End the active work block cleanly, write its record, say what happened, and return the exit code.
 
-    Exit 0 once the work block has ended and its record is committed in the
-    record repo; 1 when no work block was active, or when its record could
-    not be written yet (it then waits in the log directory, and the person
-    is told so).
+    Exit 0 once the work block has ended, whether its record is already in
+    the record repo or is safely waiting in the log directory (a warning then
+    says so: nothing needs running again, and the next goodall start, stop or
+    status writes it); 1 only when there was no work block to stop. The rule
+    is in "Command-line conventions" in AGENTS.md.
     """
     eval_reading = find_eval_for_work_blocks()
     if isinstance(eval_reading, list):
@@ -175,9 +177,9 @@ def run_stop(terminal: Terminal, runner: Runner, clock: Clock) -> int:
     if active is None and settling.closings:
         # The work block the person meant to stop had been forgotten, and
         # settling has just closed it at its last heartbeat and said so.
-        # That is what they asked for, as long as its record is written.
-        if settling.warnings:
-            return exit_codes.ERROR
+        # That is what they asked for. If its record could not be written
+        # yet, settling has already shown that as a warning, and the record
+        # waits safely, so this is still success.
         return exit_codes.SUCCESS
     if active is None:
         terminal.show_failure(nothing_to_stop_failure())
@@ -187,8 +189,12 @@ def run_stop(terminal: Terminal, runner: Runner, clock: Clock) -> int:
     waiting_file = work_blocks.WorkBlockFiles(log_directory).unrecorded_file(ended_record.id)
     write_of_this_block = write_one_unrecorded_record(runner, eval_reading, waiting_file)
     if not write_of_this_block.committed:
-        terminal.show_failure(record_waiting_failure(ended_record, waiting_file, write_of_this_block.failures))
-        return exit_codes.ERROR
+        # The work block is ended and its record is safe, so what the person
+        # asked for is done: a warning, not a failure, and exit 0. An agent
+        # that saw exit 1 would run goodall stop again and be told no work
+        # block is active.
+        terminal.show_warnings([record_waiting_failure(ended_record, waiting_file, write_of_this_block.failures)])
+        return exit_codes.SUCCESS
 
     terminal.show_paragraph(
         f"Stopped your work block on {ended_record.workstream}. It ran from "
@@ -587,32 +593,40 @@ def nothing_to_stop_failure() -> Failure:
     )
 
 
+# "Run the command again", as the record repo module's next steps say it for a
+# command that wrote nothing. It would mislead here: the record is already
+# saved, so what to run is the command that writes it.
+RUN_AGAIN_PATTERN = re.compile(r"run the command again", re.IGNORECASE)
+
+
 def record_waiting_failure(
     ended_record: records.WorkBlockRecord, waiting_file: Path, failures: list[Failure]
 ) -> Failure:
-    """The failure for a work block that has ended but whose record could not be written to the record repo yet.
+    """The warning for a work block that has ended but whose record has not reached the record repo yet.
 
-    It says plainly that the work block did end, that nothing is lost, where
-    the record waits (`waiting_file`), and what went wrong, in the record
-    repo module's own words.
+    Shown as a warning, never a failure: the work block is stopped and the
+    record is safe, so the command succeeded. It says so in plain words,
+    where the record waits (`waiting_file`), why it is waiting (the record
+    repo module's own words), and that nothing needs to be run again,
+    because goodall writes the record itself next time.
     """
     reasons = []
     next_steps = []
     for failure in failures:
         reasons.append(failure.what_happened)
-        next_steps.append(failure.what_to_do_next)
+        next_steps.append(RUN_AGAIN_PATTERN.sub("run goodall status to write it now", failure.what_to_do_next))
     what_to_do_next = " ".join(next_steps)
     if what_to_do_next == "":
         what_to_do_next = "Run goodall doctor to see what is wrong with the record repo."
     return Failure(
         kind="work_block_record_waiting",
         what_happened=(
-            f"Your work block on {ended_record.workstream} has ended, so goodall is no longer recording, but its "
-            "record could not be written to the record repo yet. " + " ".join(reasons)
+            f"Your work block on {ended_record.workstream} is stopped. Its record is saved on this Mac and has "
+            "not reached the record repo yet. " + " ".join(reasons)
         ),
         why=(
-            f"Nothing is lost: the record is kept in {waiting_file} until it can be written. Goodall writes it "
-            "the next time you run goodall start, goodall stop or goodall status."
+            f"Nothing is lost and nothing needs to be run again: the record is kept in {waiting_file}, and goodall "
+            "writes it by itself the next time you run goodall start, goodall stop or goodall status."
         ),
         what_to_do_next=what_to_do_next,
     )
