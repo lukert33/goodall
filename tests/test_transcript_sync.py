@@ -22,7 +22,7 @@ import subprocess
 import sys
 from collections.abc import Iterator
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -458,3 +458,71 @@ def test_a_copy_that_fails_in_a_hook_is_silent_but_kept_for_status_to_report(
     assert "could not copy a transcript 1 time when a Claude Code hook fired" in fixed_status.everything_printed
     assert "transcript" not in later_status.everything_printed
     assert not failed_copies.exists()
+
+
+def synthetic_transcript_bytes(size: int) -> bytes:
+    """About `size` bytes of transcript-like JSON lines, each one different, so a mix-up would show."""
+    lines = []
+    total = 0
+    line_number = 0
+    while total < size:
+        line = b'{"type":"assistant","n":%d,"message":{"content":"%s"}}\n' % (line_number, b"x" * 900)
+        lines.append(line)
+        total += len(line)
+        line_number += 1
+    return b"".join(lines)
+
+
+def test_a_hook_killed_mid_copy_leaves_the_old_copy_or_the_new_one_and_status_clears_its_leftovers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    eval_account = make_eval_account(tmp_path)
+    old_transcript = synthetic_transcript_bytes(1024 * 1024)
+    eval_account.transcript.write_bytes(old_transcript)
+    run_hook(eval_account, "Stop", hook_input(eval_account, "Stop"))
+    new_transcript = old_transcript + synthetic_transcript_bytes(63 * 1024 * 1024)
+    eval_account.transcript.write_bytes(new_transcript)
+    copy = eval_account.copied_transcripts / PROJECT_FOLDER_NAME / f"{CLAUDE_SESSION}.jsonl"
+    environment = dict(os.environ)
+    environment["GOODALL_CONFIG_DIR"] = str(eval_account.config_directory)
+    environment["CLAUDE_CONFIG_DIR"] = str(eval_account.claude_config_directory)
+
+    # SIGKILL, which nothing can catch, the moment the hook's temporary file
+    # appears: the copy is then under way and not yet renamed into place.
+    for _ in range(5):
+        hook_process = subprocess.Popen(
+            [GOODALL_COMMAND, "hook", "Stop"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            env=environment,
+        )
+        assert hook_process.stdin is not None
+        hook_process.stdin.write(hook_input(eval_account, "Stop").encode())
+        hook_process.stdin.close()
+        leftovers_before = len(list(copy.parent.glob(".*.goodall-tmp")))
+        while hook_process.poll() is None and len(list(copy.parent.glob(".*.goodall-tmp"))) == leftovers_before:
+            pass
+        hook_process.kill()
+        hook_process.wait(timeout=30)
+
+        assert copy.read_bytes() in (old_transcript, new_transcript)
+        if copy.read_bytes() == new_transcript:
+            # Start again from the old copy, so the next kill also lands mid-copy.
+            copy.write_bytes(old_transcript)
+    # At least one kill landed mid-copy, or this test proved nothing.
+    assert len(list(copy.parent.glob(".*.goodall-tmp"))) > 0
+
+    # Leftover temporary files from the killed hooks, made to look an hour old,
+    # and one just made, as by a hook copying at this very moment.
+    an_hour_ago = (MONDAY_MORNING - timedelta(hours=1)).timestamp()
+    for leftover in copy.parent.glob(".*.goodall-tmp"):
+        os.utime(leftover, (an_hour_ago, an_hour_ago))
+    in_progress = copy.parent / f".{copy.name}.0000.goodall-tmp"
+    in_progress.write_bytes(b"")
+    os.utime(in_progress, (MONDAY_MORNING.timestamp(), MONDAY_MORNING.timestamp()))
+
+    run_goodall(eval_account, monkeypatch, ["status"])
+
+    assert copy.read_bytes() == new_transcript
+    assert sorted(copy.parent.glob(".*.goodall-tmp")) == [in_progress]

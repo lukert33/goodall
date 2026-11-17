@@ -59,7 +59,7 @@ import os
 import secrets
 import stat
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from goodall import records
@@ -91,6 +91,11 @@ CHUNK_BYTES = 1024 * 1024
 
 # Temporary files end with this, so a leftover one is easy to recognise.
 TEMPORARY_SUFFIX = ".goodall-tmp"
+
+# A temporary file older than this was left by a copy that was killed, and
+# the sweep removes it. Far longer than any copy takes, so a copy still
+# running in another process never loses its temporary file.
+STALE_TEMPORARY_AGE = timedelta(minutes=10)
 
 
 class FileOutcome(enum.Enum):
@@ -242,7 +247,28 @@ def sweep(projects_folder: Path, log_directory: Path, now: datetime) -> SweepRes
                 result.claude_sessions_copied += 1
             result.earlier_copies_kept += outcomes.count(FileOutcome.COPIED_AND_EARLIER_COPY_KEPT)
     take_failed_hook_copies(log_directory, now, result)
+    remove_stale_temporary_files(log_directory / TRANSCRIPTS_FOLDER_NAME, now)
     return result
+
+
+def remove_stale_temporary_files(folder: Path, now: datetime) -> None:
+    """Remove the temporary files that killed copies left anywhere under `folder`.
+
+    A copy killed by SIGKILL cannot clean up after itself, so its temporary
+    file stays beside the copy. Only files ending in TEMPORARY_SUFFIX and
+    last changed more than STALE_TEMPORARY_AGE before `now` are removed.
+    """
+    oldest_kept = (now - STALE_TEMPORARY_AGE).timestamp()
+    for folder_path, _, file_names in os.walk(folder):
+        for file_name in file_names:
+            if not file_name.endswith(TEMPORARY_SUFFIX):
+                continue
+            temporary_file = Path(folder_path) / file_name
+            try:
+                if temporary_file.stat(follow_symlinks=False).st_mtime < oldest_kept:
+                    temporary_file.unlink()
+            except FileNotFoundError:
+                pass
 
 
 def list_folders(folder: Path) -> list[str]:
