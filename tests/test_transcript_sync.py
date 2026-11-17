@@ -15,11 +15,13 @@ was seen to use in the hook spike (goodall-fs9.1, `bd memories transcript`):
                                                    (with .meta.json and .prefix.json beside it)
 """
 
+import fcntl
 import io
 import json
 import os
 import subprocess
 import sys
+import time
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -526,3 +528,32 @@ def test_a_hook_killed_mid_copy_leaves_the_old_copy_or_the_new_one_and_status_cl
 
     assert copy.read_bytes() == new_transcript
     assert sorted(copy.parent.glob(".*.goodall-tmp")) == [in_progress]
+
+
+def test_two_copies_of_one_claude_session_never_run_at_once(tmp_path: Path) -> None:
+    # Claude Code runs the PostToolUse hooks of parallel tool calls at the
+    # same moment. Two copies racing could each find the other's copy "not
+    # the start" of their own and keep it aside for nothing, so one waits.
+    eval_account = make_eval_account(tmp_path)
+    eval_account.transcript.write_bytes(FIRST_LINES)
+    lock_folder = eval_account.log_directory / "transcript-sync" / "locks"
+    lock_folder.mkdir(parents=True)
+    environment = dict(os.environ)
+    environment["GOODALL_CONFIG_DIR"] = str(eval_account.config_directory)
+    environment["CLAUDE_CONFIG_DIR"] = str(eval_account.claude_config_directory)
+
+    with (lock_folder / f"{CLAUDE_SESSION}.lock").open("w") as lock_file:
+        fcntl.flock(lock_file, fcntl.LOCK_EX)
+        hook_process = subprocess.Popen([GOODALL_COMMAND, "hook", "Stop"], stdin=subprocess.PIPE, env=environment)
+        assert hook_process.stdin is not None
+        hook_process.stdin.write(hook_input(eval_account, "Stop").encode())
+        hook_process.stdin.close()
+        time.sleep(0.5)
+        assert hook_process.poll() is None
+        assert not eval_account.copied_transcripts.exists()
+    # Closing the file released the lock.
+
+    assert hook_process.wait(timeout=30) == 0
+    assert files_and_bytes(eval_account.copied_transcripts) == {
+        f"{PROJECT_FOLDER_NAME}/{CLAUDE_SESSION}.jsonl": FIRST_LINES,
+    }

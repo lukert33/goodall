@@ -54,10 +54,14 @@ Decisions a reader would otherwise reverse-engineer (PROVISIONAL):
 """
 
 import enum
+import fcntl
 import json
 import os
 import secrets
 import stat
+import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -77,6 +81,16 @@ SUPERSEDED_FOLDER_NAME = "superseded-transcripts"
 SYNC_FOLDER_NAME = "transcript-sync"
 FAILED_COPIES_FILE_NAME = "failed-copies.jsonl"
 REPORTED_FOLDER_NAME = "reported"
+
+# One lock file per Claude session, in `transcript-sync/locks/`, so two
+# copies of one Claude session never run at once.
+LOCKS_FOLDER_NAME = "locks"
+
+# How long a copy waits for another copy of the same Claude session to
+# finish before giving up. Copies take well under a second; a hook must
+# not hold Claude Code up for long, and the next hook or sweep tries again.
+LOCK_WAIT = timedelta(seconds=10)
+LOCK_POLL_SECONDS = 0.01
 
 # Where Claude Code keeps a Claude session's subagent transcripts, inside a
 # folder named after the session.
@@ -316,13 +330,42 @@ def copy_claude_session(
     for subagent_file_name in list_regular_files(projects_folder / subagents_folder):
         relative_paths.append(subagents_folder / subagent_file_name)
     outcomes = []
-    for relative_path in relative_paths:
-        try:
-            outcomes.append(copy_file(projects_folder, log_directory, relative_path, now))
-        except FileNotFoundError as error:
-            if error.filename != str(projects_folder / relative_path):
-                raise
+    with claude_session_lock(log_directory, claude_session):
+        for relative_path in relative_paths:
+            try:
+                outcomes.append(copy_file(projects_folder, log_directory, relative_path, now))
+            except FileNotFoundError as error:
+                if error.filename != str(projects_folder / relative_path):
+                    raise
     return outcomes
+
+
+@contextmanager
+def claude_session_lock(log_directory: Path, claude_session: str) -> Iterator[None]:
+    """Hold the lock on one Claude session's copies, waiting up to LOCK_WAIT for another copy to finish.
+
+    Why: Claude Code runs the PostToolUse hooks of parallel tool calls at
+    the same moment. Two copies racing could rename their copies in the
+    wrong order, and the later one would then find a copy it is not the
+    start of and keep it aside for nothing. The lock is an advisory
+    `flock`, which the system releases when the process ends, so a killed
+    copy never leaves it held. Raises TimeoutError after LOCK_WAIT.
+    """
+    lock_folder = make_folders(log_directory, [SYNC_FOLDER_NAME, LOCKS_FOLDER_NAME])
+    descriptor = os.open(lock_folder / f"{claude_session}.lock", os.O_WRONLY | os.O_CREAT, FILE_PERMISSIONS)
+    try:
+        give_up_at = time.monotonic() + LOCK_WAIT.total_seconds()
+        while True:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() > give_up_at:
+                    raise TimeoutError(f"another copy of Claude session {claude_session} took too long") from None
+                time.sleep(LOCK_POLL_SECONDS)
+        yield
+    finally:
+        os.close(descriptor)
 
 
 def list_regular_files(folder: Path) -> list[str]:
