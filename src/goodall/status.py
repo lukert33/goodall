@@ -25,15 +25,20 @@ In the order goodall checks:
    copied into the log directory. So `goodall status` can commit, push and
    copy; it is not a read-only diagnostic like `goodall doctor`. A
    transcript that could not be copied appears in `warnings`.
-5. Goodall reports the active work block, or that there is none.
+5. Goodall lists each of this account's work blocks recorded with the
+   workstream `unknown` that no work block fix has settled yet, with one
+   whole `goodall fixblock` command per workstream to copy (goodall.fixblock).
+   This part only reads the record repo's files.
+6. Goodall reports the active work block, or that there is none.
 
 Each result is built once as records and then shown either as text (results
 on standard output, failures and warnings on standard error) or as one JSON
 document on standard output, so the two renderings cannot drift apart. The
 JSON document always has the keys `work_block_active`, `eval`,
-`contributor`, `work_block`, `ended_work_blocks`, `warnings` and
-`failures`; `eval` and `contributor` are null whenever `failures` is not
-empty, and `work_block` is null whenever no work block is active.
+`contributor`, `work_block`, `ended_work_blocks`,
+`work_blocks_waiting_for_workstream`, `warnings` and `failures`; `eval`
+and `contributor` are null whenever `failures` is not empty, and
+`work_block` is null whenever no work block is active.
 
 The folder checks themselves live in goodall.folders, because
 `goodall doctor` asks the same questions and must word the answers the same
@@ -42,6 +47,7 @@ way.
 
 from goodall import exit_codes, work_blocks
 from goodall.eval_config import EvalForThisAccount
+from goodall.fixblock import WaitingWorkBlock, waiting_work_blocks
 from goodall.runner import Runner
 from goodall.terminal import Failure, Terminal
 from goodall.work_block_commands import (
@@ -62,10 +68,15 @@ def run_status(terminal: Terminal, runner: Runner, clock: Clock, as_json: bool) 
     now = clock()
     settling = settle(runner, eval_reading, now)
     active = work_blocks.active_work_block(eval_reading.local_settings.log_directory.path, now)
+    waiting = waiting_work_blocks(eval_reading)
     if as_json:
-        terminal.write_json(status_document(eval_reading, settling, active))
+        terminal.write_json(status_document(eval_reading, settling, active, waiting))
     else:
         show_settling(terminal, settling)
+        waiting_warnings = []
+        for waiting_work_block in waiting:
+            waiting_warnings.append(waiting_work_block.as_warning())
+        terminal.show_warnings(waiting_warnings)
         show_status(terminal, eval_reading, active)
     if active is None:
         return exit_codes.ERROR
@@ -98,9 +109,16 @@ def show_status(
 
 
 def status_document(
-    eval_for_this_account: EvalForThisAccount, settling: Settling, active: work_blocks.RunningWorkBlock | None
+    eval_for_this_account: EvalForThisAccount,
+    settling: Settling,
+    active: work_blocks.RunningWorkBlock | None,
+    waiting: list[WaitingWorkBlock],
 ) -> dict[str, object]:
-    """The `goodall status --json` document when the eval was found. Times are UTC, as in records."""
+    """The `goodall status --json` document when the eval was found. Times are UTC, as in records.
+
+    Work blocks waiting for their workstream are listed under their own key,
+    not in `warnings`, so an agent can read each one's id and commands.
+    """
     contributor = eval_for_this_account.contributor
     log_directory = eval_for_this_account.local_settings.log_directory.path
     work_block = None
@@ -126,6 +144,9 @@ def status_document(
                 "recorded": write.committed,
             }
         )
+    waiting_documents = []
+    for waiting_work_block in waiting:
+        waiting_documents.append(waiting_work_block.as_json())
     warning_documents = []
     for warning in settling.warnings:
         warning_documents.append(warning.as_json())
@@ -139,6 +160,7 @@ def status_document(
         },
         "work_block": work_block,
         "ended_work_blocks": ended_work_blocks,
+        "work_blocks_waiting_for_workstream": waiting_documents,
         "warnings": warning_documents,
         "failures": [],
     }
@@ -163,6 +185,7 @@ def report_failures(terminal: Terminal, failures: list[Failure], as_json: bool) 
                 "contributor": None,
                 "work_block": None,
                 "ended_work_blocks": [],
+                "work_blocks_waiting_for_workstream": [],
                 "warnings": [],
                 "failures": failure_documents,
             }

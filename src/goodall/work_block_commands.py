@@ -344,7 +344,7 @@ class Settling:
         for write in self.writes:
             if write.committed and write.record is not None:
                 paragraphs.append(
-                    f"Recorded your work block on {write.record.workstream}, which ran from "
+                    f"Recorded your work block {describe_workstream(write.record)}, which ran from "
                     f"{describe_moment(write.record.started_at)} to {describe_ended_at(write.record)}. "
                     + where_the_record_went(write.push_state)
                 )
@@ -545,6 +545,13 @@ def show_settling(terminal: Terminal, settling: Settling) -> None:
     terminal.show_warnings(settling.warnings)
 
 
+def describe_workstream(record: records.WorkBlockRecord) -> str:
+    """`on research`, or `with the workstream unknown` for a work block goodall could not attribute."""
+    if record.workstream == records.UNKNOWN_WORKSTREAM:
+        return f"with the workstream {records.UNKNOWN_WORKSTREAM}"
+    return f"on {record.workstream}"
+
+
 def describe_ended_at(record: records.WorkBlockRecord) -> str:
     """When an ended work block ended, for a person."""
     assert record.ended_at is not None
@@ -636,7 +643,7 @@ def record_waiting_failure(
     return Failure(
         kind="work_block_record_waiting",
         what_happened=(
-            f"Your work block on {ended_record.workstream} is stopped. Its record is saved on this Mac and has "
+            f"Your work block {describe_workstream(ended_record)} is stopped. Its record is saved on this Mac and has "
             "not reached the record repo yet. " + " ".join(reasons)
         ),
         why=(

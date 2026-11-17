@@ -594,6 +594,202 @@ def test_a_damaged_marker_that_gives_no_start_time_at_all_is_not_given_an_invent
 
 
 # ---------------------------------------------------------------------------
+# A work block waiting for its workstream, and goodall fixblock
+# ---------------------------------------------------------------------------
+
+
+def record_work_block_with_unknown_workstream(eval_account: EvalAccount) -> str:
+    """Start a work block, damage its marker so the workstream is lost, let goodall record it; return its id."""
+    run_goodall(eval_account, ["start"])
+    marker = json.loads(marker_file(eval_account).read_text())
+    del marker["workstream"]
+    marker_file(eval_account).write_text(json.dumps(marker))
+    eval_account.clock.advance(timedelta(minutes=5))
+    run_goodall(eval_account, ["status"])
+    [record] = eval_account.work_block_records()
+    assert record["workstream"] == "unknown"
+    return str(record["id"])
+
+
+def fix_files(eval_account: EvalAccount) -> list[Path]:
+    return sorted((eval_account.record_repo / "work-block-fixes").glob("*.json"))
+
+
+def test_status_lists_a_work_block_waiting_for_its_workstream_with_a_command_for_each_workstream(
+    eval_account: EvalAccount,
+) -> None:
+    work_block_id = record_work_block_with_unknown_workstream(eval_account)
+
+    status = run_goodall(eval_account, ["status"])
+
+    assert "recorded with the workstream unknown" in status.everything_printed
+    assert "Mon 16 Nov 2026, 09:30 GMT" in status.everything_printed
+    # Each command stands whole on its own line, so it can be copied and run.
+    command_lines = status.standard_error.splitlines()
+    for workstream in ["engineering", "research", "go-to-market"]:
+        command = f"goodall fixblock {work_block_id} --workstream {workstream}"
+        assert any(line.strip().endswith(command) for line in command_lines), command
+
+
+def test_status_json_lists_work_blocks_waiting_for_their_workstream_under_a_stable_key(
+    eval_account: EvalAccount,
+) -> None:
+    work_block_id = record_work_block_with_unknown_workstream(eval_account)
+
+    status = run_goodall(eval_account, ["status", "--json"])
+
+    document = json.loads(status.standard_output)
+    assert document["work_blocks_waiting_for_workstream"] == [
+        {
+            "id": work_block_id,
+            "started_at": "2026-11-16T09:30:00Z",
+            "ended_at": "2026-11-16T09:30:00Z",
+            "commands": [
+                f"goodall fixblock {work_block_id} --workstream engineering",
+                f"goodall fixblock {work_block_id} --workstream research",
+                f"goodall fixblock {work_block_id} --workstream go-to-market",
+            ],
+        }
+    ]
+    assert document["warnings"] == []
+
+
+def test_fixblock_records_the_workstream_beside_the_untouched_record_and_status_stops_listing_it(
+    eval_account: EvalAccount,
+) -> None:
+    work_block_id = record_work_block_with_unknown_workstream(eval_account)
+    [original_file] = eval_account.work_block_files()
+    original_text = original_file.read_text()
+
+    fixblock = run_goodall(eval_account, ["fixblock", work_block_id, "--workstream", "engineering"])
+
+    assert fixblock.exit_code == exit_codes.SUCCESS, fixblock.standard_error
+    assert "counts towards engineering" in fixblock.everything_printed
+    assert "had been recorded as unknown" in fixblock.everything_printed
+    assert original_file.read_text() == original_text
+    [fix_file] = fix_files(eval_account)
+    fix = json.loads(fix_file.read_text())
+    assert fix["record_type"] == "work_block_fix"
+    assert fix["work_block"] == work_block_id
+    assert fix["workstream"] == "engineering"
+    assert fix["contributor"] == "ada-lovelace"
+    assert f"Add work block fix {fix['id']}" in eval_account.commit_subjects()
+    assert git(eval_account.record_repo, "status", "--porcelain") == ""
+
+    status = run_goodall(eval_account, ["status", "--json"])
+    assert json.loads(status.standard_output)["work_blocks_waiting_for_workstream"] == []
+
+
+def test_fixblock_may_fix_a_block_again_and_each_fix_is_kept(eval_account: EvalAccount) -> None:
+    work_block_id = record_work_block_with_unknown_workstream(eval_account)
+    run_goodall(eval_account, ["fixblock", work_block_id, "--workstream", "engineering"])
+
+    again = run_goodall(eval_account, ["fixblock", work_block_id, "--workstream", "research"])
+
+    assert again.exit_code == exit_codes.SUCCESS, again.standard_error
+    assert "had been recorded as engineering" in again.everything_printed
+    assert len(fix_files(eval_account)) == 2
+
+
+def test_fixblock_may_fix_a_block_whose_workstream_was_known_but_wrong(eval_account: EvalAccount) -> None:
+    run_goodall(eval_account, ["start"])
+    run_goodall(eval_account, ["stop"])
+    [record] = eval_account.work_block_records()
+
+    fixblock = run_goodall(eval_account, ["fixblock", record["id"], "--workstream", "go-to-market"])
+
+    assert fixblock.exit_code == exit_codes.SUCCESS, fixblock.standard_error
+    assert "had been recorded as research" in fixblock.everything_printed
+    assert len(fix_files(eval_account)) == 1
+
+
+def test_fixblock_with_nothing_given_shows_a_whole_command_to_copy_and_exits_2(eval_account: EvalAccount) -> None:
+    work_block_id = record_work_block_with_unknown_workstream(eval_account)
+
+    fixblock = run_goodall(eval_account, ["fixblock"])
+
+    assert fixblock.exit_code == exit_codes.USAGE_ERROR
+    assert "No work block id was given" in fixblock.everything_printed
+    assert "No --workstream was given" in fixblock.everything_printed
+    assert f"goodall fixblock {work_block_id} --workstream engineering" in fixblock.standard_error
+    assert fix_files(eval_account) == []
+
+
+def test_fixblock_with_an_id_that_is_not_a_work_block_id_does_not_repeat_it_and_exits_2(
+    eval_account: EvalAccount,
+) -> None:
+    fixblock = run_goodall(eval_account, ["fixblock", "my-Secret-thing", "--workstream", "research"])
+
+    assert fixblock.exit_code == exit_codes.USAGE_ERROR
+    assert "is not a work block id" in fixblock.everything_printed
+    assert "my-Secret-thing" not in fixblock.everything_printed
+    assert "goodall fixblock 20261116T093000Z-ada-lovelace-7f3a9c2e --workstream research" in fixblock.standard_error
+
+
+def test_fixblock_refuses_unknown_as_the_workstream_and_exits_2(eval_account: EvalAccount) -> None:
+    work_block_id = record_work_block_with_unknown_workstream(eval_account)
+
+    fixblock = run_goodall(eval_account, ["fixblock", work_block_id, "--workstream", "unknown"])
+
+    assert fixblock.exit_code == exit_codes.USAGE_ERROR
+    assert "placeholder" in fixblock.everything_printed
+    assert f"goodall fixblock {work_block_id} --workstream research" in fixblock.standard_error
+    assert fix_files(eval_account) == []
+
+
+def test_fixblock_refuses_a_workstream_the_eval_does_not_have_without_repeating_it(
+    eval_account: EvalAccount,
+) -> None:
+    work_block_id = record_work_block_with_unknown_workstream(eval_account)
+
+    fixblock = run_goodall(eval_account, ["fixblock", work_block_id, "--workstream", "Reserch"])
+
+    assert fixblock.exit_code == exit_codes.USAGE_ERROR
+    assert "Reserch" not in fixblock.everything_printed
+    assert "engineering, research, go-to-market" in fixblock.everything_printed
+    assert fix_files(eval_account) == []
+
+
+def test_fixblock_for_a_work_block_the_record_repo_does_not_hold_says_what_to_check_and_exits_1(
+    eval_account: EvalAccount,
+) -> None:
+    fixblock = run_goodall(
+        eval_account, ["fixblock", "20261116T093000Z-ada-lovelace-7f3a9c2e", "--workstream", "research"]
+    )
+
+    assert fixblock.exit_code == exit_codes.ERROR
+    assert "No work block record with the id 20261116T093000Z-ada-lovelace-7f3a9c2e" in fixblock.everything_printed
+    assert "goodall status" in fixblock.everything_printed
+    assert fix_files(eval_account) == []
+
+
+def test_fixblock_for_a_work_block_whose_record_is_still_waiting_on_this_mac_says_to_write_it_first(
+    eval_account: EvalAccount,
+) -> None:
+    run_goodall(eval_account, ["start"])
+    git(eval_account.record_repo, "config", "--unset", "user.email")
+    run_goodall(eval_account, ["stop"])
+    [waiting_file] = work_blocks.unrecorded_files(eval_account.log_directory)
+
+    fixblock = run_goodall(eval_account, ["fixblock", waiting_file.stem, "--workstream", "engineering"])
+
+    assert fixblock.exit_code == exit_codes.ERROR
+    assert "still waiting on this Mac" in fixblock.everything_printed
+    assert "run goodall status" in fixblock.everything_printed
+    assert fix_files(eval_account) == []
+
+
+def test_fixblock_whose_fix_cannot_be_committed_exits_1_and_leaves_no_file(eval_account: EvalAccount) -> None:
+    work_block_id = record_work_block_with_unknown_workstream(eval_account)
+    git(eval_account.record_repo, "config", "--unset", "user.email")
+
+    fixblock = run_goodall(eval_account, ["fixblock", work_block_id, "--workstream", "research"])
+
+    assert fixblock.exit_code == exit_codes.ERROR
+    assert fix_files(eval_account) == []
+
+
+# ---------------------------------------------------------------------------
 # An unreachable log directory, and an end that was interrupted
 # ---------------------------------------------------------------------------
 
@@ -696,6 +892,7 @@ def test_status_json_while_a_work_block_is_active_describes_it(eval_account: Eva
             "claude_sessions": [CLAUDE_SESSION],
         },
         "ended_work_blocks": [],
+        "work_blocks_waiting_for_workstream": [],
         "warnings": [],
         "failures": [],
     }
