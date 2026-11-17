@@ -93,6 +93,9 @@ class ClaudeCodeMarkers:
     # the agent was busy.
     queued_command_attachment_type: str
     queued_prompt_command_mode: str
+    # How the warning begins that Claude Code writes when a UserPromptSubmit
+    # hook (goodall's prompt gate, for one) blocks a prompt.
+    prompt_blocked_by_hook_prefix: str
     # Block types known to appear in a "user" entry's message content.
     known_content_block_types: tuple[str, ...]
     # Values of a "user" entry's `origin.kind`; only "human" is the person.
@@ -151,6 +154,7 @@ def claude_code_markers() -> ClaudeCodeMarkers:
         plan_approved_result_prefix="User has approved your plan",
         queued_command_attachment_type="queued_command",
         queued_prompt_command_mode="prompt",
+        prompt_blocked_by_hook_prefix="UserPromptSubmit operation blocked by hook",
         known_content_block_types=("text", "image", "document", "tool_result"),
         known_origin_kinds=("human", "task-notification", "peer", "coordinator"),
         prepended_context_opening_tag="<system-reminder>",
@@ -432,9 +436,35 @@ class QueuedPrompt:
     duration_seconds: float | None = field(default=None, init=False)
 
 
+@dataclass(frozen=True, kw_only=True)
+class BlockedPrompt:
+    """A prompt the person sent that a UserPromptSubmit hook refused.
+
+    goodall's prompt gate is such a hook, so this is how a prompt sent with
+    no work block active shows up. Claude Code writes no user entry for it,
+    only a warning, so the person's attempt would otherwise go uncounted.
+    `text` is the prompt as Claude Code queued it just before the warning,
+    or None when no undelivered queued prompt was found. Any hook can block
+    a prompt; the hook's message is not kept, because it may quote the
+    prompt or other private text.
+    """
+
+    line_number: int
+    entry_id: str | None
+    session_id: str | None
+    timestamp: str | None
+    text: str | None
+    transcript_path: Path | None = field(default=None, compare=False)
+    source: str = field(default=SOURCE, init=False)
+    kind: str = field(default="blocked_prompt", init=False)
+    rule: str = field(default="blocked_prompt_from_hook_warning", init=False)
+    duration_seconds: float | None = field(default=None, init=False)
+
+
 TranscriptAction = (
     TypedPrompt
     | QueuedPrompt
+    | BlockedPrompt
     | Interruption
     | ToolCallRejection
     | ShellCommand
@@ -525,6 +555,14 @@ def parse_human_actions(transcript_path: Path) -> ParseResult:
             if entry_type == "assistant":
                 remember_tool_calls(entry, memory)
                 continue
+            if entry_type == "queue-operation":
+                remember_queued_prompt(entry, memory)
+                continue
+            if entry_type == "system":
+                blocked_prompt = blocked_prompt_from_hook_warning(entry, place, markers, memory)
+                if blocked_prompt is not None:
+                    result.actions.append(blocked_prompt)
+                continue
             if entry_type == "attachment":
                 queued_prompt = queued_prompt_from_attachment(entry, place, markers)
                 if queued_prompt is not None:
@@ -532,6 +570,8 @@ def parse_human_actions(transcript_path: Path) -> ParseResult:
                 continue
             if entry_type != "user":
                 continue
+            # A user entry means the queued prompt, if any, was delivered.
+            memory.undelivered_prompt = None
             user_content = read_user_content(entry, markers)
             for reason in user_content.unfamiliar_reasons:
                 result.unfamiliar_entries.append(UnfamiliarEntry(line_number, entry_id, reason))
@@ -563,6 +603,48 @@ class TranscriptMemory:
     # Where in the action list each shell command with no output yet sits, by
     # its entry id, so older versions' separate output entry can be linked.
     shell_command_positions: dict[str, int] = field(default_factory=dict)
+    # The text of the last prompt Claude Code queued and has not yet written
+    # as a user entry, so a blocked prompt can say what was blocked.
+    undelivered_prompt: str | None = None
+
+
+def remember_queued_prompt(entry: dict[str, Any], memory: TranscriptMemory) -> None:
+    """Note the text of a prompt as Claude Code queues it.
+
+    Claude Code writes a `queue-operation` entry with `operation: enqueue` and
+    the prompt as `content` before deciding what to do with it. These entries
+    are bookkeeping, not actions: a delivered prompt is counted from its user
+    entry, a blocked one from the hook's warning.
+    """
+    if entry.get("operation") == "enqueue" and isinstance(entry.get("content"), str):
+        memory.undelivered_prompt = entry["content"]
+
+
+def blocked_prompt_from_hook_warning(
+    entry: dict[str, Any], place: EntryPlace, markers: ClaudeCodeMarkers, memory: TranscriptMemory
+) -> BlockedPrompt | None:
+    """Rule: a system warning saying a UserPromptSubmit hook blocked the prompt is a blocked prompt.
+
+    Seen as a `system` entry with `subtype: informational` whose `content`
+    begins with fixed text. The prompt's text is taken from the last queued
+    prompt not yet delivered, and is then used up, so one queued prompt is
+    never given to two blocked prompts.
+    """
+    if entry.get("subtype") != "informational":
+        return None
+    content = entry.get("content")
+    if not isinstance(content, str) or not content.startswith(markers.prompt_blocked_by_hook_prefix):
+        return None
+    text = memory.undelivered_prompt
+    memory.undelivered_prompt = None
+    return BlockedPrompt(
+        line_number=place.line_number,
+        entry_id=place.entry_id,
+        session_id=place.session_id,
+        timestamp=place.timestamp,
+        transcript_path=place.transcript_path,
+        text=text,
+    )
 
 
 def remember_tool_calls(entry: dict[str, Any], memory: TranscriptMemory) -> None:

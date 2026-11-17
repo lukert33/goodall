@@ -11,6 +11,7 @@ from pathlib import Path
 
 from goodall.human_actions import (
     RULES_VERSION,
+    BlockedPrompt,
     Interruption,
     PermissionPromptDismissal,
     PlanApproval,
@@ -487,6 +488,43 @@ def test_prompts_typed_while_the_agent_was_busy_are_found_in_queued_attachments(
         # attachment. None is the person typing.
     ]
     assert result.actions[1].rule == "queued_prompt_from_attachment"
+    assert result.unfamiliar_entries == []
+
+
+def test_prompts_a_hook_blocked_are_found_with_the_text_that_was_queued() -> None:
+    # The prompt gate blocks a prompt in a UserPromptSubmit hook. No user
+    # entry is written; a queued copy and a warning are.
+    result = parse_human_actions(FIXTURES / "blocked_prompts.jsonl")
+
+    assert result.actions == [
+        BlockedPrompt(
+            line_number=2,
+            entry_id="s-0002",
+            session_id="session-s",
+            timestamp="2026-03-07T09:00:00.200Z",
+            text="Start the example task.",
+        ),
+        # Line 4 is another warning, not a blocked prompt.
+        TypedPrompt(
+            line_number=7,
+            entry_id="u-0007",
+            session_id="session-s",
+            timestamp="2026-03-07T09:02:00.020Z",
+            text="Second example prompt.",
+            image_count=0,
+        ),
+        # The prompt queued before line 7 was delivered, so it is not the
+        # text of this blocked prompt; no queued text is left, so none is
+        # given rather than a wrong one.
+        BlockedPrompt(
+            line_number=8,
+            entry_id="s-0008",
+            session_id="session-s",
+            timestamp="2026-03-07T09:03:00.000Z",
+            text=None,
+        ),
+    ]
+    assert result.actions[0].rule == "blocked_prompt_from_hook_warning"
     assert result.unfamiliar_entries == []
 
 

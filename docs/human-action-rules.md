@@ -39,6 +39,7 @@ looking at real results, without re-reading transcripts.
 | `question_answer` | `question_answer_from_tool_result` | `tool_call_id`, `question_count`, `answers` (as given) |
 | `plan_approval` | `plan_approval_from_tool_result` | `tool_call_id`, `decision` (always `"approve"`) |
 | `queued_prompt` | `queued_prompt_from_attachment` | `text`, `image_count` |
+| `blocked_prompt` | `blocked_prompt_from_hook_warning` | `text` (the queued prompt, if found) |
 
 `tool_name` is read from the assistant entry that made the call, when it is in
 the same transcript; only the name is kept, never the tool's input.
@@ -141,6 +142,14 @@ Outside `user` entries:
     prompt (rule 4 applies). `timestamp` is the attachment's own
     `timestamp` (when it was queued) when present. A queued prompt with no
     origin is not counted; in the scan those were all injected reminders.
+11. **Blocked prompt** (`blocked_prompt_from_hook_warning`). A `system` entry
+    with `subtype: informational` whose `content` begins "UserPromptSubmit
+    operation blocked by hook": a hook, such as goodall's prompt gate,
+    refused a prompt the person sent. No user entry is written. `text` is the
+    `content` of the last `queue-operation` entry with `operation: enqueue`
+    since the last user entry, then used up; it is empty if there was none.
+    The hook's message is not kept. Any UserPromptSubmit hook, not only the
+    prompt gate, produces this warning.
 
 ## Unfamiliar entries
 
@@ -155,5 +164,3 @@ Parsing always carries on.
 - **Permission approvals before Claude Code 2.1.289**, which wrote no
   `permissionDecision`.
 - **Interruptions between turns**, which leave nothing in a transcript.
-- **Prompts refused by the prompt gate**, which leave a `queue-operation`
-  entry, not a user entry.
