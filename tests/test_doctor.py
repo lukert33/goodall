@@ -459,6 +459,23 @@ def test_relative_settings_folder_override_fails_the_found_check(
     assert statuses(document)["settings.local_settings_found"] == "fail"
 
 
+@pytest.mark.parametrize("extra_arguments", [[], ["--json"]])
+def test_relative_settings_folder_override_is_never_repeated_back(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, extra_arguments: list[str]
+) -> None:
+    # The value may be a key pasted into the wrong variable (ADR 0006).
+    monkeypatch.setenv("GOODALL_CONFIG_DIR", "sk-ant-api03-SYNTHETICsyntheticSYNTHETIC")
+    monkeypatch.chdir(tmp_path)
+
+    exit_code, standard_output, standard_error = run_goodall(["doctor", *extra_arguments])
+
+    assert exit_code == exit_codes.ERROR
+    assert "SYNTHETIC" not in standard_output + standard_error
+    message = " ".join((standard_output + standard_error).split())
+    assert "full path starting with /" in message
+    assert "for example /Users/you/goodall-config" in message
+
+
 def test_missing_record_repo_skips_the_eval_config_but_still_checks_the_log_directory(
     healthy_account: EvalAccount,
 ) -> None:
@@ -986,6 +1003,35 @@ def test_a_line_in_the_env_file_that_is_not_name_equals_value_is_reported_with_i
     assert isinstance(detail, str)
     assert detail.startswith("Line 6 of the env file at ")
     assert "is not in the form NAME=value" in detail
+
+
+def empty_value_report(account: EvalAccount, file_name: str) -> str:
+    """Append a line with an empty value (a synthetic token name) to a file; return the doctor report, flattened."""
+    env_file = getattr(account, file_name)
+    env_file.write_text(env_file.read_text() + "SYNTHETICsyntheticSYNTHETIC0123456789x9=\n")
+    exit_code, standard_output, standard_error = run_goodall(["doctor", "--json"])
+    assert exit_code == exit_codes.ERROR
+    assert "SYNTHETICsynthetic" not in standard_output + standard_error
+    return " ".join(standard_output.replace("\\n", " ").split())
+
+
+def test_an_empty_value_in_the_env_file_says_to_give_a_secret_reference_or_delete_the_line(
+    healthy_account: EvalAccount,
+) -> None:
+    report = empty_value_report(healthy_account, "env_file")
+
+    assert "give the variable a secret reference, or delete the line" in report
+    assert "placeholder" not in report
+    assert "short word" not in report
+
+
+def test_an_empty_value_in_the_shared_env_file_says_any_short_word_will_do_for_a_placeholder(
+    healthy_account: EvalAccount,
+) -> None:
+    report = empty_value_report(healthy_account, "shared_env_file")
+
+    assert "give the variable a value" in report
+    assert "if it is only a placeholder, any short word will do, such as foo" in report
 
 
 def test_an_unreadable_env_file_fails_saying_why(healthy_account: EvalAccount) -> None:

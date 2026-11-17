@@ -46,6 +46,13 @@ def test_an_empty_value_is_a_problem_because_a_pasted_base64_token_reads_that_wa
         assert "SYNTHETICsynthetic" not in problem.problem
 
 
+def test_the_empty_value_problem_is_marked_so_each_file_can_give_its_own_advice() -> None:
+    reading = read_env_text("EMPTY=\nNOT_EMPTY_BUT_BAD\n")
+
+    assert [problem.empty_value for problem in reading.problems] == [True, False]
+    assert "placeholder" not in reading.problems[0].problem
+
+
 def problem_lines(text: str) -> list[int]:
     """The line numbers of every problem the reader finds in `text`."""
     line_numbers = []

@@ -87,10 +87,16 @@ class EnvLineProblem:
     `problem` says what is wrong, as the end of a sentence starting "Line N
     ...". It never contains anything written on the line except a variable
     name that `variable_as_shown` lets through.
+
+    `empty_value` is True for a line with nothing after the =. What to do
+    about it differs by file (the env file holds secret references, the
+    shared env file holds plain values), so each file's failure adds its own
+    advice instead of this text carrying one file's.
     """
 
     line_number: int
     problem: str
+    empty_value: bool = False
 
 
 @dataclass(frozen=True)
@@ -208,9 +214,10 @@ def read_line(stripped_line: str, line_number: int) -> EnvEntry | EnvLineProblem
         return EnvLineProblem(
             line_number=line_number,
             problem=(
-                "has nothing after the =. A key or token pasted on a line of its own can look like this, so "
-                "goodall does not read it as a variable"
+                "has nothing after the =. Goodall refuses an empty value because a key or token pasted on a "
+                "line of its own can look like one"
             ),
+            empty_value=True,
         )
     return EnvEntry(name=name, value=value, line_number=line_number)
 
