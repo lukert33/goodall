@@ -32,6 +32,7 @@ from goodall import exit_codes
 from goodall.checks import Check, CheckContext, run_checks
 from goodall.program_checks import PROGRAM_CHECKS
 from goodall.runner import Runner
+from goodall.secrets_checks import SECRETS_CHECKS
 from goodall.settings_checks import SETTINGS_CHECKS
 from goodall.terminal import CheckResult, Terminal, count_checks
 
@@ -40,9 +41,9 @@ DOCTOR_JSON_SCHEMA_VERSION = 1
 
 # Every check doctor runs, in order. The settings checks come first, because
 # they say which eval this account belongs to; then the checks that run
-# other programs (tools, the eval account, the record repo). Later groups
-# (secrets) are added after them.
-DOCTOR_CHECKS: list[Check] = [*SETTINGS_CHECKS, *PROGRAM_CHECKS]
+# other programs (tools, the eval account, the record repo); then the checks
+# of the env file and the shared env file (secrets).
+DOCTOR_CHECKS: list[Check] = [*SETTINGS_CHECKS, *PROGRAM_CHECKS, *SECRETS_CHECKS]
 
 
 def run_doctor(terminal: Terminal, runner: Runner, as_json: bool) -> int:
