@@ -6,8 +6,11 @@ directly with a captured terminal and a fake runner, and check the returned
 exit code, so `main` returns a number instead of calling `sys.exit` itself.
 
 `goodall status` (goodall.status), `goodall doctor` (goodall.doctor),
-`goodall journal` and `goodall intervene` (goodall.entries), and
-`goodall start` and `goodall stop` (goodall.work_block_commands) are built.
+`goodall journal` and `goodall intervene` (goodall.entries),
+`goodall start` and `goodall stop` (goodall.work_block_commands), and
+`goodall hook` (goodall.hook) are built. The `goodall` command itself starts
+in goodall.entry_point, which sends `goodall hook` to goodall.hook without
+loading this module, for speed; `main` routes it there too, so both agree.
 Every other subcommand is still a stub: it reports that it is not
 built yet and returns `ERROR` (1), not `USAGE_ERROR` (2), because the
 command line was valid and the feature is missing.
@@ -35,6 +38,7 @@ from pathlib import Path
 from goodall import exit_codes, records
 from goodall.doctor import run_doctor
 from goodall.entries import DECISION_MEANINGS, EntryRequest, InterventionDetails, run_intervene, run_journal
+from goodall.hook import run_hook
 from goodall.runner import RealRunner, Runner
 from goodall.status import run_status
 from goodall.terminal import Failure, Terminal
@@ -162,7 +166,10 @@ def build_parser() -> argparse.ArgumentParser:
     intervene.set_defaults(command_name="intervene")
 
     hook = commands.add_parser("hook", help="Handle a Claude Code hook event (called by Claude Code, not by people).")
-    hook.add_argument("event_name", help="The Claude Code hook event, for example UserPromptSubmit.")
+    # Optional to argparse so a missing event name is reported by
+    # goodall.hook, which exits 1 rather than argparse's 2: Claude Code reads
+    # 2 as "refuse the prompt" or "do not stop" (see goodall.hook).
+    hook.add_argument("event_name", nargs="?", help="The Claude Code hook event, for example UserPromptSubmit.")
     hook.set_defaults(command_name="hook")
 
     sync = commands.add_parser("sync", help="Copy any Claude Code transcripts not yet captured into the log directory.")
@@ -290,6 +297,9 @@ def main(
             occurred_at=arguments.occurred_at,
         )
         return run_intervene(terminal, runner, entry_request, intervention_details)
+
+    if command_name == "hook":
+        return run_hook(arguments.event_name, terminal, clock)
 
     return run_stub(command_name, terminal)
 

@@ -6,6 +6,6 @@ This is useful before the package is installed, for example with
 
 import sys
 
-from goodall.cli import main
+from goodall.entry_point import main
 
 sys.exit(main())

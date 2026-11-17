@@ -11,7 +11,7 @@ license-files = ["LICENSE"]
 dependencies = []
 
 [project.scripts]
-goodall = "goodall.cli:main"
+goodall = "goodall.entry_point:main"
 
 # Build backend. uv_build ships inside uv itself, so building adds no package
 # beyond the tool this project already relies on. The range matches the uv
