@@ -18,7 +18,7 @@ Every work block record carries an end state saying which of these happened.
 | --- | --- | --- |
 | `clean` | You ran `goodall stop`. | The moment you ran it. |
 | `inferred` | Nobody ran `goodall stop`, and the block sat idle for longer than the idle limit. Goodall closed it for you. | Its last heartbeat: the last moment goodall saw work in it. |
-| `abnormal` | Goodall could not read the block's marker, so it could not tell whether the block was still running. It recorded what it could recover. | Its last heartbeat, or failing that the last time the marker file changed. |
+| `abnormal` | Goodall could not read the block's marker, so it could not tell whether the block was still running. It recorded what it could recover, keeps the damaged marker, and, if the marker no longer said which workstream, records the workstream as `unknown` for you to fix (below). | Its last heartbeat, or failing that the last time the marker file changed. |
 
 ## When goodall closes a work block for you
 
@@ -50,7 +50,9 @@ Goodall tells you when it does this, in words like these:
 - **`goodall status`** is not a look-only command. If it finds an idle work
   block it closes it, and if a finished work block's record is still waiting
   on this Mac it writes that record into the record repo and pushes it. It
-  says so each time. If nothing needs tidying, it only reports.
+  says so each time. If nothing needs tidying, it only reports. It also
+  lists any of your work blocks still waiting for a workstream (see "Fixing
+  an unknown workstream" below).
 - **`goodall stop`** run the morning after a forgotten block closes that
   block as `inferred`, at its last heartbeat, and exits successfully. It does
   not record the block as ending when you typed the command.
@@ -83,6 +85,34 @@ failure, because what you asked for (ending the work block) is done and the
 record is safe. You do not need to run it again; running it again would only
 say that no work block is active. Goodall exits `1` only when the thing you
 asked for did not happen.
+
+## Fixing an unknown workstream
+
+Goodall would rather keep a work block with a gap in it than lose it. When
+it cannot read a block's marker, it still records the block, with the end
+state `abnormal`, and fills each gap with what it can honestly say: this
+eval account's contributor, and the time the marker file last changed when
+the start cannot be read. If the marker no longer says which workstream the
+block was for, the record says `unknown`. `unknown` is reserved: no eval
+may name a real workstream that. If not even a start time can be read,
+nothing is recorded, because any time goodall wrote would be invented; the
+damaged marker is kept and goodall asks you to tell the researcher.
+
+`goodall status` then lists each of your work blocks waiting for its
+workstream, with one command per workstream, ready to copy:
+
+```
+goodall fixblock 20261116T093000Z-ada-lovelace-7f3a9c2e --workstream research
+```
+
+Run the one that names the workstream the block was for. The record is
+never changed (records are never rewritten); goodall writes a small
+**work block fix** beside it in the record repo, naming the block and the
+workstream, and analysis reads the two together. You can also use
+`goodall fixblock` on a block recorded on the wrong workstream, and you can
+fix a block again: every fix is kept, and the latest one counts. The
+fix's file format is in `docs/record-schemas.md`, and the reasons are in
+ADR 0014.
 
 ## The idle limit
 
