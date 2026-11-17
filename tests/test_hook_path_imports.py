@@ -20,6 +20,10 @@ HOOK_PATH_MODULES = [
     "goodall.terminal",
     # The prompt gate will run git through it.
     "goodall.runner",
+    # The prompt gate asks it whether a work block is active, and the hook
+    # leaves heartbeats through it; it reads the marker with goodall.records.
+    "goodall.work_blocks",
+    "goodall.records",
 ]
 
 # Runs inside the fresh interpreter: import the modules, then print every
@@ -118,3 +122,56 @@ def test_reading_local_settings_and_eval_config_loads_only_the_standard_library(
     )
     assert completed.returncode == 0, completed.stderr
     assert completed.stdout == ""
+
+
+# Runs inside the fresh interpreter: with a work block running in the log
+# directory named on the command line, ask whether it is active and leave a
+# heartbeat, as the hook will on every prompt, then print every module loaded
+# along the way that is neither the standard library nor goodall, and
+# `subprocess` if it was loaded at all: the hook's work-block calls must
+# never start a program.
+HEARTBEAT_AND_LIST_MODULES = """
+import sys
+from datetime import UTC, datetime
+
+already_loaded = set(sys.modules)
+from goodall import work_blocks
+
+log_directory = __import__("pathlib").Path(sys.argv[1])
+now = datetime(2026, 11, 16, 10, 0, tzinfo=UTC)
+if work_blocks.active_work_block(log_directory, now) is None:
+    raise SystemExit("expected an active work block")
+if work_blocks.record_heartbeat(log_directory, now, "0f6c1d2e-3a4b-4c5d-8e9f-a0b1c2d3e4f5") is None:
+    raise SystemExit("expected the heartbeat to be recorded")
+
+for loaded_name in sorted(set(sys.modules) - already_loaded):
+    top_level_name = loaded_name.split(".")[0]
+    if top_level_name == "subprocess":
+        print(loaded_name)
+    if top_level_name in sys.stdlib_module_names or top_level_name == "goodall":
+        continue
+    print(loaded_name)
+"""
+
+
+def test_checking_the_work_block_and_leaving_a_heartbeat_loads_only_the_standard_library(tmp_path: Path) -> None:
+    from datetime import UTC, datetime
+
+    from goodall import records, work_blocks
+
+    machine = records.MachineFacts("eval-mac-01", "26.1", "0.0.1", None)
+    running = records.build_work_block_record(
+        "ada-lovelace", "research", datetime(2026, 11, 16, 9, 30, tzinfo=UTC), machine
+    )
+    assert work_blocks.create_marker(tmp_path, running)
+
+    completed = subprocess.run(
+        [sys.executable, "-c", HEARTBEAT_AND_LIST_MODULES, str(tmp_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout == ""
+    assert work_blocks.read_claude_sessions(tmp_path, running.id) == ("0f6c1d2e-3a4b-4c5d-8e9f-a0b1c2d3e4f5",)
