@@ -30,16 +30,50 @@ again before adding or upgrading anything.
 
 ## Adopted: runtime
 
-None.
+None. Once goodall is installed, running it needs only Python 3.12 or newer
+and the standard library.
 
-## Adopted: development and build tools
+## Needed to install
 
-None of these ships to people who install goodall.
+Goodall has no runtime dependencies, but something still has to put it on the
+machine together with a Python new enough to run it. The Python that comes
+with macOS's developer tools is older than 3.12 (3.9.6 on the machine this
+was checked on, 2026-11-17), so most researchers' Macs will need both.
+
+Which installer to use is up to the preferences or policy of whoever installs
+goodall: the person or organisation that owns the Mac. An eval account is a
+standard macOS user account and cannot install software itself. Goodall's own
+instructions use uv, and that is the only route tested.
 
 | Tool | Purpose | Provenance (checked 2026-11-16) | Decision |
 |---|---|---|---|
-| **uv** | Python, virtual environment and lockfile manager | Astral Software Inc.; `astral-sh/uv`; MIT OR Apache-2.0; self-contained Rust binary. Eight advisories since 2025-08, all in the installer and archive extraction, each fixed in a release (example: GHSA-4gg8-gxpx-9rph, arbitrary file write, 2026-05-18). | **adopt** |
-| **uv_build** | Build backend (turns the source tree into an installable package) | Astral; ships inside the `uv` executable, so a compatible version downloads nothing extra; zero dependencies; MIT OR Apache-2.0. No advisory is attributed to the build backend. Pure-Python projects only, which is what goodall is. | **adopt** (owner approved 2026-11-16) |
+| **uv** | Fetches a suitable Python and installs goodall as a command. Also the Python, virtual environment and lockfile manager used to develop goodall. | Astral Software Inc.; `astral-sh/uv`; MIT OR Apache-2.0; self-contained Rust binary. Eight advisories since 2025-08, all in the installer and archive extraction, each fixed in a release (example: GHSA-4gg8-gxpx-9rph, arbitrary file write, 2026-05-18). Every uv below 0.13.4 is affected by GHSA-hq85-5cpj-mr62 (high, 2026-10-20: a compromised certificate authority in uv's bundled list), so install 0.13.4 or newer. | **adopt** as the documented route |
+
+Popular alternatives. None has been tested with goodall, and none has been
+through the provenance check this file requires, so each is the installing
+party's own decision:
+
+- **pipx**, with a Python 3.12 or newer installed separately. pipx installs a
+  Python command-line tool into its own environment, as `uv tool install`
+  does, but does not fetch Python.
+- **pip in a virtual environment** (`python -m venv`), again with a Python
+  3.12 or newer installed separately. Nothing beyond Python itself is added.
+- **A Python from python.org, Homebrew or an organisation's managed software
+  catalogue**, to supply the interpreter for either of the two routes above.
+
+Goodall is not published to a package index yet, so today every route
+installs from a copy of this repository and builds it with `uv_build` (below),
+which pip and pipx fetch for themselves.
+
+## Adopted: development and build tools
+
+None of these is needed to install or run goodall, with the one exception
+noted for `uv_build`. uv, listed above, is also the tool goodall is developed
+with.
+
+| Tool | Purpose | Provenance (checked 2026-11-16) | Decision |
+|---|---|---|---|
+| **uv_build** | Build backend (turns the source tree into an installable package) | Astral; ships inside the `uv` executable, so a compatible version downloads nothing extra; zero dependencies; MIT OR Apache-2.0. No advisory is attributed to the build backend. Pure-Python projects only, which is what goodall is. Until goodall is published as a ready-built package, installing it from this repository runs this backend on the installing machine. | **adopt** (owner approved 2026-11-16) |
 | **pytest** 9.2.0 | Test runner | `pytest-dev`, a volunteer group with no single corporate owner; ~14,700 stars; MIT; four direct dependencies (`iniconfig`, `packaging`, `pluggy`, `pygments`). One advisory: CVE-2025-71176 (temporary-directory handling, medium), public 2026-01-22, fixed in 9.0.3 on 2026-04-07. The floor in `pyproject.toml` is 9.0.3 for that reason. | **adopt** (owner approved 2026-11-16) |
 | **ruff** 0.17.5 | Linter and formatter | Astral; `astral-sh/ruff`, ~51,200 stars; MIT; zero dependencies, bundled Rust binary. No published GitHub advisories and no OSV results. | **adopt** (owner approved 2026-11-16) |
 | **mypy** 2.4.1 | Type checker | `python/mypy`, original author Jukka Lehtosalo; ~20,700 stars; MIT; five direct dependencies (`typing_extensions`, `mypy_extensions`, `pathspec`, `librt`, `ast-serialize`). No GitHub advisories. | **adopt** (owner approved 2026-11-16) |
@@ -107,6 +141,10 @@ Recorded so that "not stated" is never mistaken for "confirmed safe".
 - Whether the `ubuntu-24.04` runner's system certificate store already
   distrusts the compromised emSign ECC Root CA - G3 intermediates
   (GHSA-hq85-5cpj-mr62). `UV_NATIVE_TLS` relies on it doing so.
+- Whether goodall installs and runs correctly through pipx or through pip in
+  a virtual environment. Only uv has been used.
+- Advisory GHSA-hq85-5cpj-mr62 itself: it was reported by the agent that
+  wrote the CI workflow and has not been checked a second time.
 - Whether the pip and Python that ship on the runner image are themselves
   current; they are used only to install uv, whose wheel is hash-checked.
 
