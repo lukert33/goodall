@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
+
 from goodall import transcripts
 
 CLAUDE_SESSION = "0f6c1d2e-3a4b-4c5d-8e9f-a0b1c2d3e4f5"
@@ -102,3 +104,38 @@ def test_copy_file_keeps_an_earlier_copy_the_source_no_longer_starts_with_under_
     kept_copy = folders.log_directory / "superseded-transcripts" / "20261117T101500.123456Z" / RELATIVE_PATH
     assert kept_copy.read_bytes() == b"one\ntwo\n"
     assert stat.S_IMODE(kept_copy.parent.stat().st_mode) == 0o700
+
+
+def test_sweep_reports_a_project_folder_it_cannot_read_and_copies_the_rest(tmp_path: Path) -> None:
+    if os.geteuid() == 0:
+        pytest.skip("root can read anything, so permissions cannot be taken away")
+    folders = make_folders(tmp_path)
+    folders.source.write_bytes(b"line\n")
+    unreadable_project_folder = folders.projects_folder / "-Users-ada-private"
+    unreadable_project_folder.mkdir()
+    unreadable_project_folder.chmod(0)
+    try:
+        result = transcripts.sweep(folders.projects_folder, folders.log_directory, NOW)
+    finally:
+        unreadable_project_folder.chmod(0o700)
+
+    assert result.claude_sessions_copied == 1
+    assert folders.copy.read_bytes() == b"line\n"
+    assert len(result.problems) == 1
+    assert "-Users-ada-private" in result.problems[0]
+
+
+def test_sweep_skips_symbolic_links_among_subagent_files(tmp_path: Path) -> None:
+    folders = make_folders(tmp_path)
+    folders.source.write_bytes(b"line\n")
+    subagents_folder = folders.projects_folder / "-Users-ada-work" / CLAUDE_SESSION / "subagents"
+    subagents_folder.mkdir(parents=True)
+    (subagents_folder / "agent-a1.jsonl").write_bytes(b"subagent\n")
+    private_file = tmp_path / "private.txt"
+    private_file.write_bytes(b"private\n")
+    (subagents_folder / "agent-a2.jsonl").symlink_to(private_file)
+
+    transcripts.sweep(folders.projects_folder, folders.log_directory, NOW)
+
+    copied_subagents_folder = folders.log_directory / "transcripts" / "-Users-ada-work" / CLAUDE_SESSION / "subagents"
+    assert sorted(path.name for path in copied_subagents_folder.iterdir()) == ["agent-a1.jsonl"]

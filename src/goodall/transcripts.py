@@ -12,17 +12,28 @@ that reads that folder, Inspect Scout's claude_code importer included:
     <log directory>/transcripts/<project folder>/<session id>.jsonl
     <log directory>/transcripts/<project folder>/<session id>/subagents/...
 
+    and goodall keeps, beside them:
+    <log directory>/superseded-transcripts/<moment>/...   earlier copies that were replaced
+    <log directory>/transcript-sync/failed-copies.jsonl   copies hooks could not make
+    <log directory>/transcript-sync/reported/...          those, once goodall status said so
+    <log directory>/transcript-sync/locks/<session id>.lock
+
 Who calls it: `goodall hook` (goodall.hook) copies one Claude session's
-files after PostToolUse, Stop and SessionEnd. This module is on the hook
-path, so it imports only the standard library (ADR 0005) and starts no
-program.
+files after PostToolUse, Stop and SessionEnd, with `copy_from_hook`; and
+`goodall start`, `stop` and `status` run `sweep`, which copies every Claude
+session the hooks missed (a Claude Code killed with SIGKILL fires no hook).
+This module is on the hook path, so it imports only the standard library
+(ADR 0005) and starts no program.
 
 Where the Claude projects folder is: `projects` inside Claude Code's own
 folder, which is `~/.claude` unless the environment variable
 CLAUDE_CONFIG_DIR names another. CLAUDE_CONFIG_DIR is Claude Code's own
 setting, not goodall's; goodall honours it so it looks where Claude Code
 writes, and tests point it at tmp_path so the real home folder, which holds
-a person's private prompts, stays out of reach.
+a person's private prompts, stays out of reach. Trap: a terminal where
+CLAUDE_CONFIG_DIR is not set while Claude Code runs with it would make
+`goodall status` sweep the wrong folder; the hooks are unaffected, since
+they inherit Claude Code's environment.
 
 Decisions a reader would otherwise reverse-engineer (PROVISIONAL):
 
@@ -30,16 +41,19 @@ Decisions a reader would otherwise reverse-engineer (PROVISIONAL):
   hook names comes from outside goodall, so a path that resolves anywhere
   else, through `..` or a symbolic link, is refused; so are symbolic links
   among a Claude session's subagent files.
-
 - Files are copied to a temporary file in the destination folder, which is
   then renamed over the copy. A rename is atomic, so a copy interrupted at
   any moment, even by SIGKILL, leaves the old copy or the new one, never a
-  file cut short.
+  file cut short. A killed copy leaves its temporary file behind; the
+  sweep removes those once they are STALE_TEMPORARY_AGE old.
 - "Unchanged" means the same size and the same modification time, to the
   nanosecond, as the source. The copy takes the source's modification
   time so that this comparison works. It is a cheap stand-in for comparing
   bytes; a tool that rewrote a transcript and then set its modification
   time back would fool it, and Claude Code is not known to do that.
+- A changed file is copied again in full, not appended to, because only a
+  whole new file can be renamed into place atomically. The earlier copy is
+  then read once more to check that the new one starts with it.
 - A copy is never overwritten by something it is not the start of.
   Transcripts are append-only in normal use, so a source that is shorter
   than the copy, or no longer begins with it, means something rewrote it
@@ -48,9 +62,10 @@ Decisions a reader would otherwise reverse-engineer (PROVISIONAL):
   relative path, and the new copy takes its place. Kept copies sit outside
   `transcripts/`, because an importer walking `transcripts/` would read a
   kept copy as a second Claude session with the same id. Trap: an importer
-  pointed at the whole log directory would still find them. Copies are readable by this macOS user account
-  only (0600, folders 0700), as goodall.work_blocks does, because
-  transcripts hold a person's prompts.
+  pointed at the whole log directory would still find them.
+- Copies are readable by this macOS user account only (0600, folders
+  0700), as goodall.work_blocks does, because transcripts hold a person's
+  prompts.
 """
 
 import enum
@@ -248,21 +263,44 @@ def sweep(projects_folder: Path, log_directory: Path, now: datetime) -> SweepRes
     mistake. A Claude session is a `<session id>.jsonl` file, or a
     `<session id>/` folder, directly inside a project folder; anything else
     is left alone. Unchanged files cost two stats each and are not read.
+
+    Never raises for anything on the disk: whatever cannot be read or
+    written becomes one of `problems`, and the rest is still copied.
     """
     result = SweepResult()
-    for project_folder_name in list_folders(projects_folder):
-        for claude_session in list_claude_sessions(projects_folder / project_folder_name):
+    try:
+        project_folder_names = list_folders(projects_folder)
+    except OSError as error:
+        result.problems.append(f"The Claude projects folder {projects_folder}: {describe_error(error)}.")
+        project_folder_names = []
+    for project_folder_name in project_folder_names:
+        try:
+            claude_sessions = list_claude_sessions(projects_folder / project_folder_name)
+        except OSError as error:
+            result.problems.append(f"The project folder {project_folder_name}: {describe_error(error)}.")
+            continue
+        for claude_session in claude_sessions:
             try:
                 outcomes = copy_claude_session(projects_folder, log_directory, project_folder_name, claude_session, now)
             except OSError as error:
-                result.problems.append(f"Claude session {claude_session}: {error.strerror or error}.")
+                result.problems.append(f"Claude session {claude_session}: {describe_error(error)}.")
                 continue
             if FileOutcome.COPIED in outcomes or FileOutcome.COPIED_AND_EARLIER_COPY_KEPT in outcomes:
                 result.claude_sessions_copied += 1
             result.earlier_copies_kept += outcomes.count(FileOutcome.COPIED_AND_EARLIER_COPY_KEPT)
-    take_failed_hook_copies(log_directory, now, result)
-    remove_stale_temporary_files(log_directory / TRANSCRIPTS_FOLDER_NAME, now)
+    try:
+        take_failed_hook_copies(log_directory, now, result)
+        remove_stale_temporary_files(log_directory / TRANSCRIPTS_FOLDER_NAME, now)
+    except OSError as error:
+        result.problems.append(f"Tidying {SYNC_FOLDER_NAME} in the log directory: {describe_error(error)}.")
     return result
+
+
+def describe_error(error: OSError) -> str:
+    """What went wrong, in the system's words: `Permission denied`, `No space left on device`."""
+    if error.strerror:
+        return error.strerror
+    return str(error)
 
 
 def remove_stale_temporary_files(folder: Path, now: datetime) -> None:
