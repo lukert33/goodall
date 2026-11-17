@@ -174,7 +174,9 @@ def test_measured_width_is_clamped_to_a_readable_range() -> None:
 
 # The check report, which goodall doctor prints. Two groups and every status,
 # so the layout of each kind of line is pinned down. The words pass, FAIL,
-# warn and skip are always printed, so the screen reads without colour.
+# warn, skip and unverified are always printed, so the screen reads without
+# colour. The status column is as wide as its longest word, "unverified", so
+# every summary starts in the same column.
 
 REPORT_RESULTS = [
     CheckResult(id="settings.found", group="Settings", status=CheckStatus.PASS, summary="Settings are found"),
@@ -202,31 +204,48 @@ REPORT_RESULTS = [
         ],
     ),
     CheckResult(id="tools.git", group="Tools", status=CheckStatus.PASS, summary="git is installed"),
+    CheckResult(
+        id="tools.keys",
+        group="Tools",
+        status=CheckStatus.UNVERIFIED,
+        summary="The keys are in the drawer",
+        failures=[
+            Failure(
+                kind="keys_not_checked",
+                what_happened="The drawer is locked, so goodall could not look.",
+                why="Goodall does not force drawers.",
+                what_to_do_next="Look in the drawer yourself.",
+            )
+        ],
+    ),
 ]
 
 EXPECTED_REPORT_SCREEN = """\
 Settings
-  pass  Settings are found
-  FAIL  Settings are valid
-        No example file was found at
-        /tmp/an/example/folder/with/a/rather/long/name/example.toml.
-        Next: Run goodall onboard.
+  pass        Settings are found
+  FAIL        Settings are valid
+              No example file was found at
+              /tmp/an/example/folder/with/a/rather/long/name/example.toml.
+              Next: Run goodall onboard.
 
-        A second thing went wrong.
-        Next: Fix both.
+              A second thing went wrong.
+              Next: Fix both.
 
-  skip  The folder named in the settings exists, which is a long enough summary
-        to wrap
-        Waiting for: Settings are valid
+  skip        The folder named in the settings exists, which is a long enough
+              summary to wrap
+              Waiting for: Settings are valid
 
 Tools
-  warn  The drive is connected
-        Not recording.
-        Next: Plug it in.
+  warn        The drive is connected
+              Not recording.
+              Next: Plug it in.
 
-  pass  git is installed
+  pass        git is installed
+  unverified  The keys are in the drawer
+              The drawer is locked, so goodall could not look.
+              Next: Look in the drawer yourself.
 
-2 passed, 1 warned, 1 failed, 1 skipped
+2 passed, 1 warned, 1 failed, 1 skipped, 1 unverified
 """
 
 
@@ -249,13 +268,13 @@ def test_check_report_with_colour_reads_the_same_once_colour_is_removed(monkeypa
     terminal.show_check_report(REPORT_RESULTS)
 
     screen = standard_output.getvalue()
-    assert "\x1b[1;31mFAIL\x1b[0m  Settings are valid" in screen
+    assert "\x1b[1;31mFAIL\x1b[0m        Settings are valid" in screen
     without_colour = re.sub("\x1b\\[[0-9;]*m", "", screen)
     assert without_colour == EXPECTED_REPORT_SCREEN
 
 
 def test_check_counts_and_json_come_from_the_same_results() -> None:
-    assert count_checks(REPORT_RESULTS) == CheckCounts(passed=2, warned=1, failed=1, skipped=1)
+    assert count_checks(REPORT_RESULTS) == CheckCounts(passed=2, warned=1, failed=1, skipped=1, unverified=1)
     assert REPORT_RESULTS[1].as_json() == {
         "id": "settings.valid",
         "group": "Settings",
@@ -264,8 +283,40 @@ def test_check_counts_and_json_come_from_the_same_results() -> None:
         "detail": EXAMPLE_FAILURE.what_happened + " " + SECOND_FAILURE.what_happened,
         "next_step": "Run goodall onboard. Fix both.",
         "waiting_for": None,
+        "note": None,
         "failures": [EXAMPLE_FAILURE.as_json(), SECOND_FAILURE.as_json()],
     }
     assert REPORT_RESULTS[2].as_json()["waiting_for"] == "settings.valid"
     assert REPORT_RESULTS[0].as_json()["detail"] is None
     assert REPORT_RESULTS[0].as_json()["next_step"] is None
+    # Unverified is its own status, neither a pass nor a failure.
+    assert REPORT_RESULTS[5].as_json()["status"] == "unverified"
+    assert REPORT_RESULTS[5].as_json()["next_step"] == "Look in the drawer yourself."
+
+
+def test_a_passing_check_with_a_note_shows_the_note_beneath_it_and_in_json() -> None:
+    result = CheckResult(
+        id="secrets.env_file",
+        group="Secrets",
+        status=CheckStatus.PASS,
+        summary="The env file holds only secret references",
+        note="There is no env file, which is fine if this eval uses no secrets, as many small evals do not.",
+    )
+    standard_output = io.StringIO()
+    terminal = Terminal(standard_output=standard_output, standard_error=io.StringIO())
+
+    terminal.show_check_report([result, REPORT_RESULTS[4]])
+
+    assert standard_output.getvalue() == (
+        "Secrets\n"
+        "  pass        The env file holds only secret references\n"
+        "              There is no env file, which is fine if this eval uses no secrets,\n"
+        "              as many small evals do not.\n"
+        "\n"
+        "Tools\n"
+        "  pass        git is installed\n"
+        "\n"
+        "2 passed, 0 warned, 0 failed, 0 skipped, 0 unverified\n"
+    )
+    assert result.as_json()["note"] == result.note
+    assert REPORT_RESULTS[4].as_json()["note"] is None

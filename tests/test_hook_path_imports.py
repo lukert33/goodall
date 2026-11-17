@@ -18,8 +18,16 @@ HOOK_PATH_MODULES = [
     "goodall.eval_config",
     # Imported by goodall.local_settings for its Failure record.
     "goodall.terminal",
+    # Decides which names a failure may show; the readers above call it.
+    "goodall.quoting",
     # The prompt gate will run git through it.
     "goodall.runner",
+    # The prompt gate will check the record repo and log directory folders.
+    "goodall.folders",
+    # The prompt gate exits with PROMPT_GATE_CLOSED from here.
+    "goodall.exit_codes",
+    # goodall.eval_config takes its rule for secret references from here.
+    "goodall.secrets_manager",
 ]
 
 # Runs inside the fresh interpreter: import the modules, then print every
@@ -115,6 +123,49 @@ def test_reading_local_settings_and_eval_config_loads_only_the_standard_library(
         check=False,
         timeout=30,
         env=environment,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout == ""
+
+
+# Runs inside the fresh interpreter: read a real env file and check its
+# references, then print every module loaded along the way that is neither
+# the standard library nor goodall. The code that launches programs will
+# read the env files through these two modules, so they stay standard
+# library only like the hook path (ADR 0005).
+READ_ENV_FILE_AND_LIST_THIRD_PARTY_MODULES = """
+import sys
+from pathlib import Path
+
+already_loaded = set(sys.modules)
+from goodall.env_files import EnvFileReading, read_env_file
+from goodall.secrets_manager import is_well_formed_secret_reference
+
+reading = read_env_file(Path(sys.argv[1]))
+if not isinstance(reading, EnvFileReading) or reading.problems:
+    raise SystemExit(f"expected a readable env file, got {reading!r}")
+for entry in reading.entries:
+    if not is_well_formed_secret_reference("1password", entry.value):
+        raise SystemExit(f"expected a well-formed reference for {entry.name}")
+
+for loaded_name in sorted(set(sys.modules) - already_loaded):
+    top_level_name = loaded_name.split(".")[0]
+    if top_level_name in sys.stdlib_module_names or top_level_name == "goodall":
+        continue
+    print(loaded_name)
+"""
+
+
+def test_reading_an_env_file_and_checking_its_references_loads_only_the_standard_library(tmp_path: Path) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text('ANTHROPIC_API_KEY_ENGINEERING="op://Eval/anthropic-engineering/credential"\n')
+
+    completed = subprocess.run(
+        [sys.executable, "-c", READ_ENV_FILE_AND_LIST_THIRD_PARTY_MODULES, str(env_file)],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
     )
     assert completed.returncode == 0, completed.stderr
     assert completed.stdout == ""

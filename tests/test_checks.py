@@ -101,3 +101,12 @@ def test_a_failure_or_warning_without_a_next_step_is_refused() -> None:
         failed([])
     with pytest.raises(ValueError):
         warned([])
+
+
+def test_a_note_given_with_a_pass_reaches_the_result() -> None:
+    checks = [make_check("example.noted", passed(note="Nothing to check, which is fine."))]
+
+    results = run_checks(checks, CheckContext(runner=FakeRunner()))
+
+    assert results[0].status == CheckStatus.PASS
+    assert results[0].note == "Nothing to check, which is fine."

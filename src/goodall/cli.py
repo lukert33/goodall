@@ -122,13 +122,26 @@ def run_stub(command_name: str, terminal: Terminal) -> int:
 
     Returns ERROR rather than USAGE_ERROR because the user typed a valid
     command; it is goodall that cannot do it yet.
+
+    The reader is a researcher, so the next step never mentions goodall's
+    own development tools. `goodall onboard` gets a way to set up by hand,
+    because "Run goodall onboard" is the next step when local settings are
+    missing, and that must not lead to a dead end.
     """
+    if command_name == "onboard":
+        what_to_do_next = (
+            "Ask whoever runs the eval for this eval account's local settings file, local-settings.toml, and "
+            "put it in the folder ~/.config/goodall/ in this macOS user account's home folder. Then run "
+            "goodall status."
+        )
+    else:
+        what_to_do_next = "Nothing for now: this command will come in a later version of goodall."
     terminal.show_failure(
         Failure(
             kind="not_built",
             what_happened=f"goodall {command_name} is not built yet. Nothing was changed.",
-            why="This command is planned, but nobody has written it yet.",
-            what_to_do_next="Check bd ready in the goodall repo for progress.",
+            why="This command is planned for a later version of goodall.",
+            what_to_do_next=what_to_do_next,
         )
     )
     return exit_codes.ERROR
