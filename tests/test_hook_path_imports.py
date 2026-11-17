@@ -35,6 +35,9 @@ HOOK_PATH_MODULES = [
     # leaves heartbeats through it; it reads the marker with goodall.records.
     "goodall.work_blocks",
     "goodall.records",
+    # PostToolUse, Stop and SessionEnd copy the Claude session's transcript
+    # into the log directory through it.
+    "goodall.transcripts",
 ]
 
 # Runs inside the fresh interpreter: import the modules, then print every
