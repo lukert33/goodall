@@ -1,0 +1,10 @@
+{"type":"user","uuid":"u-0001","parentUuid":null,"sessionId":"session-e","timestamp":"2026-01-09T13:00:00.000Z","isSidechain":false,"origin":{"kind":"human"},"message":{"role":"user","content":"Start the example task."}}
+{"type":"user","uuid":"u-0002","parentUuid":"u-0001","sessionId":"session-e","timestamp":"2026-01-09T13:00:0
+
+["an", "array", "not", "an", "entry"]
+{"type":"example-future-entry","uuid":"x-0005","sessionId":"session-e","timestamp":"2026-01-09T13:00:05.000Z"}
+{"uuid":"x-0006","sessionId":"session-e","timestamp":"2026-01-09T13:00:06.000Z"}
+{"type":"user","uuid":"u-0007","parentUuid":"u-0001","sessionId":"session-e","timestamp":"2026-01-09T13:00:07.000Z","isSidechain":false}
+{"type":"user","uuid":"u-0008","parentUuid":"u-0007","sessionId":"session-e","timestamp":"2026-01-09T13:00:08.000Z","isSidechain":false,"message":{"role":"user","content":[{"type":"text","text":"Example prompt with a new kind of attachment."},{"type":"example-future-block","data":"AAAA"}]}}
+{"type":"user","uuid":"u-0009","parentUuid":"u-0008","sessionId":"session-e","timestamp":"2026-01-09T13:00:09.000Z","isSidechain":false,"origin":{"kind":"example-future-origin"},"message":{"role":"user","content":"Example text from a new kind of sender."}}
+{"type":"user","uuid":"u-0010","parentUuid":"u-0009","sessionId":"session-e","timestamp":"2026-01-09T13:00:10.000Z","isSidechain":false,"origin":{"kind":"human"},"message":{"role":"user","content":"Finish the example task."}}
