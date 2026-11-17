@@ -1,0 +1,156 @@
+"""Tests for goodall.human_activity: every human action in a time range, from every source.
+
+The tests drive `human_actions_in_time_range`, the one place to ask what the
+person did, with the same synthetic fixtures the per-source parsers use.
+"""
+
+from datetime import UTC, datetime
+from pathlib import Path
+
+from goodall.activitywatch import parse_activitywatch_export
+from goodall.human_actions import Interruption, parse_human_actions
+from goodall.human_activity import (
+    INTERRUPTION_MERGE_WINDOW_SECONDS,
+    PROVISIONAL_CATEGORIES,
+    HumanActionSummary,
+    MergedInterruption,
+    category_of,
+    human_actions_in_time_range,
+    summarise_human_actions,
+)
+
+FIXTURES = Path(__file__).parent / "fixtures"
+TRANSCRIPTS = FIXTURES / "claude_code_transcripts"
+ACTIVITYWATCH_EXPORTS = FIXTURES / "activitywatch"
+
+
+def at(text: str) -> datetime:
+    """A moment in UTC, written as in the fixtures."""
+    return datetime.fromisoformat(text).replace(tzinfo=UTC)
+
+
+def test_actions_from_every_source_come_back_together_in_time_order() -> None:
+    actions = human_actions_in_time_range(
+        at("2026-01-05T09:01:00"),
+        at("2026-04-01T09:05:00"),
+        transcript_paths=[TRANSCRIPTS / "typed_prompts.jsonl"],
+        activitywatch_export_paths=[ACTIVITYWATCH_EXPORTS / "all_buckets_rust_server.json"],
+    )
+
+    summary = []
+    for action in actions:
+        summary.append((action.source, action.kind, action.timestamp))
+    assert summary == [
+        # The prompt at 09:00 is before the range starts.
+        ("claude_code_transcript", "typed_prompt", "2026-01-05T09:01:00.000Z"),
+        ("claude_code_transcript", "typed_prompt", "2026-01-05T09:02:00.000Z"),
+        ("claude_code_transcript", "typed_prompt", "2026-01-05T09:03:00.000Z"),
+        ("activitywatch_export", "application_focus", "2026-04-01T09:01:00Z"),
+        ("activitywatch_export", "editor_file_focus", "2026-04-01T09:01:00Z"),
+        ("activitywatch_export", "application_focus", "2026-04-01T09:04:00Z"),
+        ("activitywatch_export", "browser_page_focus", "2026-04-01T09:04:00Z"),
+        # The range's end is not part of it: the 09:05 action is left out.
+    ]
+
+
+def test_one_interruption_seen_by_a_main_agent_and_its_subagent_counts_once() -> None:
+    # Pressing Escape while a subagent runs is recorded in the main
+    # transcript and in the subagent's. The raw records and each file's own
+    # parse keep both; the derived list counts the act once.
+    main_transcript = TRANSCRIPTS / "session-u.jsonl"
+    subagent_transcript = TRANSCRIPTS / "session-u" / "subagents" / "agent-example.jsonl"
+    assert len(parse_human_actions(main_transcript).actions) == 5
+    assert len(parse_human_actions(subagent_transcript).actions) == 1
+
+    actions = human_actions_in_time_range(
+        at("2026-03-11T00:00:00"),
+        at("2026-03-12T00:00:00"),
+        transcript_paths=[main_transcript, subagent_transcript],
+    )
+
+    kinds = []
+    for action in actions:
+        kinds.append(action.kind)
+    assert kinds == ["typed_prompt", "interruption", "typed_prompt", "interruption", "interruption"]
+    merged = actions[1]
+    assert isinstance(merged, MergedInterruption)
+    assert merged.rule == "merge_repeated_interruptions"
+    assert merged.timestamp == "2026-03-11T10:00:30.000Z"
+    assert merged.session_id == "session-u"
+    # Every original action stays reachable through the merged one.
+    stood_for = []
+    for original in merged.stands_for:
+        assert isinstance(original, Interruption)
+        stood_for.append((original.line_number, original.interrupted_tool_call_id))
+    assert stood_for == [(3, None), (3, "toolu_example_61")]
+    # Two interruptions close together that name different tool calls were
+    # two calls stopped, and stay two.
+    second_call = actions[3]
+    third_call = actions[4]
+    assert isinstance(second_call, Interruption)
+    assert isinstance(third_call, Interruption)
+    assert second_call.interrupted_tool_call_id == "toolu_example_52"
+    assert third_call.interrupted_tool_call_id == "toolu_example_53"
+    assert summarise_human_actions(actions).actions_by_kind["interruption"] == 3
+    assert INTERRUPTION_MERGE_WINDOW_SECONDS == 2.0
+
+
+def test_every_kind_any_source_produces_has_a_provisional_category() -> None:
+    kinds = set()
+    for transcript_path in sorted(TRANSCRIPTS.glob("*.jsonl")):
+        for transcript_action in parse_human_actions(transcript_path).actions:
+            kinds.add(transcript_action.kind)
+    for export_path in sorted(ACTIVITYWATCH_EXPORTS.glob("*.json")):
+        for activitywatch_action in parse_activitywatch_export(export_path).actions:
+            kinds.add(activitywatch_action.kind)
+
+    missing = kinds - set(PROVISIONAL_CATEGORIES)
+    assert missing == set()
+    # A kind nobody has placed yet still has an answer, not an error.
+    assert category_of("example_future_kind") == "uncategorised"
+    assert category_of("typed_prompt") == "directed_the_agent"
+
+
+def test_every_actions_rule_names_the_function_that_holds_it() -> None:
+    # `rule` is how a reader gets from an action to the code that found it.
+    import goodall.activitywatch
+    import goodall.human_actions
+
+    rule_names = set()
+    for transcript_path in sorted(TRANSCRIPTS.glob("*.jsonl")):
+        for transcript_action in parse_human_actions(transcript_path).actions:
+            assert callable(getattr(goodall.human_actions, transcript_action.rule, None)), transcript_action.rule
+            rule_names.add(transcript_action.rule)
+    for export_path in sorted(ACTIVITYWATCH_EXPORTS.glob("*.json")):
+        for activitywatch_action in parse_activitywatch_export(export_path).actions:
+            assert callable(getattr(goodall.activitywatch, activitywatch_action.rule, None)), activitywatch_action.rule
+            rule_names.add(activitywatch_action.rule)
+    assert len(rule_names) >= 17
+
+
+def test_the_summary_counts_by_kind_category_and_source_listing_zeros() -> None:
+    actions = human_actions_in_time_range(
+        at("2026-01-01T00:00:00"),
+        at("2027-01-01T00:00:00"),
+        transcript_paths=[TRANSCRIPTS / "rejections.jsonl", TRANSCRIPTS / "sdk_prompts.jsonl"],
+        activitywatch_export_paths=[ACTIVITYWATCH_EXPORTS / "one_bucket_python_server.json"],
+    )
+
+    summary = summarise_human_actions(actions)
+
+    assert isinstance(summary, HumanActionSummary)
+    assert summary.total == 10
+    assert summary.actions_by_kind["typed_prompt"] == 4
+    assert summary.actions_by_kind["tool_call_rejection"] == 2
+    # A prompt a program sent is counted on its own, not as typed.
+    assert summary.actions_by_kind["sdk_prompt"] == 2
+    assert summary.actions_by_kind["application_focus"] == 2
+    # A kind with nothing in this range is listed with zero, not left out.
+    assert summary.actions_by_kind["shell_command"] == 0
+    assert set(summary.actions_by_kind) == set(PROVISIONAL_CATEGORIES)
+    assert summary.actions_by_category["directed_the_agent"] == 4
+    assert summary.actions_by_category["approved_or_refused"] == 2
+    assert summary.actions_by_category["undecided"] == 2
+    assert summary.actions_by_category["worked_outside_the_agent"] == 2
+    assert summary.actions_by_category["was_elsewhere"] == 0
+    assert summary.actions_by_source == {"claude_code_transcript": 8, "activitywatch_export": 2}

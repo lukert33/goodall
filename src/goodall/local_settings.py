@@ -31,17 +31,20 @@ the contributor can fix them all in one edit, with one exception: settings
 written for a newer schema version get only "upgrade goodall", because every
 other complaint about a newer layout would be noise.
 
-Failures never quote a setting's value back, except a folder, which the
-contributor needs to see as written. Terminal output in an eval account can
-end up in a transcript an agent reads, and a value in the wrong place may be
-a secret pasted by mistake (ADR 0006), so goodall names the setting and
-shows a correct example line instead.
+Failures never quote a setting's value back, except a folder once it is
+known to be a full path, which the contributor needs to see as written.
+Terminal output in an eval account can end up in a transcript an agent
+reads, and a value in the wrong place may be a secret pasted by mistake
+(ADR 0006), so goodall names the setting and shows a correct example line
+instead. A key goodall does not know is named only when goodall.quoting
+says it may be shown, because a pasted key is a valid TOML key too, and the
+TOML reader's own messages pass through goodall.quoting for the same reason.
 
 The failures are built here, beside the rule that finds each problem, so
 `goodall status`, `goodall doctor` and the prompt gate all word a problem the
 same way. This module checks the file only. Whether the folders it names
-exist is a question about the machine, answered by the commands that need
-them (see goodall.status).
+exist is a question about the machine, answered by goodall.folders for the
+commands that need them.
 
 The file's shape is provisional by the owner's instruction (goodall-xes.8);
 `schema_version` is there so it can change.
@@ -54,6 +57,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TypeGuard
 
+from goodall.quoting import can_show_name, toml_error_as_shown
 from goodall.terminal import Failure
 
 # The environment variable that overrides where local settings are found.
@@ -142,13 +146,12 @@ class LocalSettings:
 class RelativeConfigDirectoryError(ValueError):
     """GOODALL_CONFIG_DIR is set to a relative path, which goodall refuses.
 
-    `value` is the variable's value exactly as it was set, so a message can
-    quote it back.
+    Deliberately carries no copy of the value: it may be a key pasted into
+    the wrong variable, and goodall never repeats such text (ADR 0006).
     """
 
-    def __init__(self, value: str) -> None:
-        super().__init__(f"{CONFIG_DIRECTORY_VARIABLE} must be an absolute path, not {value!r}")
-        self.value = value
+    def __init__(self) -> None:
+        super().__init__(f"{CONFIG_DIRECTORY_VARIABLE} must be an absolute path")
 
 
 def find_local_settings_location() -> LocalSettingsLocation:
@@ -170,7 +173,7 @@ def find_local_settings_location() -> LocalSettingsLocation:
 
     override_directory = Path(override_value).expanduser()
     if not override_directory.is_absolute():
-        raise RelativeConfigDirectoryError(override_value)
+        raise RelativeConfigDirectoryError()
     return LocalSettingsLocation(config_directory=override_directory, chosen_by_override=True)
 
 
@@ -183,8 +186,8 @@ def read_local_settings() -> LocalSettings | list[Failure]:
     """
     try:
         location = find_local_settings_location()
-    except RelativeConfigDirectoryError as relative_directory_error:
-        return [relative_config_directory_failure(relative_directory_error.value)]
+    except RelativeConfigDirectoryError:
+        return [relative_config_directory_failure()]
     return read_local_settings_file(location)
 
 
@@ -214,8 +217,9 @@ def read_local_settings_file(location: LocalSettingsLocation) -> LocalSettings |
     except tomllib.TOMLDecodeError as toml_error:
         # tomllib's message ends with the place, for example
         # "Invalid value (at line 2, column 15)", which is what a person
-        # editing by hand needs.
-        return [local_settings_not_toml_failure(settings_file, str(toml_error))]
+        # editing by hand needs. Some of its messages repeat a key, which
+        # toml_error_as_shown takes out.
+        return [local_settings_not_toml_failure(settings_file, toml_error_as_shown(str(toml_error)))]
 
     return check_settings_table(settings_file, settings_table)
 
@@ -274,14 +278,27 @@ def check_settings_table(settings_file: Path, settings_table: dict[str, object])
         if setting_name not in text_values:
             continue
         as_written = text_values[setting_name]
+        # Trap: the value is not shown here, because until it is known to be
+        # a full path it may be a key pasted into the wrong setting.
         path = expand_home_folder(as_written)
         if not path.is_absolute():
             problems.append(
                 value_invalid_failure(
                     settings_file,
                     setting_name,
-                    f'is set to "{as_written}", which is not a full path. A full path starts with / or with ~/, '
-                    "which means your home folder",
+                    "is not a full path. A full path starts with / or with ~/, which means your home folder",
+                    f'{setting_name} = "{EXAMPLE_VALUES[setting_name]}"',
+                )
+            )
+            continue
+        # A null character (\u0000 in TOML) cannot be in any path, and asking
+        # the disk about a path holding one raises ValueError.
+        if "\x00" in as_written:
+            problems.append(
+                value_invalid_failure(
+                    settings_file,
+                    setting_name,
+                    "contains a null character (written \\u0000), which no path can contain",
                     f'{setting_name} = "{EXAMPLE_VALUES[setting_name]}"',
                 )
             )
@@ -380,23 +397,30 @@ def local_settings_unreadable_failure(settings_file: Path, read_error: OSError) 
         ),
         what_to_do_next=(
             f"Check the permissions of {settings_file} and the folders above it: "
-            "this macOS user account must be able to read them. Then run goodall status again."
+            "this macOS user account must be able to read them. Then run the same goodall command again."
         ),
     )
 
 
-def relative_config_directory_failure(value: str) -> Failure:
-    """The failure for a GOODALL_CONFIG_DIR that is not an absolute path."""
+def relative_config_directory_failure() -> Failure:
+    """The failure for a GOODALL_CONFIG_DIR that is not an absolute path.
+
+    Takes no value on purpose: the message must never repeat what the
+    variable holds, which may be a pasted secret (ADR 0006).
+    """
     return Failure(
         kind="config_directory_not_absolute",
-        what_happened=f"{CONFIG_DIRECTORY_VARIABLE} is set to {value}, which is not an absolute path.",
+        what_happened=(
+            f"{CONFIG_DIRECTORY_VARIABLE} is not an absolute path. "
+            "Goodall does not show its value, in case it is a secret."
+        ),
         why=(
             "Goodall would look for local settings relative to whichever folder a command started in, "
             "so two commands could find two different evals."
         ),
         what_to_do_next=(
-            f"Set {CONFIG_DIRECTORY_VARIABLE} to a path starting with / or ~, "
-            "or unset it to use local settings in your home folder."
+            f"Set {CONFIG_DIRECTORY_VARIABLE} to an absolute path, which is a full path starting with /, "
+            "for example /Users/you/goodall-config, or unset it to use local settings in your home folder."
         ),
     )
 
@@ -433,7 +457,29 @@ def key_unknown_failure(settings_file: Path, setting_name: str) -> Failure:
 
     It is reported rather than ignored, because an ignored misspelling looks
     like a setting that took effect.
+
+    Trap: the key is named only when goodall.quoting says it may be shown.
+    A key pasted by mistake (`sk-ant-api03-... = "x"`) is a valid bare TOML
+    key, so reaching this point says nothing about whether it is a secret.
     """
+    if not can_show_name(setting_name):
+        return Failure(
+            kind="local_settings_key_unknown",
+            what_happened=(
+                f"Local settings at {settings_file} contain a key goodall does not know. Goodall does not show "
+                "its name, in case it is a secret pasted by mistake."
+            ),
+            why=(
+                "A setting goodall does not know has no effect, so a misspelled name would look like a setting "
+                "that took effect when it did not."
+            ),
+            what_to_do_next=(
+                f"Open {settings_file} and remove or correct every key that is not one of these: "
+                f"{', '.join(KNOWN_SETTING_NAMES)}. If it was a real key, change it with whoever issued it, because "
+                "it may have been exposed."
+            ),
+        )
+
     close_matches = difflib.get_close_matches(setting_name, KNOWN_SETTING_NAMES, n=1, cutoff=0.75)
     if close_matches:
         suggestion = f" Did you mean {close_matches[0]}?"
@@ -478,7 +524,7 @@ def schema_too_new_failure(settings_file: Path, schema_version: int) -> Failure:
             "so this goodall could misread them."
         ),
         what_to_do_next=(
-            "Upgrade goodall to the version used to set up this eval account, then run goodall status again."
+            "Upgrade goodall to the version used to set up this eval account, then run the same goodall command again."
         ),
     )
 
