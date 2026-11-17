@@ -46,8 +46,8 @@ buckets, and `unfamiliar_records`. Every action has:
 | `application_focus` | `application_focus_from_window_event` | `currentwindow` (aw-watcher-window) | `app`, `title`†, `url`† |
 | `browser_page_focus` | `browser_page_focus_from_web_event` | `web.tab.current` (aw-watcher-web) | `url`†, `title`†, `audible`, `incognito`, `tab_count` |
 | `editor_file_focus` | `editor_file_focus_from_editor_event` | `app.editor.activity` (aw-watcher-vscode and others) | `file`†, `project`†, `language`, `branch`† |
-| `away_from_keyboard` | `afk_period_from_afk_event` | `afkstatus` (aw-watcher-afk), `status: afk` | none |
-| `active_at_keyboard` | `active_period_from_afk_event` | `afkstatus`, `status: not-afk` | none |
+| `away_from_keyboard` | `keyboard_presence_from_afk_event` | `afkstatus` (aw-watcher-afk), `status: afk` | none |
+| `active_at_keyboard` | `keyboard_presence_from_afk_event` | `afkstatus`, `status: not-afk` | none |
 
 † private text, left out of the printed form.
 

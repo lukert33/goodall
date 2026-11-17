@@ -574,7 +574,7 @@ def test_prompts_sent_through_the_sdk_are_kept_apart_from_typed_prompts() -> Non
             image_count=0,
         ),
     ]
-    assert result.actions[1].rule == "sdk_prompt_from_turn_origin"
+    assert result.actions[1].rule == "is_sdk_prompt"
     assert result.unfamiliar_entries == [
         UnfamiliarEntry(line_number=7, entry_id="u-0007", reason="unknown turn origin 'example-future-turn-origin'"),
     ]

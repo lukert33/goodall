@@ -487,7 +487,7 @@ class SdkPrompt:
     transcript_path: Path | None = field(default=None, compare=False)
     source: str = field(default=SOURCE, init=False)
     kind: str = field(default="sdk_prompt", init=False)
-    rule: str = field(default="sdk_prompt_from_turn_origin", init=False)
+    rule: str = field(default="is_sdk_prompt", init=False)
     duration_seconds: float | None = field(default=None, init=False)
 
 
@@ -1223,7 +1223,7 @@ def permission_decision_from_entry(
     markers: ClaudeCodeMarkers,
     memory: TranscriptMemory,
 ) -> ToolCallApproval | PermissionPromptDismissal | None:
-    """Rule: a permission decision whose source is the person is an approval or a dismissal.
+    """Apply the two rules that read the person's permission decision on a tool result entry.
 
     Newer Claude Code versions (seen from 2.1.289) write `permissionDecision`
     on every tool result entry, saying who allowed or refused the call. Only
@@ -1235,24 +1235,54 @@ def permission_decision_from_entry(
     permission_decision = entry.get("permissionDecision")
     if not isinstance(permission_decision, dict):
         return None
+    dismissal = dismissal_from_permission_decision(permission_decision, place, tool_result, markers, memory)
+    if dismissal is not None:
+        return dismissal
+    return approval_from_permission_decision(permission_decision, place, tool_result, markers, memory)
+
+
+def dismissal_from_permission_decision(
+    permission_decision: dict[str, Any],
+    place: EntryPlace,
+    tool_result: dict[str, Any],
+    markers: ClaudeCodeMarkers,
+    memory: TranscriptMemory,
+) -> PermissionPromptDismissal | None:
+    """Rule: a refusal whose source is "user_abort" is the person dismissing the permission prompt."""
+    if permission_decision.get("source") != markers.dismissed_source:
+        return None
+    if permission_decision.get("decision") != "reject":
+        return None
+    tool_call_id = tool_result.get("tool_use_id")
+    return PermissionPromptDismissal(
+        line_number=place.line_number,
+        entry_id=place.entry_id,
+        session_id=place.session_id,
+        timestamp=place.timestamp,
+        transcript_path=place.transcript_path,
+        tool_call_id=tool_call_id if isinstance(tool_call_id, str) else None,
+        tool_name=tool_name_for(tool_result, memory),
+    )
+
+
+def approval_from_permission_decision(
+    permission_decision: dict[str, Any],
+    place: EntryPlace,
+    tool_result: dict[str, Any],
+    markers: ClaudeCodeMarkers,
+    memory: TranscriptMemory,
+) -> ToolCallApproval | None:
+    """Rule: an acceptance whose source is "user_temporary" or "user_permanent" is the person approving.
+
+    "user_temporary" is allowing this call once; "user_permanent" is "always
+    allow", which also adds a standing rule.
+    """
+    if permission_decision.get("decision") != "accept":
+        return None
     permission_source = permission_decision.get("source")
-    decision = permission_decision.get("decision")
     tool_call_id = tool_result.get("tool_use_id")
     if not isinstance(tool_call_id, str):
         tool_call_id = None
-
-    if permission_source == markers.dismissed_source and decision == "reject":
-        return PermissionPromptDismissal(
-            line_number=place.line_number,
-            entry_id=place.entry_id,
-            session_id=place.session_id,
-            timestamp=place.timestamp,
-            transcript_path=place.transcript_path,
-            tool_call_id=tool_call_id,
-            tool_name=tool_name_for(tool_result, memory),
-        )
-    if decision != "accept":
-        return None
     if permission_source == markers.approved_once_source:
         kind: Literal["tool_call_approval_once", "tool_call_approval_always"] = "tool_call_approval_once"
     elif permission_source == markers.approved_always_source:

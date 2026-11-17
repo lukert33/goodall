@@ -111,6 +111,23 @@ def test_every_kind_any_source_produces_has_a_provisional_category() -> None:
     assert category_of("typed_prompt") == "directed_the_agent"
 
 
+def test_every_actions_rule_names_the_function_that_holds_it() -> None:
+    # `rule` is how a reader gets from an action to the code that found it.
+    import goodall.activitywatch
+    import goodall.human_actions
+
+    rule_names = set()
+    for transcript_path in sorted(TRANSCRIPTS.glob("*.jsonl")):
+        for transcript_action in parse_human_actions(transcript_path).actions:
+            assert callable(getattr(goodall.human_actions, transcript_action.rule, None)), transcript_action.rule
+            rule_names.add(transcript_action.rule)
+    for export_path in sorted(ACTIVITYWATCH_EXPORTS.glob("*.json")):
+        for activitywatch_action in parse_activitywatch_export(export_path).actions:
+            assert callable(getattr(goodall.activitywatch, activitywatch_action.rule, None)), activitywatch_action.rule
+            rule_names.add(activitywatch_action.rule)
+    assert len(rule_names) >= 17
+
+
 def test_the_summary_counts_by_kind_category_and_source_listing_zeros() -> None:
     actions = human_actions_in_time_range(
         at("2026-01-01T00:00:00"),

@@ -147,7 +147,7 @@ class AwayFromKeyboard:
     duration_seconds: float | None
     source: str = field(default=SOURCE, init=False)
     kind: str = field(default="away_from_keyboard", init=False)
-    rule: str = field(default="afk_period_from_afk_event", init=False)
+    rule: str = field(default="keyboard_presence_from_afk_event", init=False)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -162,7 +162,7 @@ class ActiveAtKeyboard:
     duration_seconds: float | None
     source: str = field(default=SOURCE, init=False)
     kind: str = field(default="active_at_keyboard", init=False)
-    rule: str = field(default="active_period_from_afk_event", init=False)
+    rule: str = field(default="keyboard_presence_from_afk_event", init=False)
 
 
 ActivityWatchAction = ApplicationFocus | BrowserPageFocus | EditorFileFocus | AwayFromKeyboard | ActiveAtKeyboard
