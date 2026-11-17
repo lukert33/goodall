@@ -20,9 +20,11 @@ In the order goodall checks:
 4. Goodall settles what earlier work blocks left behind, as `goodall start`
    and `goodall stop` do (goodall.work_block_commands): a forgotten work
    block is closed at its last heartbeat, a damaged marker is kept aside,
-   and ended work blocks' records waiting in the log directory are written
-   into the record repo. So `goodall status` can commit and push; it is not
-   a read-only diagnostic like `goodall doctor`.
+   ended work blocks' records waiting in the log directory are written
+   into the record repo, and Claude Code transcripts the hooks missed are
+   copied into the log directory. So `goodall status` can commit, push and
+   copy; it is not a read-only diagnostic like `goodall doctor`. A
+   transcript that could not be copied appears in `warnings`.
 5. Goodall reports the active work block, or that there is none.
 
 Each result is built once as records and then shown either as text (results

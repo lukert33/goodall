@@ -8,6 +8,7 @@ the test process itself has pytest and much else already loaded.
 Add a module to HOOK_PATH_MODULES as soon as the hook path imports it.
 """
 
+import json
 import os
 import subprocess
 import sys
@@ -39,6 +40,9 @@ HOOK_PATH_MODULES = [
     # leaves heartbeats through it; it reads the marker with goodall.records.
     "goodall.work_blocks",
     "goodall.records",
+    # PostToolUse, Stop and SessionEnd copy the Claude session's transcript
+    # into the log directory through it.
+    "goodall.transcripts",
 ]
 
 # Runs inside the fresh interpreter: import the modules, then print every
@@ -283,11 +287,18 @@ def test_the_hook_command_loads_no_third_party_module_and_starts_no_program(tmp_
     machine = records.MachineFacts("eval-mac-01", "26.1", "0.0.1", None)
     running = records.build_work_block_record("ada-lovelace", "research", started_at, machine)
     assert work_blocks.create_marker(log_directory, running)
+    # A synthetic transcript, so PostToolUse really copies it.
+    claude_config_directory = tmp_path / "claude-config"
+    project_folder = claude_config_directory / "projects" / "-Users-ada-work"
+    project_folder.mkdir(parents=True)
+    transcript = project_folder / "0f6c1d2e-3a4b-4c5d-8e9f-a0b1c2d3e4f5.jsonl"
+    transcript.write_bytes(b'{"type":"user"}\n')
     environment = dict(os.environ)
     environment["GOODALL_CONFIG_DIR"] = str(config_directory)
-    hook_input = '{"session_id": "0f6c1d2e-3a4b-4c5d-8e9f-a0b1c2d3e4f5", "transcript_path": "/tmp/t.jsonl"}'
+    environment["CLAUDE_CONFIG_DIR"] = str(claude_config_directory)
+    hook_input = json.dumps({"session_id": "0f6c1d2e-3a4b-4c5d-8e9f-a0b1c2d3e4f5", "transcript_path": str(transcript)})
 
-    # The prompt gate, and an event that only leaves a heartbeat.
+    # The prompt gate, and an event that leaves a heartbeat and copies the transcript.
     for event_name in ["UserPromptSubmit", "PostToolUse"]:
         completed = subprocess.run(
             [sys.executable, "-c", RUN_HOOK_AND_LIST_MODULES, event_name],
@@ -303,3 +314,5 @@ def test_the_hook_command_loads_no_third_party_module_and_starts_no_program(tmp_
     # Both heartbeats were recorded, so the hook really ran its whole path.
     heartbeat_file = work_blocks.WorkBlockFiles(log_directory).heartbeat_file(running.id)
     assert len(heartbeat_file.read_text().splitlines()) == 2
+    copied_transcript = log_directory / "transcripts" / "-Users-ada-work" / transcript.name
+    assert copied_transcript.read_bytes() == transcript.read_bytes()

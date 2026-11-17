@@ -20,9 +20,11 @@ What each command does, in order:
 Settling, which `goodall status` does too: a work block nobody stopped is
 closed at its last heartbeat (end state `inferred`) once it is overdue; a
 marker goodall cannot read is moved aside and kept, and what can be
-recovered from it is recorded with end state `abnormal`; and every ended
+recovered from it is recorded with end state `abnormal`; every ended
 work block's record still waiting in the log directory is written to the
-record repo.
+record repo; and every Claude Code transcript that changed since it was
+last copied is copied into the log directory (goodall.transcripts), which
+is said in one sentence only when something was copied.
 
 A work block's record is written to the record repo ONCE, when it ends,
 because records are never rewritten. Until it is committed it waits in the
@@ -46,7 +48,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import goodall
-from goodall import exit_codes, records, work_blocks
+from goodall import exit_codes, records, transcripts, work_blocks
 from goodall.eval_config import EvalForThisAccount, read_eval_for_this_account
 from goodall.folders import describe_folder_problem, log_directory_unreachable_failure, record_repo_missing_failure
 from goodall.local_settings import read_local_settings
@@ -302,15 +304,17 @@ def write_one_unrecorded_record(
 
 @dataclass(frozen=True)
 class Settling:
-    """What settling did before a command's own work: work blocks it closed, and records it wrote.
+    """What settling did before a command's own work: work blocks it closed, records it wrote, transcripts it copied.
 
     `closings` are sentences for a person, one per work block goodall closed
     itself (forgotten or damaged); `writes` are the waiting records it tried
-    to write into the record repo.
+    to write into the record repo; `transcript_sweep` is what the sweep of
+    Claude Code's transcripts into the log directory did.
     """
 
     closings: list[str] = field(default_factory=list)
     writes: list[UnrecordedWrite] = field(default_factory=list)
+    transcript_sweep: transcripts.SweepResult = field(default_factory=transcripts.SweepResult)
 
     @property
     def warnings(self) -> list[Failure]:
@@ -323,6 +327,8 @@ class Settling:
                 warnings.extend(write.failures)
             else:
                 warnings.append(record_waiting_failure(write.record, write.waiting_file, write.failures))
+        if self.transcript_sweep.problems:
+            warnings.append(transcripts_not_copied_failure(self.transcript_sweep))
         return warnings
 
     @property
@@ -336,6 +342,9 @@ class Settling:
                     f"{describe_moment(write.record.started_at)} to {describe_ended_at(write.record)}. "
                     + where_the_record_went(write.push_state)
                 )
+        transcript_paragraph = describe_transcript_sweep(self.transcript_sweep)
+        if transcript_paragraph is not None:
+            paragraphs.append(transcript_paragraph)
         return paragraphs
 
 
@@ -348,6 +357,10 @@ def settle(runner: Runner, eval_reading: EvalForThisAccount, now: datetime) -> S
        does not count the night as work.
     2. Every ended work block's record still waiting in the log directory
        is written into the record repo.
+    3. Every Claude Code transcript that changed since it was last copied
+       is copied into the log directory (goodall.transcripts.sweep). The
+       hooks copy as Claude works, but a killed Claude Code fires none, so
+       this is what guarantees nothing is left behind.
     """
     log_directory = eval_reading.local_settings.log_directory.path
     closings = []
@@ -364,7 +377,11 @@ def settle(runner: Runner, eval_reading: EvalForThisAccount, now: datetime) -> S
             f"{describe_duration(work_blocks.IDLE_LIMIT)}. Goodall closed it at its last heartbeat, "
             f"{describe_moment(marker.last_heartbeat_at)}, so the time after that is not counted as work."
         )
-    return Settling(closings=closings, writes=write_unrecorded_records(runner, eval_reading))
+    return Settling(
+        closings=closings,
+        writes=write_unrecorded_records(runner, eval_reading),
+        transcript_sweep=transcripts.sweep(transcripts.claude_projects_folder(), log_directory, now),
+    )
 
 
 def close_damaged_work_block(
@@ -460,6 +477,44 @@ def recover_machine_facts(runner: Runner, machine_values: object) -> records.Mac
         ):
             return records.MachineFacts(hostname, macos_version, goodall_version, claude_code_version)
     return observe_machine_facts(runner)
+
+
+def describe_transcript_sweep(sweep_result: transcripts.SweepResult) -> str | None:
+    """What a person reads about the transcripts the sweep copied, or None when there is nothing to say.
+
+    Something is said when the sweep copied a Claude session, or when it
+    succeeded after hooks had failed to copy: the person learns once that
+    copies had fallen behind, and that they are now complete.
+    """
+    sentences = []
+    if sweep_result.claude_sessions_copied == 1:
+        sentences.append("Brought the copy of 1 Claude session's transcript up to date in the log directory.")
+    elif sweep_result.claude_sessions_copied > 1:
+        sentences.append(
+            f"Brought the copies of {sweep_result.claude_sessions_copied} Claude sessions' transcripts up to date "
+            "in the log directory."
+        )
+    if sweep_result.earlier_copies_kept > 0:
+        sentences.append(
+            f"{sweep_result.earlier_copies_kept} earlier copies no longer matched the start of their transcripts, "
+            f"so they were kept, unchanged, in {transcripts.SUPERSEDED_FOLDER_NAME} in the log directory."
+        )
+    if sweep_result.failed_hook_copies > 0 and not sweep_result.problems:
+        sentences.append(
+            f"Before this, goodall could not copy a transcript {describe_times(sweep_result.failed_hook_copies)} "
+            f"when a Claude Code hook fired; the reasons are kept in {sweep_result.failed_hook_copies_file}. "
+            "Every transcript has now been copied."
+        )
+    if not sentences:
+        return None
+    return " ".join(sentences)
+
+
+def describe_times(count: int) -> str:
+    """`1 time`, `3 times`."""
+    if count == 1:
+        return "1 time"
+    return f"{count} times"
 
 
 def show_settling(terminal: Terminal, settling: Settling) -> None:
@@ -560,6 +615,31 @@ def record_waiting_failure(
             "the next time you run goodall start, goodall stop or goodall status."
         ),
         what_to_do_next=what_to_do_next,
+    )
+
+
+def transcripts_not_copied_failure(sweep_result: transcripts.SweepResult) -> Failure:
+    """The warning for Claude sessions whose transcripts the sweep could not copy into the log directory."""
+    what_happened = (
+        f"Goodall could not copy the transcripts of {len(sweep_result.problems)} Claude session(s) into the log "
+        "directory. " + " ".join(sweep_result.problems)
+    )
+    if sweep_result.failed_hook_copies > 0:
+        what_happened += (
+            f" Claude Code hooks could not copy a transcript {describe_times(sweep_result.failed_hook_copies)} "
+            f"either; the reasons are kept in {sweep_result.failed_hook_copies_file}."
+        )
+    return Failure(
+        kind="transcripts_not_copied",
+        what_happened=what_happened,
+        why=(
+            "Transcripts are the record of what the agents did. Claude Code still holds them, so nothing is lost "
+            "yet, and goodall tries again each time a hook fires and each time you run goodall start, stop or status."
+        ),
+        what_to_do_next=(
+            "Check that the log directory has free space and that this account can write to it, then run goodall "
+            "status again. If it keeps failing, tell the researcher who runs the eval."
+        ),
     )
 
 

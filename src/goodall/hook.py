@@ -17,7 +17,9 @@ Two jobs, by event:
 - Every other event leaves a heartbeat when a work block is active, and
   always exits 0 with nothing printed. These events must never disrupt
   Claude Code: exit 2 from a Stop hook, for one, would stop Claude from
-  finishing its reply.
+  finishing its reply. PostToolUse, Stop and SessionEnd also copy the
+  Claude session's transcript into the log directory (goodall.transcripts),
+  with or without a work block.
 
 Decisions a reader would otherwise reverse-engineer (PROVISIONAL unless the
 owner says otherwise):
@@ -58,13 +60,21 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from goodall import exit_codes, records, work_blocks
+from goodall import exit_codes, records, transcripts, work_blocks
 from goodall.folders import describe_folder_problem
 from goodall.local_settings import LocalSettings, read_local_settings
 from goodall.terminal import Terminal
 
 # The one event that can refuse what the person asked for.
 PROMPT_GATE_EVENT = "UserPromptSubmit"
+
+# The events after which the Claude session's transcript is copied into the
+# log directory. PostToolUse fires after every tool call, so a long reply is
+# copied as it goes, one step behind (the tool's result lands just after the
+# hook); Stop catches the end of each reply and SessionEnd the end of the
+# Claude session. A kill fires none of them, so `goodall start`, `stop` and
+# `status` sweep up whatever is still behind (goodall.transcripts).
+TRANSCRIPT_COPY_EVENTS = ["PostToolUse", "Stop", "SessionEnd"]
 
 # The most hook input goodall reads, in characters. Hook input carries the
 # whole prompt and, after a tool call, the tool's whole output, so the limit
@@ -184,7 +194,7 @@ def run_hook(event_name: str | None, terminal: Terminal, clock: Clock) -> int:
         return exit_codes.CLAUDE_CODE_REFUSES_PROMPT
 
     try:
-        record_activity(terminal.read_piped_text(HOOK_INPUT_LIMIT), clock())
+        record_activity(event_name, terminal.read_piped_text(HOOK_INPUT_LIMIT), clock())
     except Exception:
         # Deliberately silent: see "Every other event fails open" above.
         pass
@@ -221,26 +231,46 @@ def check_prompt(hook_input_text: str | None, now: datetime) -> str | None:
     return None
 
 
-def record_activity(hook_input_text: str | None, now: datetime) -> None:
-    """Leave a heartbeat for an event that is not the prompt gate, if a work block is active.
+def record_activity(event_name: str, hook_input_text: str | None, now: datetime) -> None:
+    """Leave a heartbeat if a work block is active, then copy the Claude session's transcript after some events.
 
     Unreadable input still leaves a heartbeat, without a Claude session: the
     moment is evidence even when the session is unknown.
 
-    This is the seam for transcript sync (goodall-fs9.6): PostToolUse, Stop
-    and SessionEnd will copy the transcript at `hook_input.transcript_path`
-    from here. Transcripts are captured whether or not a work block is
-    active, so that call belongs after the heartbeat, not inside a check
-    for one.
+    The transcript is copied after PostToolUse, Stop and SessionEnd whether
+    or not a work block is active, because capture is unconditional: an
+    eval account is used for nothing but the eval. A heartbeat that fails
+    must not stop the copy, so it is tried on its own.
     """
     settings = read_local_settings()
     if not isinstance(settings, LocalSettings):
         return
+    log_directory = settings.log_directory.path
     hook_input = read_hook_input(hook_input_text)
     claude_session = None
     if hook_input is not None:
         claude_session = hook_input.claude_session
-    work_blocks.record_heartbeat(settings.log_directory.path, now, claude_session)
+    try:
+        work_blocks.record_heartbeat(log_directory, now, claude_session)
+    except Exception:
+        # Silent, as every event but the prompt gate is; see the module docstring.
+        pass
+    if event_name in TRANSCRIPT_COPY_EVENTS and hook_input is not None and hook_input.transcript_path is not None:
+        try:
+            transcripts.copy_from_hook(
+                transcripts.claude_projects_folder(),
+                log_directory,
+                hook_input.claude_session,
+                hook_input.transcript_path,
+                now,
+            )
+        except Exception as error:
+            # Silent towards Claude Code, but kept in the log directory, so
+            # `goodall status` can say so (goodall.transcripts). A bug in
+            # goodall lands here too, which is how it gets noticed.
+            transcripts.record_failed_copy(
+                log_directory, now, event_name, hook_input.claude_session, f"{type(error).__name__}: {error}"
+            )
 
 
 def real_clock() -> datetime:

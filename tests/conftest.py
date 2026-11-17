@@ -5,6 +5,10 @@ of whoever is running the tests, because goodall looks in the home folder by
 default. Pointing GOODALL_CONFIG_DIR at a fresh empty folder for every test
 keeps the developer's real home folder out of reach (AGENTS.md, "Testing").
 A test that needs a different location sets or removes the variable itself.
+
+CLAUDE_CONFIG_DIR is pointed at a fresh empty folder for the same reason:
+goodall copies transcripts out of Claude Code's projects folder, which is
+inside the home folder by default and holds a person's private prompts.
 """
 
 from pathlib import Path
@@ -16,3 +20,9 @@ import pytest
 def isolated_local_settings(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> None:
     config_directory = tmp_path_factory.mktemp("isolated-goodall-config")
     monkeypatch.setenv("GOODALL_CONFIG_DIR", str(Path(config_directory)))
+
+
+@pytest.fixture(autouse=True)
+def isolated_claude_projects_folder(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> None:
+    claude_config_directory = tmp_path_factory.mktemp("isolated-claude-config")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(Path(claude_config_directory)))
