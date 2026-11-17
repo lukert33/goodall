@@ -8,7 +8,10 @@ document. Both are built from the same list of `CheckResult` records, so
 they cannot disagree.
 
 Exit code: 1 when any check failed, otherwise 0. Warnings do not fail it: a
-warning means goodall works, in a reduced way. Skips are not counted
+warning means goodall works, in a reduced way. Nor does a check goodall
+could not verify: it is reported as unverified, which is neither a pass nor
+a failure, and the report says what the contributor can check by hand.
+Skips are not counted
 either, because a check is only ever skipped when another check in the same
 report failed (goodall.checks), so a report with a skip already exits 1.
 
@@ -20,12 +23,14 @@ The JSON document, whose shape agents rely on:
 
     {
       "schema_version": 1,
-      "summary": {"passed": 7, "warned": 0, "failed": 0, "skipped": 0},
+      "summary": {"passed": 7, "warned": 0, "failed": 0, "skipped": 0, "unverified": 0},
       "checks": [CheckResult.as_json(), ...]
     }
 
 `schema_version` is raised whenever a key changes meaning or disappears;
-adding a key does not raise it.
+adding a key does not raise it. Adding the status "unverified" (and its
+count) did not raise it either: an agent that treats any status other than
+"pass" and "warn" as needing attention reads it correctly.
 """
 
 from goodall import exit_codes
@@ -75,6 +80,7 @@ def doctor_document(results: list[CheckResult]) -> dict[str, object]:
             "warned": counts.warned,
             "failed": counts.failed,
             "skipped": counts.skipped,
+            "unverified": counts.unverified,
         },
         "checks": check_documents,
     }

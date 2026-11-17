@@ -21,6 +21,7 @@ import pytest
 
 from goodall import cli, exit_codes
 from goodall.fake_runner import FakeRunner
+from goodall.runner import OutputMode
 from goodall.terminal import Terminal
 
 # The command the account check runs, by its full path (see goodall.program_checks).
@@ -28,6 +29,51 @@ ACCOUNT_GROUPS_COMMAND = ["/usr/bin/id", "-Gn"]
 
 # The groups a standard macOS user account belongs to.
 STANDARD_ACCOUNT_GROUPS = "staff everyone localaccounts _appserverusr com.apple.sharepoint.group.1\n"
+
+# The command that asks 1Password's op whether it is signed in. Its exit code
+# is the whole answer; what it prints (the account's email address) is
+# discarded (see goodall.secrets_manager).
+OP_WHOAMI = ["op", "whoami"]
+
+# The commands that list 1Password's vaults, and the items in the one vault
+# the env file refers to. Their answers hold names and ids, never a secret
+# value (see goodall.secrets_manager).
+OP_VAULT_LIST = ["op", "vault", "list", "--format", "json"]
+EVAL_VAULT_ID = "q2rv4ffgbye6f3nnzcfwh3ab4m"
+OP_ITEM_LIST_EVAL = ["op", "item", "list", "--vault", EVAL_VAULT_ID, "--format", "json"]
+
+# Shaped like op's answers: more keys than goodall uses, including
+# additional_information, which for a login item is its username. None of it
+# may ever be shown.
+VAULT_LIST_ANSWER = json.dumps(
+    [
+        {"id": EVAL_VAULT_ID, "name": "Eval", "content_version": 12},
+        {"id": "x7lmhq5hmp3bt5fgz2vqzd4z3e", "name": "Private", "content_version": 40},
+    ]
+)
+ITEM_LIST_ANSWER = json.dumps(
+    [
+        {
+            "id": "i3cdwwrnsdxk2eqbjvtbdrhs2y",
+            "title": "anthropic-engineering",
+            "category": "API_CREDENTIAL",
+            "vault": {"id": EVAL_VAULT_ID, "name": "Eval"},
+            "additional_information": "researcher-only-detail-0001",
+        },
+        {
+            "id": "pd4yoyf7rnx2y4gu7lccc6yvfq",
+            "title": "Anthropic Research",
+            "category": "API_CREDENTIAL",
+            "vault": {"id": EVAL_VAULT_ID, "name": "Eval"},
+        },
+        {
+            "id": "ux7zkl4i5d3wvnjsn5n2l2ebt4",
+            "title": "anthropic-admin",
+            "category": "API_CREDENTIAL",
+            "vault": {"id": EVAL_VAULT_ID, "name": "Eval"},
+        },
+    ]
+)
 
 
 def healthy_runner() -> FakeRunner:
@@ -38,6 +84,9 @@ def healthy_runner() -> FakeRunner:
     """
     runner = FakeRunner(installed_programs=["git", "gh", "op"])
     runner.answer(ACCOUNT_GROUPS_COMMAND, standard_output=STANDARD_ACCOUNT_GROUPS)
+    runner.answer(OP_WHOAMI)
+    runner.answer(OP_VAULT_LIST, standard_output=VAULT_LIST_ANSWER)
+    runner.answer(OP_ITEM_LIST_EVAL, standard_output=ITEM_LIST_ANSWER)
     return runner
 
 
@@ -157,32 +206,46 @@ def healthy_account(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> EvalAcco
 
 EXPECTED_HEALTHY_SCREEN = """\
 Settings
-  pass  Local settings are found
-  pass  Local settings are valid
-  pass  The record repo folder exists
-  pass  The log directory can be written to
-  pass  The eval config is found and valid
-  pass  This account's contributor is in the roster
-  pass  The main workstream is one of the eval's workstreams
+  pass        Local settings are found
+  pass        Local settings are valid
+  pass        The record repo folder exists
+  pass        The log directory can be written to
+  pass        The eval config is found and valid
+  pass        This account's contributor is in the roster
+  pass        The main workstream is one of the eval's workstreams
 
 Tools
-  pass  git is installed
-  pass  gh is installed
-  pass  The secrets manager's command is installed
+  pass        git is installed
+  pass        gh is installed
+  pass        The secrets manager's command is installed
 
 Eval account
-  pass  This macOS user account is a standard account, not an administrator
+  pass        This macOS user account is a standard account, not an
+              administrator
 
 Record repo
-  pass  The record repo folder is a git repository
+  pass        The record repo folder is a git repository
 
 Secrets
-  pass  The env file holds only secret references
-  pass  Only this macOS user account can read the env file
-  pass  The shared env file holds no secrets
-  pass  No variable is set in both the env file and the shared env file
+  pass        The env file holds only secret references
+  pass        Only this macOS user account can read the env file
+  pass        The shared env file holds no secrets
+  pass        No variable is set in both the env file and the shared env file
+  pass        The secrets manager is signed in
+  pass        Each secret reference points at an item that exists
+  unverified  Each secret reference names a field that exists
+              Goodall checked that each item exists, but not the field each
+              reference names, because 1Password cannot tell goodall whether a
+              field exists without also handing over the field's value, the
+              secret itself, so goodall does not ask. Not checked:
+              ANTHROPIC_API_KEY_ENGINEERING (line 3), ANTHROPIC_API_KEY_RESEARCH
+              (line 4), ANTHROPIC_ADMIN_KEY (line 5).
+              Next: Nothing, if you copied each reference with Copy Secret
+              Reference in 1Password and have not renamed the field since.
+              Otherwise, copy each one that way and paste it over its value in
+              the env file.
 
-16 passed, 0 warned, 0 failed, 0 skipped
+18 passed, 0 warned, 0 failed, 0 skipped, 1 unverified
 """
 
 
@@ -201,50 +264,57 @@ MISSING_CONFIG_DIRECTORY = "/nonexistent-goodall-test/goodall-config"
 
 EXPECTED_SETTINGS_MISSING_SCREEN = """\
 Settings
-  FAIL  Local settings are found
-        No local settings were found. Goodall looked for
-        /nonexistent-goodall-test/goodall-config/local-settings.toml, in the
-        folder that GOODALL_CONFIG_DIR names.
-        Next: Run goodall onboard to set up this eval account, or unset
-        GOODALL_CONFIG_DIR if your local settings are in your home folder.
+  FAIL        Local settings are found
+              No local settings were found. Goodall looked for
+              /nonexistent-goodall-test/goodall-config/local-settings.toml, in
+              the folder that GOODALL_CONFIG_DIR names.
+              Next: Run goodall onboard to set up this eval account, or unset
+              GOODALL_CONFIG_DIR if your local settings are in your home folder.
 
-  skip  Local settings are valid
-        Waiting for: Local settings are found
-  skip  The record repo folder exists
-        Waiting for: Local settings are found
-  skip  The log directory can be written to
-        Waiting for: Local settings are found
-  skip  The eval config is found and valid
-        Waiting for: Local settings are found
-  skip  This account's contributor is in the roster
-        Waiting for: Local settings are found
-  skip  The main workstream is one of the eval's workstreams
-        Waiting for: Local settings are found
+  skip        Local settings are valid
+              Waiting for: Local settings are found
+  skip        The record repo folder exists
+              Waiting for: Local settings are found
+  skip        The log directory can be written to
+              Waiting for: Local settings are found
+  skip        The eval config is found and valid
+              Waiting for: Local settings are found
+  skip        This account's contributor is in the roster
+              Waiting for: Local settings are found
+  skip        The main workstream is one of the eval's workstreams
+              Waiting for: Local settings are found
 
 Tools
-  pass  git is installed
-  pass  gh is installed
-  skip  The secrets manager's command is installed
-        Waiting for: Local settings are found
+  pass        git is installed
+  pass        gh is installed
+  skip        The secrets manager's command is installed
+              Waiting for: Local settings are found
 
 Eval account
-  pass  This macOS user account is a standard account, not an administrator
+  pass        This macOS user account is a standard account, not an
+              administrator
 
 Record repo
-  skip  The record repo folder is a git repository
-        Waiting for: Local settings are found
+  skip        The record repo folder is a git repository
+              Waiting for: Local settings are found
 
 Secrets
-  skip  The env file holds only secret references
-        Waiting for: Local settings are found
-  skip  Only this macOS user account can read the env file
-        Waiting for: Local settings are found
-  skip  The shared env file holds no secrets
-        Waiting for: Local settings are found
-  skip  No variable is set in both the env file and the shared env file
-        Waiting for: Local settings are found
+  skip        The env file holds only secret references
+              Waiting for: Local settings are found
+  skip        Only this macOS user account can read the env file
+              Waiting for: Local settings are found
+  skip        The shared env file holds no secrets
+              Waiting for: Local settings are found
+  skip        No variable is set in both the env file and the shared env file
+              Waiting for: Local settings are found
+  skip        The secrets manager is signed in
+              Waiting for: Local settings are found
+  skip        Each secret reference points at an item that exists
+              Waiting for: Local settings are found
+  skip        Each secret reference names a field that exists
+              Waiting for: Local settings are found
 
-3 passed, 0 warned, 1 failed, 12 skipped
+3 passed, 0 warned, 1 failed, 15 skipped, 0 unverified
 """
 
 
@@ -262,9 +332,12 @@ def test_missing_local_settings_is_one_failure_and_every_other_check_waits_for_i
     assert exit_code == exit_codes.ERROR
 
 
-def doctor_json() -> tuple[int, dict[str, object]]:
-    """Run `goodall doctor --json`; return the exit code and the parsed document."""
-    exit_code, standard_output, standard_error = run_goodall(["doctor", "--json"])
+def doctor_json(runner: FakeRunner | None = None) -> tuple[int, dict[str, object]]:
+    """Run `goodall doctor --json`; return the exit code and the parsed document.
+
+    Without a `runner`, goodall gets `healthy_runner()`.
+    """
+    exit_code, standard_output, standard_error = run_goodall(["doctor", "--json"], runner)
     assert standard_error == ""
     # json.loads rejects trailing text, so this also proves standard output
     # holds exactly one document.
@@ -298,6 +371,9 @@ ALL_CHECK_IDS = [
     "secrets.env_file_private",
     "secrets.shared_env_file_holds_no_secrets",
     "secrets.no_variable_in_both_env_files",
+    "secrets.secrets_manager_signed_in",
+    "secrets.referenced_items_exist",
+    "secrets.referenced_fields_exist",
 ]
 
 
@@ -306,7 +382,7 @@ def test_healthy_setup_as_json_gives_the_same_results(healthy_account: EvalAccou
 
     assert exit_code == exit_codes.SUCCESS
     assert document["schema_version"] == 1
-    assert document["summary"] == {"passed": 16, "warned": 0, "failed": 0, "skipped": 0}
+    assert document["summary"] == {"passed": 18, "warned": 0, "failed": 0, "skipped": 0, "unverified": 1}
     checks = document["checks"]
     assert isinstance(checks, list)
     assert checks[0] == {
@@ -322,15 +398,17 @@ def test_healthy_setup_as_json_gives_the_same_results(healthy_account: EvalAccou
     }
     assert list(statuses(document)) == ALL_CHECK_IDS
     # The report shows each check's summary; the JSON carries the same one.
+    # Joined into one line, because a long summary wraps in the report.
+    healthy_report_text = " ".join(EXPECTED_HEALTHY_SCREEN.split())
     for check in checks:
-        assert check["summary"] in EXPECTED_HEALTHY_SCREEN
+        assert check["summary"] in healthy_report_text
 
 
 def test_missing_local_settings_as_json_names_what_each_skip_waited_for(settings_missing: None) -> None:
     exit_code, document = doctor_json()
 
     assert exit_code == exit_codes.ERROR
-    assert document["summary"] == {"passed": 3, "warned": 0, "failed": 1, "skipped": 12}
+    assert document["summary"] == {"passed": 3, "warned": 0, "failed": 1, "skipped": 15, "unverified": 0}
     checks = document["checks"]
     assert isinstance(checks, list)
     failed_check = checks[0]
@@ -357,14 +435,14 @@ def test_invalid_local_settings_fail_once_and_name_every_problem(healthy_account
     exit_code, standard_output, _ = run_goodall(["doctor"])
 
     assert exit_code == exit_codes.ERROR
-    assert "  pass  Local settings are found\n" in standard_output
-    assert "  FAIL  Local settings are valid\n" in standard_output
+    assert "  pass        Local settings are found\n" in standard_output
+    assert "  FAIL        Local settings are valid\n" in standard_output
     # Both problems are shown, each with its own next step.
     assert "have no contributor" in standard_output
     assert "favourite_colour" in standard_output
     assert standard_output.count("        Next: ") == 2
     assert "Waiting for: Local settings are valid" in standard_output
-    assert standard_output.endswith("4 passed, 0 warned, 1 failed, 11 skipped\n")
+    assert standard_output.endswith("4 passed, 0 warned, 1 failed, 14 skipped, 0 unverified\n")
 
 
 def test_relative_settings_folder_override_fails_the_found_check(
@@ -406,6 +484,9 @@ def test_missing_record_repo_skips_the_eval_config_but_still_checks_the_log_dire
         "secrets.env_file_private": "pass",
         "secrets.shared_env_file_holds_no_secrets": "skip",
         "secrets.no_variable_in_both_env_files": "skip",
+        "secrets.secrets_manager_signed_in": "pass",
+        "secrets.referenced_items_exist": "pass",
+        "secrets.referenced_fields_exist": "unverified",
     }
     checks = document["checks"]
     assert isinstance(checks, list)
@@ -425,9 +506,9 @@ def test_unreachable_log_directory_is_a_warning_with_a_next_step_and_exits_0(hea
     exit_code, standard_output, _ = run_goodall(["doctor"])
 
     assert exit_code == exit_codes.SUCCESS
-    assert "  warn  The log directory can be written to\n        Not recording:" in standard_output
+    assert "  warn        The log directory can be written to\n              Not recording:" in standard_output
     assert "        Next: If the log directory is on an external drive, connect it." in standard_output
-    assert standard_output.endswith("15 passed, 1 warned, 0 failed, 0 skipped\n")
+    assert standard_output.endswith("17 passed, 1 warned, 0 failed, 0 skipped, 1 unverified\n")
 
     json_exit_code, document = doctor_json()
     assert json_exit_code == exit_code
@@ -454,7 +535,7 @@ def test_contributor_and_main_workstream_are_reported_as_separate_checks(healthy
     exit_code, document = doctor_json()
 
     assert exit_code == exit_codes.ERROR
-    assert document["summary"] == {"passed": 14, "warned": 0, "failed": 2, "skipped": 0}
+    assert document["summary"] == {"passed": 16, "warned": 0, "failed": 2, "skipped": 0, "unverified": 1}
     checks = document["checks"]
     assert isinstance(checks, list)
     assert [failure["kind"] for failure in checks[5]["failures"]] == ["contributor_not_in_roster"]
@@ -475,6 +556,7 @@ def test_contributor_and_main_workstream_are_reported_as_separate_checks(healthy
         "put a secret in the shared env file",
         "remove the shared env file",
         "set a variable in both env files",
+        "refer to an item that does not exist",
     ],
 )
 def test_every_failure_and_warning_has_a_next_step_and_exit_codes_agree(
@@ -503,6 +585,8 @@ def test_every_failure_and_warning_has_a_next_step_and_exit_codes_agree(
     elif break_setup == "set a variable in both env files":
         healthy_account.shared_env_file.write_text("DEFAULT_MODEL=opus\n")
         healthy_account.env_file.write_text("DEFAULT_MODEL=op://Eval/item/field\n")
+    elif break_setup == "refer to an item that does not exist":
+        healthy_account.env_file.write_text("ANTHROPIC_API_KEY=op://Eval/nothing-here/credential\n")
     else:
         healthy_account.eval_config_file.write_text(VALID_EVAL_CONFIG_TEXT.replace("ada-lovelace", "grace-hopper"))
 
@@ -513,7 +597,7 @@ def test_every_failure_and_warning_has_a_next_step_and_exit_codes_agree(
     checks = document["checks"]
     assert isinstance(checks, list)
     for check in checks:
-        if check["status"] in ["fail", "warn"]:
+        if check["status"] in ["fail", "warn", "unverified"]:
             assert check["next_step"], f"{check['id']} has no next step"
             assert check["failures"] != []
             # The text report shows the start of the same next step.
@@ -607,7 +691,7 @@ def test_missing_gh_is_one_failure_naming_it_and_saying_the_owner_of_the_mac_ins
 
     assert exit_code == exit_codes.ERROR
     document = json.loads(standard_output)
-    assert document["summary"] == {"passed": 15, "warned": 0, "failed": 1, "skipped": 0}
+    assert document["summary"] == {"passed": 17, "warned": 0, "failed": 1, "skipped": 0, "unverified": 1}
     gh_check = check_document(document, "tools.gh_installed")
     assert gh_check["status"] == "fail"
     assert isinstance(gh_check["detail"], str)
@@ -628,7 +712,7 @@ def test_missing_git_is_one_failure_and_the_record_repo_check_waits_for_it(healt
 
     assert exit_code == exit_codes.ERROR
     document = json.loads(standard_output)
-    assert document["summary"] == {"passed": 14, "warned": 0, "failed": 1, "skipped": 1}
+    assert document["summary"] == {"passed": 16, "warned": 0, "failed": 1, "skipped": 1, "unverified": 1}
     git_check = check_document(document, "tools.git_installed")
     assert git_check["status"] == "fail"
     assert isinstance(git_check["next_step"], str)
@@ -644,7 +728,7 @@ def test_missing_op_fails_the_secrets_manager_check_naming_1password(healthy_acc
 
     assert exit_code == exit_codes.ERROR
     document = json.loads(standard_output)
-    assert document["summary"] == {"passed": 15, "warned": 0, "failed": 1, "skipped": 0}
+    assert document["summary"] == {"passed": 15, "warned": 0, "failed": 1, "skipped": 3, "unverified": 0}
     secrets_manager_check = check_document(document, "tools.secrets_manager_installed")
     assert secrets_manager_check["status"] == "fail"
     assert isinstance(secrets_manager_check["detail"], str)
@@ -665,14 +749,14 @@ def test_an_administrator_account_fails_with_why_a_standard_account_is_required(
     exit_code, standard_output, _ = run_goodall(["doctor"], runner)
 
     assert exit_code == exit_codes.ERROR
-    assert "  FAIL  This macOS user account is a standard account, not an administrator\n" in standard_output
+    assert "  FAIL        This macOS user account is a standard account, not an\n" in standard_output
     # Joined into one line, so a phrase that wraps still matches.
     report_text = " ".join(standard_output.split())
     assert "is an administrator (it is in the admin group)" in report_text
     # The reason, so a researcher does not wave it away as fussiness.
     assert "cannot reach other accounts' files or install software" in report_text
     assert "safe to hand to an agent" in report_text
-    assert standard_output.endswith("15 passed, 0 warned, 1 failed, 0 skipped\n")
+    assert standard_output.endswith("17 passed, 0 warned, 1 failed, 0 skipped, 1 unverified\n")
 
 
 @pytest.mark.parametrize(
@@ -706,7 +790,7 @@ def test_a_record_repo_folder_that_is_not_a_git_repository_fails(healthy_account
 
     assert exit_code == exit_codes.ERROR
     document = json.loads(standard_output)
-    assert document["summary"] == {"passed": 15, "warned": 0, "failed": 1, "skipped": 0}
+    assert document["summary"] == {"passed": 17, "warned": 0, "failed": 1, "skipped": 0, "unverified": 1}
     git_repository_check = check_document(document, "record_repo.is_git_repository")
     assert git_repository_check["status"] == "fail"
     assert isinstance(git_repository_check["detail"], str)
@@ -778,7 +862,7 @@ def test_an_account_check_that_never_finishes_is_reported_as_timed_out_and_docto
     assert isinstance(account_check["detail"], str)
     assert "`/usr/bin/id -Gn` timed out after 10 s" in account_check["detail"]
     # Every other check still ran.
-    assert document["summary"] == {"passed": 15, "warned": 0, "failed": 1, "skipped": 0}
+    assert document["summary"] == {"passed": 17, "warned": 0, "failed": 1, "skipped": 0, "unverified": 1}
 
 
 # A recognisable fake key. If any part of it shows up in goodall's output,
@@ -798,7 +882,7 @@ def test_a_raw_key_pasted_into_the_env_file_fails_names_the_line_and_is_never_sh
     assert json_exit_code == exit_codes.ERROR
     for printed in [standard_output, standard_error, json_output, json_error]:
         assert "RECOGNISABLEFAKEVALUE" not in printed
-    assert "  FAIL  The env file holds only secret references\n" in standard_output
+    assert "  FAIL        The env file holds only secret references\n" in standard_output
     report_text = " ".join(standard_output.split())
     assert "ANTHROPIC_API_KEY_GTM, on line 6 of" in report_text
     assert "paste the secret reference" in report_text
@@ -907,7 +991,7 @@ def test_a_secret_looking_name_in_the_shared_env_file_fails_saying_to_move_it_to
     assert exit_code == exit_codes.ERROR
     for printed in [standard_output, standard_error, json_output]:
         assert "RECOGNISABLEFAKEVALUE" not in printed
-    assert "  FAIL  The shared env file holds no secrets\n" in standard_output
+    assert "  FAIL        The shared env file holds no secrets\n" in standard_output
     document = json.loads(json_output)
     assert failure_kinds(document, "secrets.shared_env_file_holds_no_secrets") == [
         "shared_env_file_secret_name",
@@ -928,7 +1012,7 @@ def test_a_missing_shared_env_file_is_a_warning_with_a_next_step(healthy_account
     exit_code, standard_output, _ = run_goodall(["doctor"])
 
     assert exit_code == exit_codes.SUCCESS
-    assert "  warn  The shared env file holds no secrets\n" in standard_output
+    assert "  warn        The shared env file holds no secrets\n" in standard_output
     report_text = " ".join(standard_output.split())
     assert f"There is no shared env file at {healthy_account.shared_env_file}." in report_text
     assert "Next: Run git pull in" in report_text
@@ -1017,3 +1101,242 @@ def test_the_check_for_a_variable_in_both_files_waits_for_a_broken_env_file(heal
     both_check = check_document(json.loads(standard_output), "secrets.no_variable_in_both_env_files")
     assert both_check["status"] == "skip"
     assert both_check["waiting_for"] == "secrets.env_file_holds_only_references"
+
+
+def test_a_signed_out_secrets_manager_is_one_failure_with_the_sign_in_step(healthy_account: EvalAccount) -> None:
+    runner = healthy_runner()
+    runner.answer(OP_WHOAMI, exit_code=1, standard_error="[ERROR] account is not signed in\n")
+
+    exit_code, standard_output, _ = run_goodall(["doctor"], runner)
+
+    assert exit_code == exit_codes.ERROR
+    assert "  FAIL        The secrets manager is signed in\n" in standard_output
+    report_text = " ".join(standard_output.split())
+    assert "1Password is not signed in for this macOS user account: `op whoami` exited with code 1." in report_text
+    assert "Next: Open the 1Password app and unlock it." in report_text
+    assert "op signin" in report_text
+    # What op printed was discarded unread, so it cannot be repeated.
+    assert "account is not signed in" not in report_text
+
+
+def test_a_secrets_manager_that_never_answers_fails_within_its_timeout(healthy_account: EvalAccount) -> None:
+    runner = healthy_runner()
+    runner.answer_timed_out(OP_WHOAMI)
+
+    exit_code, document = doctor_json(runner)
+
+    assert exit_code == exit_codes.ERROR
+    signed_in_check = check_document(document, "secrets.secrets_manager_signed_in")
+    assert signed_in_check["status"] == "fail"
+    assert failure_kinds(document, "secrets.secrets_manager_signed_in") == ["secrets_manager_did_not_answer"]
+    assert isinstance(signed_in_check["detail"], str)
+    assert "`op whoami` timed out after 10 s" in signed_in_check["detail"]
+
+
+def test_an_env_file_with_no_references_does_not_ask_the_secrets_manager_anything(
+    healthy_account: EvalAccount,
+) -> None:
+    # An eval with no secrets needs no secrets manager (ADR 0006), so a
+    # signed-out one must not fail it.
+    healthy_account.env_file.unlink()
+    runner = healthy_runner()
+    runner.answer(OP_WHOAMI, exit_code=1)
+
+    exit_code, document = doctor_json(runner)
+
+    assert exit_code == exit_codes.SUCCESS
+    signed_in_check = check_document(document, "secrets.secrets_manager_signed_in")
+    assert signed_in_check["status"] == "pass"
+    assert signed_in_check["note"] == (
+        "The env file refers to no secrets, so goodall did not ask 1Password whether it is signed in."
+    )
+    for command in runner.calls:
+        assert command.arguments[0] != "op"
+
+
+def test_a_reference_to_an_item_that_does_not_exist_fails_naming_the_variable_and_line_but_not_the_reference(
+    healthy_account: EvalAccount,
+) -> None:
+    missing_reference = "op://Eval/anthropic-gtm-renamed/credential"
+    healthy_account.env_file.write_text(VALID_ENV_FILE_TEXT + f"ANTHROPIC_API_KEY_GTM={missing_reference}\n")
+
+    exit_code, standard_output, _ = run_goodall(["doctor"])
+    json_exit_code, document = doctor_json()
+
+    assert exit_code == json_exit_code == exit_codes.ERROR
+    assert "  FAIL        Each secret reference points at an item that exists\n" in standard_output
+    report_text = " ".join(standard_output.split())
+    assert "ANTHROPIC_API_KEY_GTM, on line 6 of the env file" in report_text
+    assert failure_kinds(document, "secrets.referenced_items_exist") == ["secret_reference_item_missing"]
+    # A reference names a vault and an item, so neither the reference nor
+    # its parts are shown; nor is anything op said about the items it has.
+    everything_shown = standard_output + json.dumps(document)
+    for not_to_be_shown in [missing_reference, "anthropic-gtm-renamed", "op://", EVAL_VAULT_ID, "researcher-only"]:
+        assert not_to_be_shown not in everything_shown
+
+
+def test_references_whose_items_could_not_be_listed_in_time_are_unverified_not_passed_or_failed(
+    healthy_account: EvalAccount,
+) -> None:
+    runner = healthy_runner()
+    runner.answer_timed_out(OP_ITEM_LIST_EVAL)
+
+    exit_code, standard_output, _ = run_goodall(["doctor"], runner)
+    json_exit_code, document = doctor_json(runner)
+
+    # Not knowing is not a failure, so doctor still exits 0, but the report
+    # says plainly that these were not checked.
+    assert exit_code == json_exit_code == exit_codes.SUCCESS
+    assert "  unverified  Each secret reference points at an item that exists\n" in standard_output
+    items_check = check_document(document, "secrets.referenced_items_exist")
+    assert items_check["status"] == "unverified"
+    assert failure_kinds(document, "secrets.referenced_items_exist") == ["secret_reference_not_verified"] * 3
+    report_text = " ".join(standard_output.split())
+    assert "ANTHROPIC_API_KEY_ENGINEERING (line 3)" in report_text
+    assert "ANTHROPIC_ADMIN_KEY (line 5)" in report_text
+    assert "`op item list` did not answer within 10 s" in report_text
+    assert EVAL_VAULT_ID not in standard_output + json.dumps(document)
+
+
+def test_a_reference_whose_name_two_items_share_is_unverified_and_says_to_use_the_item_id(
+    healthy_account: EvalAccount,
+) -> None:
+    runner = healthy_runner()
+    items = json.loads(ITEM_LIST_ANSWER)
+    items.append({"id": "zz7zkl4i5d3wvnjsn5n2l2ebt4", "title": "Anthropic-Admin", "vault": {"id": EVAL_VAULT_ID}})
+    runner.answer(OP_ITEM_LIST_EVAL, standard_output=json.dumps(items))
+
+    _, document = doctor_json(runner)
+
+    items_check = check_document(document, "secrets.referenced_items_exist")
+    assert items_check["status"] == "unverified"
+    assert isinstance(items_check["detail"], str)
+    assert "ANTHROPIC_ADMIN_KEY (line 5)" in items_check["detail"]
+    assert "more than one item in its vault has the name the reference uses" in items_check["detail"]
+    assert isinstance(items_check["next_step"], str)
+    assert "item's id" in items_check["next_step"]
+
+
+def test_the_field_a_reference_names_is_reported_unverified_because_checking_it_would_read_the_secret(
+    healthy_account: EvalAccount,
+) -> None:
+    exit_code, document = doctor_json()
+
+    assert exit_code == exit_codes.SUCCESS
+    field_check = check_document(document, "secrets.referenced_fields_exist")
+    assert field_check["status"] == "unverified"
+    assert failure_kinds(document, "secrets.referenced_fields_exist") == ["secret_reference_field_not_verified"]
+    assert isinstance(field_check["detail"], str)
+    for variable in [
+        "ANTHROPIC_API_KEY_ENGINEERING (line 3)",
+        "ANTHROPIC_API_KEY_RESEARCH (line 4)",
+        "ANTHROPIC_ADMIN_KEY (line 5)",
+    ]:
+        assert variable in field_check["detail"]
+    assert "credential" not in json.dumps(field_check)
+    # The items themselves were checked, and do exist.
+    assert check_document(document, "secrets.referenced_items_exist")["status"] == "pass"
+
+
+def test_an_env_file_with_no_references_has_no_field_to_leave_unverified(healthy_account: EvalAccount) -> None:
+    healthy_account.env_file.write_text("# No secrets in this eval.\n")
+
+    exit_code, document = doctor_json()
+
+    assert exit_code == exit_codes.SUCCESS
+    assert check_document(document, "secrets.referenced_fields_exist")["status"] == "pass"
+    summary = document["summary"]
+    assert isinstance(summary, dict)
+    assert summary["unverified"] == 0
+
+
+def test_signed_out_skips_the_item_and_field_checks_naming_the_sign_in_check(healthy_account: EvalAccount) -> None:
+    runner = healthy_runner()
+    runner.answer(OP_WHOAMI, exit_code=1)
+
+    exit_code, document = doctor_json(runner)
+
+    assert exit_code == exit_codes.ERROR
+    for check_id in ["secrets.referenced_items_exist", "secrets.referenced_fields_exist"]:
+        check = check_document(document, check_id)
+        assert check["status"] == "skip"
+        assert check["waiting_for"] == "secrets.secrets_manager_signed_in"
+    # Only the sign-in question was asked.
+    op_commands = []
+    for command in runner.calls:
+        if command.arguments[0] == "op":
+            op_commands.append(command.arguments)
+    assert op_commands == [OP_WHOAMI]
+
+
+def test_a_reference_to_a_vault_this_account_cannot_see_fails_naming_the_variable(
+    healthy_account: EvalAccount,
+) -> None:
+    healthy_account.env_file.write_text(VALID_ENV_FILE_TEXT + "ANTHROPIC_API_KEY_GTM=op://Sales/anthropic/credential\n")
+
+    exit_code, standard_output, _ = run_goodall(["doctor"])
+    _, document = doctor_json()
+
+    assert exit_code == exit_codes.ERROR
+    assert failure_kinds(document, "secrets.referenced_items_exist") == ["secret_reference_vault_missing"]
+    report_text = " ".join(standard_output.split())
+    assert "ANTHROPIC_API_KEY_GTM, on line 6 of the env file" in report_text
+    assert "names a vault this 1Password account cannot see" in report_text
+    assert "Sales" not in standard_output + json.dumps(document)
+
+
+def test_an_answer_from_op_that_goodall_cannot_read_leaves_every_reference_unverified(
+    healthy_account: EvalAccount,
+) -> None:
+    runner = healthy_runner()
+    runner.answer(OP_VAULT_LIST, standard_output="Eval  q2rv4ffgbye6f3nnzcfwh3ab4m\n")
+
+    exit_code, document = doctor_json(runner)
+
+    assert exit_code == exit_codes.SUCCESS
+    assert check_document(document, "secrets.referenced_items_exist")["status"] == "unverified"
+    assert failure_kinds(document, "secrets.referenced_items_exist") == ["secret_reference_not_verified"] * 3
+    detail = check_document(document, "secrets.referenced_items_exist")["detail"]
+    assert isinstance(detail, str)
+    assert "goodall could not read the answer `op vault list` gave" in detail
+
+
+# The only secrets manager commands whose output goodall may read, by the
+# first three words: listings documented to name vaults and items and never
+# to give a field's value. Every other secrets manager command must discard
+# its output. `op item get`, `op read`, `op inject` and `op run` give values
+# and must never be run by goodall doctor at all.
+VALUE_FREE_OP_COMMANDS = [["op", "vault", "list"], ["op", "item", "list"]]
+OP_COMMANDS_THAT_GIVE_VALUES = [["op", "item", "get"], ["op", "read"], ["op", "inject"], ["op", "run"]]
+
+
+@pytest.mark.parametrize(
+    "scenario",
+    ["healthy", "signed out", "no answer", "item listing times out", "missing item", "no references"],
+)
+def test_every_secrets_manager_command_discards_its_output_or_is_a_value_free_listing(
+    healthy_account: EvalAccount, scenario: str
+) -> None:
+    runner = healthy_runner()
+    if scenario == "signed out":
+        runner.answer(OP_WHOAMI, exit_code=1)
+    elif scenario == "no answer":
+        runner.answer_timed_out(OP_WHOAMI)
+    elif scenario == "item listing times out":
+        runner.answer_timed_out(OP_ITEM_LIST_EVAL)
+    elif scenario == "missing item":
+        healthy_account.env_file.write_text(VALID_ENV_FILE_TEXT + "X_KEY=op://Eval/nothing-here/credential\n")
+    elif scenario == "no references":
+        healthy_account.env_file.unlink()
+
+    run_goodall(["doctor"], runner)
+    run_goodall(["doctor", "--json"], runner)
+
+    for command in runner.calls:
+        if command.arguments[0] != "op":
+            continue
+        for value_giving_command in OP_COMMANDS_THAT_GIVE_VALUES:
+            assert command.arguments[: len(value_giving_command)] != value_giving_command
+        if command.output == OutputMode.DISCARD:
+            continue
+        assert command.arguments[:3] in VALUE_FREE_OP_COMMANDS, f"`{command.as_typed}` kept its output"
