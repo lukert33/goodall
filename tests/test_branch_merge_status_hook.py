@@ -399,10 +399,10 @@ def test_a_switch_not_joined_to_the_commit_by_and_is_not_trusted(tmp_path: Path)
         assert result.returncode == 2, command
 
 
-# --- Session start (tell the agent the status up front) ---------------------
+# --- Claude session start (tell the agent the status up front) ---------------------
 
 
-def test_session_start_tells_the_agent_when_the_branch_is_already_merged(tmp_path: Path) -> None:
+def test_claude_session_start_tells_the_agent_when_the_branch_is_already_merged(tmp_path: Path) -> None:
     workspace = make_workspace(tmp_path)
     workspace.set_pull_requests([MERGED_PULL_REQUEST])
 
@@ -417,7 +417,7 @@ def test_session_start_tells_the_agent_when_the_branch_is_already_merged(tmp_pat
     assert "git switch -c" in context
 
 
-def test_session_start_says_nothing_when_the_branch_is_not_merged(tmp_path: Path) -> None:
+def test_claude_session_start_says_nothing_when_the_branch_is_not_merged(tmp_path: Path) -> None:
     workspace = make_workspace(tmp_path)
     workspace.set_pull_requests([OPEN_PULL_REQUEST])
 
@@ -427,7 +427,7 @@ def test_session_start_says_nothing_when_the_branch_is_not_merged(tmp_path: Path
     assert result.stdout.strip() == ""
 
 
-def test_session_start_mentions_a_pull_request_closed_without_merging(tmp_path: Path) -> None:
+def test_claude_session_start_mentions_a_pull_request_closed_without_merging(tmp_path: Path) -> None:
     workspace = make_workspace(tmp_path)
     workspace.set_pull_requests([CLOSED_PULL_REQUEST])
 

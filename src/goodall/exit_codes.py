@@ -16,6 +16,6 @@ ERROR = 1
 # or no command at all. Nothing was attempted.
 USAGE_ERROR = 2
 
-# The session gate is closed: no eval session is running, so the prompt must
-# not go through. Used by the Claude Code hook path to block a prompt.
-SESSION_GATE_CLOSED = 3
+# The prompt gate is closed: no work block is active, so the prompt must not
+# go through to the agent. Used by the Claude Code hook path to block a prompt.
+PROMPT_GATE_CLOSED = 3

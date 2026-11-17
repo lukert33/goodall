@@ -123,8 +123,8 @@ understand why each function exists.
   `uv run mypy`.
 - CI (`.github/workflows/quality-gates.yml`) runs the same four gates on every
   pull request.
-- Tests use the fake runner and `tmp_path`; the real network, the real `op`
-  session and the user's real files stay out of reach.
+- Tests use the fake runner and `tmp_path`; the real network, the real
+  1Password sign-in (`op`) and the user's real files stay out of reach.
 - Real `git` is used in tests, because git behaviour is what they verify.
 - Test names state the behaviour protected:
   `test_tracked_env_fails_even_when_ignored`.
@@ -148,10 +148,10 @@ facts are the provenance.
   branch someone else is working on still wait for the owner's go-ahead.
 - **A merged branch is finished.** Once a branch's pull request is merged,
   further work starts on a new branch from `origin/main`. Claude Code hooks
-  (`.claude/hooks/branch_merge_status.py`) report a merged branch at session
-  start and on each prompt, and refuse `git commit` and `git push` there. In
-  other tools, check with `gh pr list --head <branch> --state all` before
-  committing.
+  (`.claude/hooks/branch_merge_status.py`) report a merged branch when a Claude
+  session starts and on each prompt, and refuse `git commit` and `git push`
+  there. In other tools, check with `gh pr list --head <branch> --state all`
+  before committing.
 - Prefer smaller commits: one logical change each, made as soon as that change
   passes the quality gates. Imperative subject; the body gives the reason.
 - AI-authored commits keep their `Co-Authored-By` trailer, and branches are
