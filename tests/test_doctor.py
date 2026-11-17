@@ -211,7 +211,7 @@ Settings
   pass        The record repo folder exists
   pass        The log directory can be written to
   pass        The eval config is found and valid
-  pass        This account's contributor is in the roster
+  pass        This eval account's contributor is in the roster
   pass        The main workstream is one of the eval's workstreams
 
 Tools
@@ -279,7 +279,7 @@ Settings
               Waiting for: Local settings are found
   skip        The eval config is found and valid
               Waiting for: Local settings are found
-  skip        This account's contributor is in the roster
+  skip        This eval account's contributor is in the roster
               Waiting for: Local settings are found
   skip        The main workstream is one of the eval's workstreams
               Waiting for: Local settings are found
@@ -364,10 +364,12 @@ ALL_CHECK_IDS = [
     "settings.main_workstream_known",
     "tools.git_installed",
     "tools.gh_installed",
-    "tools.secrets_manager_installed",
     "eval_account.standard_account",
     "record_repo.is_git_repository",
     "secrets.env_file_holds_only_references",
+    # Shown under "Tools", but run once the env file is read, because the
+    # secrets manager is needed only when the env file refers to a secret.
+    "tools.secrets_manager_installed",
     "secrets.env_file_private",
     "secrets.shared_env_file_holds_no_secrets",
     "secrets.no_variable_in_both_env_files",
@@ -737,6 +739,26 @@ def test_missing_op_fails_the_secrets_manager_check_naming_1password(healthy_acc
     assert "https://developer.1password.com/docs/cli/get-started/" in secrets_manager_check["next_step"]
 
 
+@pytest.mark.parametrize("env_file_text", [None, "# No secrets in this eval.\n"])
+def test_an_eval_with_no_secret_references_passes_doctor_without_op_installed(
+    healthy_account: EvalAccount, env_file_text: str | None
+) -> None:
+    # ADR 0006: a secrets manager is required only when a secret exists.
+    if env_file_text is None:
+        healthy_account.env_file.unlink()
+    else:
+        healthy_account.env_file.write_text(env_file_text)
+    runner = healthy_runner()
+    runner.installed_programs.remove("op")
+
+    exit_code, document = doctor_json(runner)
+
+    assert exit_code == exit_codes.SUCCESS
+    secrets_manager_check = check_document(document, "tools.secrets_manager_installed")
+    assert secrets_manager_check["status"] == "pass"
+    assert secrets_manager_check["note"] == ("This eval uses no secret references, so no secrets manager is needed.")
+
+
 # The groups of an administrator on macOS: the same as a standard account's,
 # plus admin and the groups that come with it.
 ADMINISTRATOR_ACCOUNT_GROUPS = "staff everyone localaccounts _appserverusr admin _appserveradm _lpadmin\n"
@@ -892,6 +914,33 @@ def test_a_raw_key_pasted_into_the_env_file_fails_names_the_line_and_is_never_sh
     ]
 
 
+# A synthetic base64 token. Base64 is letters and digits, so a pasted token
+# reads as a variable name, and its = padding as the = after the name.
+PASTED_BASE64_TOKEN = "SYNTHETICsyntheticSYNTHETIC0123456789x9"
+
+
+@pytest.mark.parametrize("padding", ["=", "=="])
+def test_a_pasted_base64_token_is_never_shown_and_neither_env_file_passes_it(
+    healthy_account: EvalAccount, padding: str
+) -> None:
+    pasted_line = f"{PASTED_BASE64_TOKEN}{padding}\n"
+    healthy_account.env_file.write_text(VALID_ENV_FILE_TEXT + pasted_line)
+    healthy_account.shared_env_file.write_text(VALID_SHARED_ENV_FILE_TEXT + pasted_line)
+
+    exit_code, standard_output, standard_error = run_goodall(["doctor"])
+    _, json_output, json_error = run_goodall(["doctor", "--json"])
+
+    assert exit_code == exit_codes.ERROR
+    for printed in [standard_output, standard_error, json_output, json_error]:
+        assert "SYNTHETICsynthetic" not in printed
+    document = json.loads(json_output)
+    assert statuses(document)["secrets.env_file_holds_only_references"] == "fail"
+    assert statuses(document)["secrets.shared_env_file_holds_no_secrets"] != "pass"
+    env_file_check = check_document(document, "secrets.env_file_holds_only_references")
+    assert isinstance(env_file_check["detail"], str)
+    assert "line 6" in " ".join(env_file_check["detail"].split()).lower()
+
+
 def failure_kinds(document: dict[str, object], check_id: str) -> list[str]:
     """The kind of each failure of one check in a `goodall doctor --json` document."""
     failures = check_document(document, check_id)["failures"]
@@ -1016,6 +1065,20 @@ def test_a_missing_shared_env_file_is_a_warning_with_a_next_step(healthy_account
     report_text = " ".join(standard_output.split())
     assert f"There is no shared env file at {healthy_account.shared_env_file}." in report_text
     assert "Next: Run git pull in" in report_text
+
+
+def test_a_secret_reference_inside_a_shared_env_file_value_fails_like_one_on_its_own(
+    healthy_account: EvalAccount,
+) -> None:
+    # The same rule as the eval config's: a reference anywhere in a value counts.
+    healthy_account.shared_env_file.write_text(
+        VALID_SHARED_ENV_FILE_TEXT + 'OTEL_EXPORTER_OTLP_HEADERS="Authorization=op://RECOGNISABLEVAULT/otel/x"\n'
+    )
+
+    exit_code, document = doctor_json()
+
+    assert exit_code == exit_codes.ERROR
+    assert failure_kinds(document, "secrets.shared_env_file_holds_no_secrets") == ["shared_env_file_secret_reference"]
 
 
 def test_a_secret_reference_in_the_shared_env_file_fails_because_it_would_not_be_resolved(
@@ -1340,3 +1403,133 @@ def test_every_secrets_manager_command_discards_its_output_or_is_a_value_free_li
         if command.output == OutputMode.DISCARD:
             continue
         assert command.arguments[:3] in VALUE_FREE_OP_COMMANDS, f"`{command.as_typed}` kept its output"
+
+
+# Setups that make doctor report failures, warnings or unverified checks
+# whose words come from every module that builds them, including the
+# folder, local settings and eval config failures `goodall status` shares.
+REPORTED_SETUPS = {
+    "healthy": ("settings", "", ""),
+    "record repo missing": ("settings", "~/evals/goodall-pilot-records", "~/evals/not-cloned-yet"),
+    "log directory missing": ("settings", "LOG_DIRECTORY", "/Volumes/NotPluggedIn/goodall"),
+    "settings too new": ("settings", "schema_version = 1", "schema_version = 99"),
+    "eval config too new": ("eval_config", "schema_version = 1", "schema_version = 99"),
+    "raw value in the env file": ("env", "end", "ANTHROPIC_API_KEY_GTM=not-a-reference\n"),
+    "secret name in the shared env file": ("shared_env", "end", "OPENAI_API_KEY=x\n"),
+    "token in the shared env file": ("shared_env", "end", f"SOME_SETTING={PASTED_BASE64_TOKEN}\n"),
+    "variable in both env files": ("shared_env", "end", "ANTHROPIC_ADMIN_KEY=x\n"),
+}
+
+
+@pytest.mark.parametrize("setup", list(REPORTED_SETUPS))
+def test_doctor_s_words_cite_no_decision_records_and_name_no_other_command_to_rerun(
+    healthy_account: EvalAccount, setup: str
+) -> None:
+    # A researcher has not read goodall's ADRs, and a next step reused from
+    # goodall status must not send someone running doctor to a different command.
+    file_name, replace_from, replace_to = REPORTED_SETUPS[setup]
+    if replace_from != "":
+        put_secret_in_place(healthy_account, file_name, replace_from, replace_to)
+
+    _, standard_output, standard_error = run_goodall(["doctor"])
+    _, json_output, _ = run_goodall(["doctor", "--json"])
+
+    for printed in [standard_output, standard_error, json_output]:
+        assert "ADR" not in printed
+        assert "goodall status" not in printed
+
+
+# Every place in the files doctor reads where a person could paste a key by
+# mistake. Each case is: the synthetic secret, which file it goes in, the
+# text to replace in that file's valid form ("" puts the new text at the
+# start of the file, and "end" at its end), and what to put there. No case
+# may ever print its secret. `goodall status` has the same test for the two
+# files it reads (tests/test_status.py).
+SYNTHETIC_KEY = "sk-ant-api03-SYNTHETICsyntheticSYNTHETIC"
+SYNTHETIC_HEX_TOKEN = "0123456789abcdef0123456789abcdef"
+VALID_REFERENCE = "op://Eval/anthropic-admin/credential"
+
+SECRET_POSITIONS = {
+    "settings unknown key": (SYNTHETIC_KEY, "settings", "", f'{SYNTHETIC_KEY} = "x"\n'),
+    "settings table declared twice": (SYNTHETIC_KEY, "settings", "end", f"[{SYNTHETIC_KEY}]\n[{SYNTHETIC_KEY}]\n"),
+    "settings secrets_manager": (SYNTHETIC_KEY, "settings", '"1password"', f'"{SYNTHETIC_KEY}"'),
+    "settings record_repo": (SYNTHETIC_KEY, "settings", '"~/evals/goodall-pilot-records"', f'"{SYNTHETIC_KEY}"'),
+    "settings log_directory with a null character": (
+        SYNTHETIC_KEY,
+        "settings",
+        "LOG_DIRECTORY",
+        f"/{SYNTHETIC_KEY}\\u0000",
+    ),
+    "settings contributor shaped like a name": (
+        SYNTHETIC_HEX_TOKEN,
+        "settings",
+        '"ada-lovelace"',
+        f'"{SYNTHETIC_HEX_TOKEN}"',
+    ),
+    "eval config unknown key": (SYNTHETIC_KEY, "eval_config", "", f'{SYNTHETIC_KEY} = "x"\n'),
+    "eval config key holding a reference": (
+        SYNTHETIC_KEY,
+        "eval_config",
+        "[[scope]]",
+        f'[extra]\n{SYNTHETIC_KEY} = "op://Eval/item/field"\n\n[[scope]]',
+    ),
+    "eval config unknown blocks": (
+        SYNTHETIC_KEY,
+        "eval_config",
+        "[[scope]]",
+        f'[[{SYNTHETIC_KEY}]]\nnote = "x@example.com"\n\n[[scope]]',
+    ),
+    "env file value": (SYNTHETIC_KEY, "env", "end", f'ANTHROPIC_API_KEY_GTM="{SYNTHETIC_KEY}"\n'),
+    "env file line on its own": (SYNTHETIC_KEY, "env", "end", f"{SYNTHETIC_KEY}\n"),
+    "env file base64 token": (PASTED_BASE64_TOKEN, "env", "end", f"{PASTED_BASE64_TOKEN}==\n"),
+    "env file token name with a reference": (
+        PASTED_BASE64_TOKEN,
+        "env",
+        "end",
+        f"{PASTED_BASE64_TOKEN}={VALID_REFERENCE}\n",
+    ),
+    "shared env file base64 token": (PASTED_BASE64_TOKEN, "shared_env", "end", f"{PASTED_BASE64_TOKEN}==\n"),
+    "shared env file value": (SYNTHETIC_KEY, "shared_env", "end", f"SOME_SETTING={SYNTHETIC_KEY}\n"),
+    "shared env file secret name": (SYNTHETIC_KEY, "shared_env", "end", f"OPENAI_API_KEY={SYNTHETIC_KEY}\n"),
+}
+
+
+def put_secret_in_place(account: EvalAccount, file_name: str, replace_from: str, replace_to: str) -> None:
+    """Put a pasted secret in one place in one of the healthy account's files."""
+    files = {
+        "settings": account.settings_file,
+        "eval_config": account.eval_config_file,
+        "env": account.env_file,
+        "shared_env": account.shared_env_file,
+    }
+    file = files[file_name]
+    valid_text = file.read_text()
+    # The log directory's path differs in every test, so a case names it
+    # with this placeholder.
+    if replace_from == "LOG_DIRECTORY":
+        replace_from = str(account.log_directory)
+    if replace_from == "":
+        broken_text = replace_to + valid_text
+    elif replace_from == "end":
+        broken_text = valid_text + replace_to
+    else:
+        assert replace_from in valid_text, f"{replace_from!r} is not in {file}"
+        broken_text = valid_text.replace(replace_from, replace_to, 1)
+    file.write_text(broken_text)
+
+
+@pytest.mark.parametrize("position", list(SECRET_POSITIONS))
+def test_a_secret_pasted_anywhere_doctor_reads_is_never_shown(healthy_account: EvalAccount, position: str) -> None:
+    secret, file_name, replace_from, replace_to = SECRET_POSITIONS[position]
+    put_secret_in_place(healthy_account, file_name, replace_from, replace_to)
+
+    _, text_output, text_error = run_goodall(["doctor"])
+    _, json_output, json_error = run_goodall(["doctor", "--json"])
+
+    for printed in [text_output, text_error, json_output, json_error]:
+        assert secret not in printed
+    # Something is always reported about the place: a failure, a warning,
+    # or (for a long name holding a well-formed reference) the unverified
+    # field check that lists every variable.
+    summary = json.loads(json_output)["summary"]
+    assert summary["failed"] + summary["warned"] + summary["unverified"] > 0

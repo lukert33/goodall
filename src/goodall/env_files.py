@@ -32,21 +32,28 @@ The line format, deliberately narrow so that every program that reads a
   when it does not.
 - A name given twice is a problem, because which value a program gets
   would depend on which reader read the file.
+- An empty value (`NAME=` or `NAME=""`) is a problem. A base64 token ends
+  in = padding, so a token pasted on a line of its own reads as `NAME=`;
+  refusing empty values keeps such a line from passing as a variable.
 
 Reading never raises for anything in the file: it returns the entries it
 could read and a problem for every line it could not. A file that could not
 be read at all comes back as `EnvFileNotRead`.
 
 Trap, and the most important rule here: a problem never repeats anything
-written on the line, only its line number and, once the name is known to be
-well formed, the variable's name. A malformed line is exactly where a key
+written on the line, only its line number and, when goodall.quoting says it
+may be shown, the variable's name. A malformed line is exactly where a key
 pasted by mistake ends up, and goodall's output can reach a terminal
-history or a transcript an agent reads (ADR 0006).
+history or a transcript an agent reads (ADR 0006). A well-formed name is
+not enough: a base64 token is a well-formed name. Messages that name a
+variable go through `variable_as_shown`.
 """
 
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from goodall.quoting import can_show_name
 
 # A variable name: letters, digits and underscores, not starting with a digit.
 # This is what a POSIX shell accepts, so every program that reads the
@@ -55,6 +62,9 @@ VARIABLE_NAME_PATTERN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 # Each quote character a value may be wrapped in.
 QUOTE_CHARACTERS = ['"', "'"]
+
+# How a message refers to a variable whose name it does not show.
+UNSHOWN_VARIABLE = "the variable whose name goodall does not show"
 
 
 @dataclass(frozen=True)
@@ -75,8 +85,8 @@ class EnvLineProblem:
     """A line the reader could not use.
 
     `problem` says what is wrong, as the end of a sentence starting "Line N
-    ...". It never contains anything written on the line except a
-    well-formed variable name.
+    ...". It never contains anything written on the line except a variable
+    name that `variable_as_shown` lets through.
     """
 
     line_number: int
@@ -154,7 +164,7 @@ def read_env_text(text: str) -> EnvFileReading:
             problems.append(
                 EnvLineProblem(
                     line_number=line_number,
-                    problem=f"sets {entry.name} again, which line {first_line_number} already sets",
+                    problem=f"sets {variable_as_shown(entry.name)} again, which line {first_line_number} already sets",
                 )
             )
             continue
@@ -189,12 +199,27 @@ def read_line(stripped_line: str, line_number: int) -> EnvEntry | EnvLineProblem
         return EnvLineProblem(
             line_number=line_number,
             problem=(
-                f"sets {name} to a value whose quotes are not right: quote the whole value with one pair of "
-                "matching quotes, or none, and put nothing after the closing quote. A value with a space in it "
-                "needs quotes"
+                f"sets {variable_as_shown(name)} to a value whose quotes are not right: quote the whole value "
+                "with one pair of matching quotes, or none, and put nothing after the closing quote. A value with "
+                "a space in it needs quotes"
+            ),
+        )
+    if value == "":
+        return EnvLineProblem(
+            line_number=line_number,
+            problem=(
+                "has nothing after the =. A key or token pasted on a line of its own can look like this, so "
+                "goodall does not read it as a variable"
             ),
         )
     return EnvEntry(name=name, value=value, line_number=line_number)
+
+
+def variable_as_shown(name: str) -> str:
+    """How a message refers to the variable `name`: by its name, or, when the name could be a secret, without it."""
+    if can_show_name(name):
+        return name
+    return UNSHOWN_VARIABLE
 
 
 def unquote_value(written_value: str) -> str | None:

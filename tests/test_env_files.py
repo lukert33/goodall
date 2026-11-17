@@ -35,11 +35,15 @@ def test_comments_blank_lines_and_surrounding_whitespace_are_accepted() -> None:
     ]
 
 
-def test_an_empty_value_is_read_as_empty() -> None:
-    reading = read_env_text('EMPTY=\nQUOTED_EMPTY=""\n')
+def test_an_empty_value_is_a_problem_because_a_pasted_base64_token_reads_that_way() -> None:
+    # A base64 token ending in one = of padding parses as NAME=, so an empty
+    # value is far more likely a pasted secret than a variable meant to be empty.
+    reading = read_env_text('EMPTY=\nQUOTED_EMPTY=""\nSYNTHETICsyntheticSYNTHETIC0123456789x9=\n')
 
-    assert reading.problems == []
-    assert [entry.value for entry in reading.entries] == ["", ""]
+    assert reading.entries == []
+    assert [problem.line_number for problem in reading.problems] == [1, 2, 3]
+    for problem in reading.problems:
+        assert "SYNTHETICsynthetic" not in problem.problem
 
 
 def problem_lines(text: str) -> list[int]:
@@ -85,6 +89,15 @@ def test_a_name_given_twice_is_a_problem_naming_both_lines() -> None:
     assert "line 1" in reading.problems[0].problem
     # The first one is kept, so a later check does not report the name as missing.
     assert [entry.name for entry in reading.entries] == ["NAME", "OTHER"]
+
+
+def test_a_name_given_twice_is_not_shown_when_it_looks_like_a_token() -> None:
+    token_name = "SYNTHETICsyntheticSYNTHETIC0123456789x9"
+    reading = read_env_text(f"{token_name}==\n{token_name}==\n")
+
+    assert [problem.line_number for problem in reading.problems] == [2]
+    assert "SYNTHETICsynthetic" not in reading.problems[0].problem
+    assert "line 1" in reading.problems[0].problem
 
 
 def test_no_problem_ever_repeats_what_was_written_on_the_line() -> None:

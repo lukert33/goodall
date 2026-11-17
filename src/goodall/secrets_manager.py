@@ -100,6 +100,10 @@ ONE_PASSWORD_REFERENCE_PATTERN = re.compile(
     rf"(?:/{ONE_PASSWORD_REFERENCE_PART})?/{ONE_PASSWORD_REFERENCE_PART}"
 )
 
+# The scheme that starts each secrets manager's references, in lower case.
+# 1Password's op:// is the one kind supported today (ADR 0006).
+SECRET_REFERENCE_SCHEMES = ["op://"]
+
 # Each secrets manager's name as a person writes it, for messages; local
 # settings name it in lower case.
 DISPLAY_NAMES = {
@@ -271,12 +275,17 @@ def looks_like_a_secret_reference(value: str) -> bool:
     """True when `value` looks like it is meant as a secret reference for any secrets manager goodall knows.
 
     Used to catch a reference in the shared env file, where it would be
-    handed to a program as plain text instead of being resolved, and would
-    reveal vault and item names in a repository that may be published.
-    Deliberately loose: anything starting with a manager's scheme counts,
-    well formed or not.
+    handed to a program as plain text instead of being resolved, and in the
+    eval config; either would reveal vault and item names in a repository
+    that may be published. Deliberately loose: a manager's scheme anywhere
+    in the value counts, in any case, well formed or not. This is the one
+    definition; add a manager's scheme to SECRET_REFERENCE_SCHEMES.
     """
-    return value.lower().startswith("op://")
+    lower_case_value = value.lower()
+    for scheme in SECRET_REFERENCE_SCHEMES:
+        if scheme in lower_case_value:
+            return True
+    return False
 
 
 # 1Password's two value-free listings. `op vault list` lists the vaults this
