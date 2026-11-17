@@ -338,7 +338,7 @@ def test_stop_with_no_work_block_active_says_so_and_exits_1(eval_account: EvalAc
     assert eval_account.work_block_files() == []
 
 
-def test_stop_whose_record_cannot_be_written_keeps_it_says_so_and_the_next_command_writes_it(
+def test_stop_whose_record_cannot_be_written_exits_0_warns_and_the_next_command_writes_it(
     eval_account: EvalAccount,
 ) -> None:
     run_goodall(eval_account, ["start"])
@@ -348,10 +348,14 @@ def test_stop_whose_record_cannot_be_written_keeps_it_says_so_and_the_next_comma
 
     stop = run_goodall(eval_account, ["stop"])
 
-    assert stop.exit_code == exit_codes.ERROR
+    # The work block is ended and nothing is lost, so what was asked is done.
+    assert stop.exit_code == exit_codes.SUCCESS, stop.standard_error
     assert stop.standard_output == ""
-    assert "Your work block on research has ended, so goodall is no longer recording" in stop.everything_printed
-    assert "Nothing is lost" in stop.everything_printed
+    assert stop.standard_error.startswith("WARN  Your work block on research is stopped.")
+    assert "FAIL" not in stop.everything_printed
+    assert "has not reached the record repo yet" in stop.everything_printed
+    assert "Nothing is lost and nothing needs to be run again" in stop.everything_printed
+    assert "the next time you run goodall start, goodall stop or goodall status" in stop.everything_printed
     assert "git config --global user.name" in stop.everything_printed
     assert eval_account.work_block_files() == []
     [waiting_file] = (eval_account.log_directory / "work-blocks" / "unrecorded").glob("*.json")
@@ -429,6 +433,53 @@ def test_a_work_block_idle_for_less_than_the_idle_limit_is_still_active(eval_acc
 
     assert status.exit_code == exit_codes.SUCCESS
     assert eval_account.work_block_files() == []
+
+
+def test_stop_the_morning_after_exits_0_with_a_warning_when_the_closed_blocks_record_cannot_be_written(
+    eval_account: EvalAccount,
+) -> None:
+    run_goodall(eval_account, ["start"])
+    git(eval_account.record_repo, "config", "--unset", "user.name")
+    eval_account.clock.now = datetime(2026, 11, 17, 8, 30, tzinfo=UTC)
+
+    stop = run_goodall(eval_account, ["stop"])
+
+    assert stop.exit_code == exit_codes.SUCCESS, stop.standard_error
+    assert "was left running" in stop.everything_printed
+    assert stop.standard_error.startswith("WARN  ")
+    assert "FAIL" not in stop.everything_printed
+    assert "nothing needs to be run again" in stop.everything_printed
+    assert len(list((eval_account.log_directory / "work-blocks" / "unrecorded").glob("*.json"))) == 1
+
+
+def test_start_exits_0_with_a_warning_when_a_closed_blocks_record_cannot_be_written(
+    eval_account: EvalAccount,
+) -> None:
+    run_goodall(eval_account, ["start"])
+    git(eval_account.record_repo, "config", "--unset", "user.name")
+    eval_account.clock.now = datetime(2026, 11, 17, 9, 0, tzinfo=UTC)
+
+    start = run_goodall(eval_account, ["start"])
+
+    assert start.exit_code == exit_codes.SUCCESS, start.standard_error
+    assert "Started a work block on research" in start.everything_printed
+    assert start.standard_error.startswith("WARN  ")
+    assert "FAIL" not in start.everything_printed
+
+
+def test_status_exits_as_it_would_without_a_waiting_record_when_one_cannot_be_written(
+    eval_account: EvalAccount,
+) -> None:
+    run_goodall(eval_account, ["start"])
+    git(eval_account.record_repo, "config", "--unset", "user.name")
+    eval_account.clock.now = datetime(2026, 11, 17, 9, 0, tzinfo=UTC)
+
+    status = run_goodall(eval_account, ["status"])
+
+    # Exit 1 here is the usual "no work block is active"; the waiting record is only a warning.
+    assert status.exit_code == exit_codes.ERROR
+    assert "WARN  " in status.standard_error
+    assert "FAIL" not in status.standard_error
 
 
 def test_stop_the_morning_after_closes_the_forgotten_work_block_at_its_last_heartbeat_and_exits_0(
