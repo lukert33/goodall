@@ -791,7 +791,7 @@ def test_start_sweeps_the_default_claude_folder_even_when_no_hook_ever_ran_there
     }
 
 
-def test_a_hook_remembers_the_claude_projects_folder_from_its_own_environment_never_from_its_input(
+def test_a_hook_remembers_the_claude_config_folder_from_its_own_environment_never_from_its_input(
     tmp_path: Path,
 ) -> None:
     eval_account = make_eval_account(tmp_path)
@@ -800,10 +800,203 @@ def test_a_hook_remembers_the_claude_projects_folder_from_its_own_environment_ne
     elsewhere_project_folder.mkdir(parents=True)
     elsewhere_transcript = elsewhere_project_folder / f"{CLAUDE_SESSION}.jsonl"
     elsewhere_transcript.write_bytes(FIRST_LINES)
+    (tmp_path / "elsewhere" / "history.jsonl").write_bytes(b'{"display":"elsewhere"}\n')
 
     run_hook(eval_account, "Stop", hook_input(eval_account, "Stop", transcript_path=str(elsewhere_transcript)))
 
-    remembered_file = eval_account.log_directory / "transcript-sync" / "claude-projects-folders.json"
-    remembered = json.loads(remembered_file.read_text())["claude_projects_folders"]
-    assert remembered == [str((eval_account.claude_config_directory / "projects").resolve())]
+    remembered_file = eval_account.log_directory / "transcript-sync" / "claude-config-folders.json"
+    remembered = json.loads(remembered_file.read_text())["claude_config_folders"]
+    assert remembered == [str(eval_account.claude_config_directory.resolve())]
     assert stat.S_IMODE(remembered_file.stat().st_mode) == 0o600
+    # Nothing from the folder the input named was copied, its prompt history included.
+    assert not (eval_account.log_directory / "claude-config").exists()
+
+
+# ---------------------------------------------------------------------------
+# Beyond the projects folder: file-edit backups, prompt history and project memory
+# ---------------------------------------------------------------------------
+
+
+def mirror_name(folder: Path) -> str:
+    """The name of a Claude config folder's copy in `claude-config/`: its real path, every other character a dash.
+
+    The same rule Claude Code uses to name a project folder after its path.
+    """
+    name = ""
+    for character in str(folder.resolve()):
+        if character.isascii() and character.isalnum():
+            name += character
+        else:
+            name += "-"
+    return name
+
+
+def write_config_folder_files(eval_account: EvalAccount) -> dict[str, bytes]:
+    """Fill the Claude config folder with what goodall copies, and with what it must never copy.
+
+    Returns the files in the allow-list, by their path inside the config
+    folder, as the copy should hold them. The names copy the shapes seen in
+    a real Claude config folder (listed by name only).
+    """
+    config_folder = eval_account.claude_config_directory
+    copied = {
+        "history.jsonl": b'{"display":"Fix the tests","project":"/Users/ada/work"}\n',
+        f"file-history/{CLAUDE_SESSION}/3f2a9c1e@v1": b"def old():\n    pass\n",
+        f"file-history/{CLAUDE_SESSION}/3f2a9c1e@v2": b"def new():\n    return 1\n",
+        f"file-history/{CLAUDE_SESSION}/nested/7b1d@v1": b"\x00binary\xff",
+        f"file-history/{OTHER_SESSION}/aa11@v1": b"another session's backup\n",
+    }
+    never_copied = {
+        "settings.json": b'{"hooks":{}}',
+        ".credentials.json": b'{"token":"not-a-real-token"}',
+        ".claude.json": b"{}",
+        f"session-env/{CLAUDE_SESSION}/env": b"SECRET=1\n",
+        "shell-snapshots/snapshot-zsh-1-abc.sh": b"export PATH=/bin\n",
+        "telemetry/1p_failed_events.json": b"{}",
+        "sessions/123.json": b"{}",
+        "plugins/installed.json": b"{}",
+        "file-history/not-a-session-id/x@v1": b"not a Claude session\n",
+        "history.jsonl.bak": b"backup\n",
+    }
+    for relative_path, contents in {**copied, **never_copied}.items():
+        (config_folder / relative_path).parent.mkdir(parents=True, exist_ok=True)
+        (config_folder / relative_path).write_bytes(contents)
+    return copied
+
+
+def write_project_memory(eval_account: EvalAccount) -> dict[str, bytes]:
+    """Write a project's memory folder and MEMORY.md, and return them as the copy should hold them."""
+    memory_files = {
+        "MEMORY.md": b"- [Testing](memory/testing.md)\n",
+        "memory/testing.md": b"Run uv run pytest.\n",
+        "memory/topics/deep.md": b"Caf\xc3\xa9\n",
+    }
+    expected = {}
+    for relative_path, contents in memory_files.items():
+        (eval_account.project_folder / relative_path).parent.mkdir(parents=True, exist_ok=True)
+        (eval_account.project_folder / relative_path).write_bytes(contents)
+        expected[f"{PROJECT_FOLDER_NAME}/{relative_path}"] = contents
+    return expected
+
+
+def test_a_hook_copies_its_sessions_file_history_the_prompt_history_and_its_projects_memory(tmp_path: Path) -> None:
+    eval_account = make_eval_account(tmp_path)
+    eval_account.transcript.write_bytes(FIRST_LINES)
+    config_files = write_config_folder_files(eval_account)
+    memory_files = write_project_memory(eval_account)
+
+    completed = run_hook(eval_account, "PostToolUse", hook_input(eval_account, "PostToolUse", tool_name="Edit"))
+
+    assert (completed.returncode, completed.stdout, completed.stderr) == (0, "", "")
+    assert files_and_bytes(eval_account.copied_transcripts) == {
+        f"{PROJECT_FOLDER_NAME}/{CLAUDE_SESSION}.jsonl": FIRST_LINES,
+        **memory_files,
+    }
+    config_copies = eval_account.log_directory / "claude-config"
+    assert [child.name for child in config_copies.iterdir()] == [mirror_name(eval_account.claude_config_directory)]
+    # Only this Claude session's backups: the hook copies its own session.
+    expected_config_copies = {}
+    for relative_path, contents in config_files.items():
+        if OTHER_SESSION not in relative_path:
+            expected_config_copies[relative_path] = contents
+    mirror = config_copies / mirror_name(eval_account.claude_config_directory)
+    assert files_and_bytes(mirror) == expected_config_copies
+    for copied_path in config_copies.rglob("*"):
+        expected_mode = 0o700 if copied_path.is_dir() else 0o600
+        assert stat.S_IMODE(copied_path.stat().st_mode) == expected_mode, copied_path
+
+
+def test_status_copies_only_the_allow_list_from_the_claude_config_folder_for_every_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    eval_account = make_eval_account(tmp_path)
+    eval_account.transcript.write_bytes(FIRST_LINES)
+    config_files = write_config_folder_files(eval_account)
+    memory_files = write_project_memory(eval_account)
+
+    run_goodall(eval_account, monkeypatch, ["status"])
+
+    assert files_and_bytes(eval_account.copied_transcripts) == {
+        f"{PROJECT_FOLDER_NAME}/{CLAUDE_SESSION}.jsonl": FIRST_LINES,
+        **memory_files,
+    }
+    mirror = eval_account.log_directory / "claude-config" / mirror_name(eval_account.claude_config_directory)
+    assert files_and_bytes(mirror) == config_files
+
+
+def test_prompt_history_that_shrank_is_copied_and_the_longer_copy_kept_in_superseded_claude_config(
+    tmp_path: Path,
+) -> None:
+    eval_account = make_eval_account(tmp_path)
+    eval_account.transcript.write_bytes(FIRST_LINES)
+    history = eval_account.claude_config_directory / "history.jsonl"
+    history.write_bytes(b'{"display":"one"}\n{"display":"two"}\n')
+    run_hook(eval_account, "Stop", hook_input(eval_account, "Stop"))
+    history.write_bytes(b'{"display":"two"}\n')
+
+    completed = run_hook(eval_account, "Stop", hook_input(eval_account, "Stop"))
+
+    assert completed.returncode == 0
+    name = mirror_name(eval_account.claude_config_directory)
+    assert (eval_account.log_directory / "claude-config" / name / "history.jsonl").read_bytes() == (
+        b'{"display":"two"}\n'
+    )
+    kept = {}
+    for moment_folder in (eval_account.log_directory / "superseded-claude-config").iterdir():
+        kept.update(files_and_bytes(moment_folder))
+    assert kept == {f"{name}/history.jsonl": b'{"display":"one"}\n{"display":"two"}\n'}
+    assert not (eval_account.log_directory / "superseded-transcripts").exists()
+
+
+def test_links_and_special_files_in_file_history_are_skipped_and_noted(tmp_path: Path) -> None:
+    eval_account = make_eval_account(tmp_path)
+    eval_account.transcript.write_bytes(FIRST_LINES)
+    backups = eval_account.claude_config_directory / "file-history" / CLAUDE_SESSION
+    backups.mkdir(parents=True)
+    (backups / "aa@v1").write_bytes(b"kept\n")
+    (tmp_path / "private.txt").write_bytes(b"private\n")
+    (backups / "bb@v1").symlink_to(tmp_path / "private.txt")
+    os.mkfifo(backups / "cc@v1")
+
+    completed = run_hook(eval_account, "Stop", hook_input(eval_account, "Stop"))
+
+    assert (completed.returncode, completed.stdout, completed.stderr) == (0, "", "")
+    mirror = eval_account.log_directory / "claude-config" / mirror_name(eval_account.claude_config_directory)
+    assert files_and_bytes(mirror) == {f"file-history/{CLAUDE_SESSION}/aa@v1": b"kept\n"}
+    failed_copies = eval_account.log_directory / "transcript-sync" / "failed-copies.jsonl"
+    problem = json.loads(failed_copies.read_text())["problem"]
+    assert "bb@v1: a symbolic link" in problem
+    assert "cc@v1: a special file" in problem
+
+
+def test_a_memory_file_rewritten_in_place_keeps_its_earlier_copy_in_superseded_transcripts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    eval_account = make_eval_account(tmp_path)
+    eval_account.transcript.write_bytes(FIRST_LINES)
+    write_project_memory(eval_account)
+    run_goodall(eval_account, monkeypatch, ["status"])
+    (eval_account.project_folder / "memory" / "testing.md").write_bytes(b"Run make test.\n")
+
+    run_goodall(eval_account, monkeypatch, ["status"])
+
+    memory_name = f"{PROJECT_FOLDER_NAME}/memory/testing.md"
+    assert files_and_bytes(eval_account.copied_transcripts)[memory_name] == b"Run make test.\n"
+    assert superseded_copies(eval_account) == {memory_name: b"Run uv run pytest.\n"}
+
+
+def test_nothing_in_the_log_directory_beside_transcripts_looks_like_a_project_folder_to_an_importer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Scout's importer, pointed at a folder, reads the `*.jsonl` files directly
+    # inside it, or else directly inside each folder within it. The copied
+    # prompt history must not sit where it would be read as a Claude session.
+    eval_account = make_eval_account(tmp_path)
+    eval_account.transcript.write_bytes(FIRST_LINES)
+    write_config_folder_files(eval_account)
+
+    run_goodall(eval_account, monkeypatch, ["status"])
+
+    config_copies = eval_account.log_directory / "claude-config"
+    assert config_copies.is_dir()
+    assert list(config_copies.glob("*.jsonl")) == []

@@ -80,6 +80,7 @@ Decisions a reader would otherwise reverse-engineer (the layout is ADR 0015):
 import enum
 import errno
 import fcntl
+import hashlib
 import json
 import os
 import secrets
@@ -100,6 +101,38 @@ TRANSCRIPTS_FOLDER_NAME = "transcripts"
 # source no longer starts with it.
 SUPERSEDED_FOLDER_NAME = "superseded-transcripts"
 
+# The folder in the log directory that mirrors, for each Claude config
+# folder, the places in the allow-list below, and its own place for earlier
+# copies. Each Claude config folder gets a folder of its own inside, named
+# after its real path the way Claude Code names a project folder
+# (`/Users/ada/.claude` becomes `-Users-ada--claude`), because the prompt
+# history of two config folders would otherwise land on the same path.
+CLAUDE_CONFIG_COPIES_FOLDER_NAME = "claude-config"
+SUPERSEDED_CLAUDE_CONFIG_FOLDER_NAME = "superseded-claude-config"
+
+# The allow-list: the only places goodall copies from a Claude config folder
+# outside its `projects` folder, as paths inside it. A folder is copied
+# whole; SESSION_ID_PLACEHOLDER stands for one Claude session's id.
+#
+# - `history.jsonl`: the prompts typed into Claude Code, across every Claude
+#   session of the account, one line per prompt.
+# - `file-history/<session id>/`: the copies Claude Code keeps of each file
+#   a Claude session edits, before and after, so its edits can be undone.
+#
+# Nothing else in the folder is ever read. Settings, credentials
+# (`.credentials.json`), `session-env/`, `shell-snapshots/`, `telemetry/`,
+# `sessions/` and the rest hold secrets or say nothing about the work, and
+# goodall stays out of them. Add to this list only by a decision.
+SESSION_ID_PLACEHOLDER = "<session id>"
+CLAUDE_CONFIG_FOLDER_ALLOW_LIST = ["history.jsonl", f"file-history/{SESSION_ID_PLACEHOLDER}"]
+
+# What Claude Code keeps for a whole project, beside its Claude sessions in
+# the project folder: its memory (notes Claude Code reads into every Claude
+# session in that project), copied whole into the same place in
+# `transcripts/`. Scout's importer reads only the `*.jsonl` files directly in
+# a project folder, so neither disturbs it.
+PROJECT_MEMORY_PATHS = ["MEMORY.md", "memory"]
+
 # The folder in the log directory for goodall's own notes about copying:
 # `failed-copies.jsonl`, one line per copy a hook could not make, and
 # `reported/`, where those lines go once `goodall status` has said so.
@@ -111,12 +144,13 @@ REPORTED_FOLDER_NAME = "reported"
 # copies of one Claude session never run at once.
 LOCKS_FOLDER_NAME = "locks"
 
-# The Claude projects folders hooks have copied from, as JSON:
-# {"claude_projects_folders": ["/Users/ada/.claude/projects", ...]}, oldest
-# first. Its own lock, in `locks/`, keeps two hooks from losing each other's
-# folder; the name cannot clash with a Claude session's, which is a UUID.
-REMEMBERED_FOLDERS_FILE_NAME = "claude-projects-folders.json"
-REMEMBERED_FOLDERS_LOCK_NAME = "claude-projects-folders"
+# The Claude config folders hooks have copied from, as JSON:
+# {"claude_config_folders": ["/Users/ada/.claude", ...]}, oldest first. Its
+# own lock, in `locks/`, keeps two hooks from losing each other's folder;
+# the name cannot clash with a Claude session's, which is a UUID, nor with
+# the other locks, whose names end in a hash.
+REMEMBERED_FOLDERS_FILE_NAME = "claude-config-folders.json"
+REMEMBERED_FOLDERS_LOCK_NAME = "claude-config-folders"
 
 # The most folders remembered. An eval account has one or two; the limit
 # only keeps a misbehaving setup from growing the file without bound. When
@@ -156,26 +190,36 @@ class FileOutcome(enum.Enum):
 
 
 def claude_projects_folder() -> Path:
-    """Where Claude Code keeps its transcripts: `projects` in CLAUDE_CONFIG_DIR, or in `~/.claude`.
+    """Where Claude Code keeps its transcripts: `projects` in its config folder (claude_config_folder)."""
+    return claude_config_folder() / "projects"
+
+
+def claude_config_folder() -> Path:
+    """Claude Code's own folder: the one CLAUDE_CONFIG_DIR names, or `~/.claude`.
 
     Read from the environment each time, so a test can change it. An empty
     value counts as unset, as goodall treats its own GOODALL_CONFIG_DIR.
     """
     claude_config_directory = os.environ.get("CLAUDE_CONFIG_DIR", "")
     if claude_config_directory == "":
-        return default_claude_projects_folder()
-    return Path(claude_config_directory).expanduser() / "projects"
+        return default_claude_config_folder()
+    return Path(claude_config_directory).expanduser()
 
 
-def default_claude_projects_folder() -> Path:
-    """Where Claude Code keeps its transcripts when CLAUDE_CONFIG_DIR is not set: `~/.claude/projects`."""
-    return Path.home() / ".claude" / "projects"
+def default_claude_config_folder() -> Path:
+    """Claude Code's own folder when CLAUDE_CONFIG_DIR is not set: `~/.claude`."""
+    return Path.home() / ".claude"
 
 
 def copy_from_hook(
     projects_folder: Path, log_directory: Path, claude_session: str, transcript_path: Path, now: datetime
 ) -> None:
-    """Copy the Claude session a hook named, from `transcript_path`, into the log directory.
+    """Copy what a hook's Claude session left, from `transcript_path` and beside it, into the log directory.
+
+    That is the Claude session itself (copy_claude_session), its project's
+    memory (copy_project_memory), and the allow-list's places in the Claude
+    config folder for this Claude session: its file-edit backups and the
+    prompt history (copy_from_claude_config_folder).
 
     `transcript_path` comes from the hook's input, so it is checked before
     anything is read: it must be `<projects folder>/<project folder>/<claude
@@ -186,15 +230,19 @@ def copy_from_hook(
     error; there is simply nothing to copy.
 
     `projects_folder` must come from the hook's own environment
-    (claude_projects_folder), never from its input: it is remembered for
-    the sweep, before the transcript path is even checked, and the sweep
-    copies whatever it finds there.
+    (claude_projects_folder), never from its input. It is `projects` inside
+    the Claude config folder, so its parent is that config folder, which is
+    remembered for the sweep before the transcript path is even checked:
+    the sweep copies whatever the allow-list names there. Raises FilesSkipped
+    after copying everything else when something had to be skipped.
     """
+    config_folder = projects_folder.parent
     try:
+        real_config_folder = config_folder.resolve(strict=True)
         real_projects_folder = projects_folder.resolve(strict=True)
     except FileNotFoundError:
         return
-    remember_claude_projects_folder(log_directory, real_projects_folder)
+    remember_claude_config_folder(log_directory, real_config_folder)
     if not transcript_path.is_absolute() or transcript_path.name != f"{claude_session}.jsonl":
         raise TranscriptPathRefused("the transcript path is not a Claude session's transcript")
     try:
@@ -206,13 +254,16 @@ def copy_from_hook(
     relative_parts = real_transcript_path.relative_to(real_projects_folder).parts
     if len(relative_parts) != 2 or relative_parts[1] != transcript_path.name:
         raise TranscriptPathRefused("the transcript path is not directly inside a project folder")
-    session_copy = copy_claude_session(real_projects_folder, log_directory, relative_parts[0], claude_session, now)
-    if session_copy.skipped:
-        raise FilesSkipped(describe_skipped(session_copy.skipped))
+    project_folder_name = relative_parts[0]
+    copying = copy_claude_session(real_projects_folder, log_directory, project_folder_name, claude_session, now)
+    copying.add(copy_project_memory(real_projects_folder, log_directory, project_folder_name, now))
+    copying.add(copy_from_claude_config_folder(real_config_folder, log_directory, [claude_session], now))
+    if copying.skipped:
+        raise FilesSkipped(describe_skipped(copying.skipped))
 
 
-def remember_claude_projects_folder(log_directory: Path, projects_folder: Path) -> None:
-    """Add `projects_folder` to the folders the sweep covers, kept in `transcript-sync/` in the log directory.
+def remember_claude_config_folder(log_directory: Path, config_folder: Path) -> None:
+    """Add `config_folder` to the Claude config folders the sweep covers, kept in `transcript-sync/`.
 
     A hook calls this each time it copies, so the file is first read without
     the lock, and when the folder is already there, as it nearly always is,
@@ -222,11 +273,11 @@ def remember_claude_projects_folder(log_directory: Path, projects_folder: Path) 
     REMEMBERED_FOLDERS_LIMIT, and the whole file is replaced by renaming a
     temporary file over it, so a reader never sees half of it.
     """
-    folder_text = str(projects_folder)
-    if folder_text in read_remembered_claude_projects_folders(log_directory):
+    folder_text = str(config_folder)
+    if folder_text in read_remembered_claude_config_folders(log_directory):
         return
-    with held_lock(log_directory, REMEMBERED_FOLDERS_LOCK_NAME, "remembering a Claude projects folder"):
-        remembered = read_remembered_claude_projects_folders(log_directory)
+    with held_lock(log_directory, REMEMBERED_FOLDERS_LOCK_NAME, "remembering a Claude config folder"):
+        remembered = read_remembered_claude_config_folders(log_directory)
         if folder_text in remembered:
             return
         remembered.append(folder_text)
@@ -237,15 +288,15 @@ def remember_claude_projects_folder(log_directory: Path, projects_folder: Path) 
         try:
             descriptor = os.open(temporary_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, FILE_PERMISSIONS)
             with os.fdopen(descriptor, "w", encoding="utf-8") as temporary:
-                json.dump({"claude_projects_folders": remembered}, temporary, indent=2)
+                json.dump({"claude_config_folders": remembered}, temporary, indent=2)
                 temporary.write("\n")
             os.replace(temporary_file, remembered_file)
         finally:
             temporary_file.unlink(missing_ok=True)
 
 
-def read_remembered_claude_projects_folders(log_directory: Path) -> list[str]:
-    """The Claude projects folders hooks have remembered, oldest first; none when the file is missing.
+def read_remembered_claude_config_folders(log_directory: Path) -> list[str]:
+    """The Claude config folders hooks have remembered, oldest first; none when the file is missing.
 
     A file that is not the expected JSON (it was edited by hand, say) counts
     as empty, so the next hook replaces it rather than every hook failing.
@@ -263,7 +314,7 @@ def read_remembered_claude_projects_folders(log_directory: Path) -> list[str]:
         return []
     if not isinstance(remembered, dict):
         return []
-    folders = remembered.get("claude_projects_folders")
+    folders = remembered.get("claude_config_folders")
     if not isinstance(folders, list):
         return []
     folder_texts = []
@@ -273,24 +324,22 @@ def read_remembered_claude_projects_folders(log_directory: Path) -> list[str]:
     return folder_texts
 
 
-def claude_projects_folders_to_sweep(own_projects_folder: Path, log_directory: Path) -> tuple[list[Path], list[str]]:
-    """Every Claude projects folder the sweep covers, each once, by its real path, with problems found on the way.
+def claude_config_folders_to_sweep(own_config_folder: Path, log_directory: Path) -> tuple[list[Path], list[str]]:
+    """Every Claude config folder the sweep covers, each once, by its real path, with problems found on the way.
 
     The folders are this process's own (from its environment), the default
-    `~/.claude/projects`, and every folder hooks have remembered. Two names
-    for one folder (through a symbolic link, say) count once, so nothing is
-    copied twice. A folder that does not exist is passed over without a
-    word: most accounts never have more than one.
+    `~/.claude`, and every folder hooks have remembered. Two names for one
+    folder (through a symbolic link, say) count once, so nothing is copied
+    twice. A folder that does not exist is passed over without a word: most
+    accounts never have more than one.
     """
     problems = []
-    candidates = [own_projects_folder, default_claude_projects_folder()]
+    candidates = [own_config_folder, default_claude_config_folder()]
     try:
-        for folder_text in read_remembered_claude_projects_folders(log_directory):
+        for folder_text in read_remembered_claude_config_folders(log_directory):
             candidates.append(Path(folder_text))
     except OSError as error:
-        problems.append(
-            f"The list of Claude projects folders hooks used, in the log directory: {describe_error(error)}."
-        )
+        problems.append(f"The list of Claude config folders hooks used, in the log directory: {describe_error(error)}.")
     real_folders: list[Path] = []
     for candidate in candidates:
         try:
@@ -298,7 +347,7 @@ def claude_projects_folders_to_sweep(own_projects_folder: Path, log_directory: P
         except FileNotFoundError:
             continue
         except OSError as error:
-            problems.append(f"The Claude projects folder {candidate}: {describe_error(error)}.")
+            problems.append(f"The Claude config folder {candidate}: {describe_error(error)}.")
             continue
         if real_folder not in real_folders:
             real_folders.append(real_folder)
@@ -310,7 +359,7 @@ class TranscriptPathRefused(ValueError):
 
 
 class FilesSkipped(Exception):
-    """Some of a Claude session's files were not copied, though the rest were; the message says which and why."""
+    """Some files were not copied, though the rest were; the message says which and why."""
 
 
 # How many skipped files a note names before it only counts the rest, so a
@@ -321,7 +370,7 @@ SKIPPED_NAMED_LIMIT = 5
 def describe_skipped(skipped: list[str]) -> str:
     """One sentence about what was not copied: the first few notes in full, then how many more."""
     named = skipped[:SKIPPED_NAMED_LIMIT]
-    sentence = f"{len(skipped)} thing(s) in the Claude session's folder were not copied: " + "; ".join(named)
+    sentence = f"{len(skipped)} thing(s) were not copied: " + "; ".join(named)
     if len(skipped) > len(named):
         sentence += f"; and {len(skipped) - len(named)} more"
     return sentence
@@ -398,37 +447,51 @@ def format_moment(moment: datetime) -> str:
 
 
 def sweep(own_projects_folder: Path, log_directory: Path, now: datetime) -> SweepResult:
-    """Copy every Claude session, in every Claude projects folder goodall knows, that changed since it was copied.
+    """Copy everything goodall copies, from every Claude config folder it knows, that changed since it was copied.
 
     `goodall start`, `stop` and `status` run this, because a Claude Code
     killed with SIGKILL, or a Mac that lost power, fires no hook, and the
     sweep is then the only thing that copies what the hooks missed.
+    `own_projects_folder` is this process's claude_projects_folder; its
+    parent is its Claude config folder.
 
-    It covers every Claude session in every Claude projects folder from
-    claude_projects_folders_to_sweep, not only those a work block's
-    heartbeats named: an eval account is used for the eval and nothing else
-    (ADR 0008), so copying too much is the safer mistake. A Claude session
-    is a `<session id>.jsonl` file, or a `<session id>/` folder, directly
-    inside a project folder; anything else is left alone. Unchanged files
-    cost two stats each and are not read.
+    It covers every Claude config folder from claude_config_folders_to_sweep:
+    every Claude session and every project's memory in its projects folder,
+    and the allow-list's places for every Claude session that has
+    file-edit backups. That is every Claude session, not only those a work
+    block's heartbeats named: an eval account is used for the eval and
+    nothing else (ADR 0008), so copying too much is the safer mistake.
+    Unchanged files cost two stats each and are not read.
 
     Never raises for anything on the disk: whatever cannot be read or
     written becomes one of `problems`, and the rest is still copied.
     """
     result = SweepResult()
-    projects_folders, result.problems = claude_projects_folders_to_sweep(own_projects_folder, log_directory)
-    for projects_folder in projects_folders:
-        sweep_projects_folder(projects_folder, log_directory, now, result)
+    config_folders, result.problems = claude_config_folders_to_sweep(own_projects_folder.parent, log_directory)
+    swept_projects_folders: list[Path] = []
+    for config_folder in config_folders:
+        try:
+            projects_folder = (config_folder / "projects").resolve(strict=True)
+        except FileNotFoundError:
+            projects_folder = None
+        except OSError as error:
+            result.problems.append(f"The Claude projects folder in {config_folder}: {describe_error(error)}.")
+            projects_folder = None
+        if projects_folder is not None and projects_folder not in swept_projects_folders:
+            swept_projects_folders.append(projects_folder)
+            sweep_projects_folder(projects_folder, log_directory, now, result)
+        sweep_claude_config_folder(config_folder, log_directory, now, result)
     try:
         take_failed_hook_copies(log_directory, now, result)
         remove_stale_temporary_files(log_directory / TRANSCRIPTS_FOLDER_NAME, now)
+        remove_stale_temporary_files(log_directory / CLAUDE_CONFIG_COPIES_FOLDER_NAME, now)
     except OSError as error:
         result.problems.append(f"Tidying {SYNC_FOLDER_NAME} in the log directory: {describe_error(error)}.")
     return result
 
 
 def sweep_projects_folder(projects_folder: Path, log_directory: Path, now: datetime, result: SweepResult) -> None:
-    """Copy every changed Claude session in one Claude projects folder, adding what happened to `result`."""
+    """Copy every changed Claude session and project memory in one Claude projects folder, adding to `result`."""
     try:
         project_folder_names = list_folders(projects_folder)
     except OSError as error:
@@ -440,20 +503,45 @@ def sweep_projects_folder(projects_folder: Path, log_directory: Path, now: datet
         except OSError as error:
             result.problems.append(f"The project folder {project_folder_name}: {describe_error(error)}.")
             continue
+        try:
+            memory_copying = copy_project_memory(projects_folder, log_directory, project_folder_name, now)
+        except OSError as error:
+            result.problems.append(f"The memory of project folder {project_folder_name}: {describe_error(error)}.")
+        else:
+            if memory_copying.skipped:
+                result.problems.append(
+                    f"The memory of project folder {project_folder_name}: {describe_skipped(memory_copying.skipped)}."
+                )
+            result.earlier_copies_kept += memory_copying.earlier_copies_kept()
         for claude_session in claude_sessions:
             try:
-                session_copy = copy_claude_session(
+                session_copying = copy_claude_session(
                     projects_folder, log_directory, project_folder_name, claude_session, now
                 )
             except OSError as error:
                 result.problems.append(f"Claude session {claude_session}: {describe_error(error)}.")
                 continue
-            if session_copy.skipped:
-                result.problems.append(f"Claude session {claude_session}: {describe_skipped(session_copy.skipped)}.")
-            outcomes = session_copy.outcomes
-            if FileOutcome.COPIED in outcomes or FileOutcome.COPIED_AND_EARLIER_COPY_KEPT in outcomes:
+            if session_copying.skipped:
+                result.problems.append(f"Claude session {claude_session}: {describe_skipped(session_copying.skipped)}.")
+            if session_copying.copied_anything():
                 result.claude_sessions_copied += 1
-            result.earlier_copies_kept += outcomes.count(FileOutcome.COPIED_AND_EARLIER_COPY_KEPT)
+            result.earlier_copies_kept += session_copying.earlier_copies_kept()
+
+
+def sweep_claude_config_folder(config_folder: Path, log_directory: Path, now: datetime, result: SweepResult) -> None:
+    """Copy the allow-list's places in one Claude config folder, for every Claude session with file-edit backups."""
+    try:
+        claude_sessions = []
+        for folder_name in list_folders(config_folder / "file-history"):
+            if records.CLAUDE_SESSION_ID_PATTERN.fullmatch(folder_name):
+                claude_sessions.append(folder_name)
+        copying = copy_from_claude_config_folder(config_folder, log_directory, claude_sessions, now)
+    except OSError as error:
+        result.problems.append(f"The Claude config folder {config_folder}: {describe_error(error)}.")
+        return
+    if copying.skipped:
+        result.problems.append(f"The Claude config folder {config_folder}: {describe_skipped(copying.skipped)}.")
+    result.earlier_copies_kept += copying.earlier_copies_kept()
 
 
 def describe_error(error: OSError) -> str:
@@ -512,78 +600,213 @@ def list_claude_sessions(project_folder: Path) -> list[str]:
 
 
 @dataclass
-class ClaudeSessionCopy:
-    """What copying one Claude session did: an outcome for each file copied or left alone, and what was skipped.
+class Copying:
+    """What copying some files did: an outcome for each file copied or left alone, and what was skipped.
 
-    `skipped` holds one short note per thing in the Claude session's folder
-    that was not copied, naming it by its path inside the Claude projects
-    folder and saying why: `<project>/<id>/tool-results/x.txt: Permission
-    denied`. Never anything read from inside a file.
+    `skipped` holds one short note per thing that was not copied, naming it
+    by its path inside the folder it was to be copied from and saying why:
+    `<project>/<id>/tool-results/x.txt: Permission denied`. Never anything
+    read from inside a file.
     """
 
     outcomes: list[FileOutcome] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
 
+    def add(self, other: "Copying") -> None:
+        """Take in what another copying did."""
+        self.outcomes.extend(other.outcomes)
+        self.skipped.extend(other.skipped)
+
+    def copied_anything(self) -> bool:
+        """True when at least one file was copied, rather than left alone as unchanged."""
+        return FileOutcome.COPIED in self.outcomes or FileOutcome.COPIED_AND_EARLIER_COPY_KEPT in self.outcomes
+
+    def earlier_copies_kept(self) -> int:
+        """How many earlier copies were kept aside because their source no longer started with them."""
+        return self.outcomes.count(FileOutcome.COPIED_AND_EARLIER_COPY_KEPT)
+
+
+@dataclass(frozen=True)
+class Mirror:
+    """A folder of Claude Code's and the folder in the log directory that copies it, path for path.
+
+    `copies_folder_names` is where the copies go, inside the log directory;
+    an earlier copy that is replaced goes to `<superseded_folder_name>/
+    <moment>/`, followed by the rest of those names and the same relative
+    path, so kept copies have the same layout as the copies themselves.
+    """
+
+    source_folder: Path
+    copies_folder_names: tuple[str, ...]
+    superseded_folder_name: str
+
+    def copies_folder(self, log_directory: Path) -> Path:
+        """The folder in the log directory that holds the copies."""
+        return log_directory.joinpath(*self.copies_folder_names)
+
+
+def transcripts_mirror(projects_folder: Path) -> Mirror:
+    """A Claude projects folder, copied into `transcripts/`."""
+    return Mirror(projects_folder, (TRANSCRIPTS_FOLDER_NAME,), SUPERSEDED_FOLDER_NAME)
+
+
+def claude_config_mirror(config_folder: Path) -> Mirror:
+    """The allow-list's places in a Claude config folder, copied into `claude-config/<name for that folder>/`."""
+    return Mirror(
+        config_folder,
+        (CLAUDE_CONFIG_COPIES_FOLDER_NAME, mirror_folder_name(config_folder)),
+        SUPERSEDED_CLAUDE_CONFIG_FOLDER_NAME,
+    )
+
+
+def mirror_folder_name(config_folder: Path) -> str:
+    """A folder name for a Claude config folder: its path with every character but ASCII letters and digits a dash.
+
+    This is how Claude Code names a project folder after the project's path,
+    so `/Users/ada/.claude` becomes `-Users-ada--claude`. Two paths that
+    differ only in such characters would share a name; for the one or two
+    Claude config folders an account has, that does not happen.
+    """
+    name = ""
+    for character in str(config_folder):
+        if character.isascii() and character.isalnum():
+            name += character
+        else:
+            name += "-"
+    return name
+
+
+def lock_name(kind: str, identity: str) -> str:
+    """A lock file name for something that is not a Claude session: `<kind>-<start of a hash of identity>`.
+
+    A hash, because a project folder's name or a folder's path can be longer
+    than a file name may be.
+    """
+    return f"{kind}-{hashlib.sha256(identity.encode('utf-8')).hexdigest()[:16]}"
+
 
 def copy_claude_session(
     projects_folder: Path, log_directory: Path, project_folder_name: str, claude_session: str, now: datetime
-) -> ClaudeSessionCopy:
+) -> Copying:
     """Copy one Claude session's files into the same places under the log directory's `transcripts` folder.
 
     The files are the transcript, `<session id>.jsonl`, and everything under
     the Claude session's folder, `<session id>/`, however deep: subagent
     transcripts, tool results, images, and whatever a later Claude Code
-    version keeps there. A file that is not there (yet, or any more) is
-    passed over without a note, and its earlier copy stays. Symbolic links,
-    special files (a named pipe, say), and files or folders that cannot be
-    read are skipped and noted in `skipped`, and everything else is still
-    copied. Anything else going wrong (the log directory cannot be written,
-    say) raises OSError.
+    version keeps there. Anything else going wrong than what copy_files
+    skips (the log directory cannot be written, say) raises OSError.
     """
-    relative_paths = [Path(project_folder_name) / f"{claude_session}.jsonl"]
-    session_files, skipped = list_files_inside(projects_folder, Path(project_folder_name) / claude_session)
-    relative_paths.extend(session_files)
-    session_copy = ClaudeSessionCopy(skipped=skipped)
+    relative_paths = []
+    skipped = []
+    for name in [f"{claude_session}.jsonl", claude_session]:
+        found_files, found_skipped = list_files_at(projects_folder, Path(project_folder_name) / name)
+        relative_paths.extend(found_files)
+        skipped.extend(found_skipped)
     with claude_session_lock(log_directory, claude_session):
-        for relative_path in relative_paths:
-            source = projects_folder / relative_path
-            try:
-                session_copy.outcomes.append(copy_file(projects_folder, log_directory, relative_path, now))
-            except FileNotFoundError as error:
-                if error.filename != str(source):
-                    raise
-            except OSError as error:
-                # Only a source goodall cannot read is skipped; a copy it
-                # cannot write is a problem with the log directory, raised.
-                if error.filename != str(source):
-                    raise
-                session_copy.skipped.append(f"{relative_path}: {describe_error(error)}")
-    return session_copy
+        copying = copy_files(transcripts_mirror(projects_folder), log_directory, relative_paths, now)
+    copying.skipped = skipped + copying.skipped
+    return copying
 
 
-def list_files_inside(projects_folder: Path, relative_folder: Path) -> tuple[list[Path], list[str]]:
-    """Every regular file under `relative_folder`, at any depth, by its path inside the Claude projects folder.
+def copy_project_memory(projects_folder: Path, log_directory: Path, project_folder_name: str, now: datetime) -> Copying:
+    """Copy one project's memory (PROJECT_MEMORY_PATHS) into the same places under `transcripts`.
+
+    The memory belongs to the project, not to one Claude session, so every
+    Claude session in the project may copy it at once; a lock for the
+    project keeps two copies from racing.
+    """
+    relative_paths = []
+    skipped = []
+    for name in PROJECT_MEMORY_PATHS:
+        found_files, found_skipped = list_files_at(projects_folder, Path(project_folder_name) / name)
+        relative_paths.extend(found_files)
+        skipped.extend(found_skipped)
+    with held_lock(log_directory, lock_name("project", project_folder_name), "another copy of a project's memory"):
+        copying = copy_files(transcripts_mirror(projects_folder), log_directory, relative_paths, now)
+    copying.skipped = skipped + copying.skipped
+    return copying
+
+
+def copy_from_claude_config_folder(
+    config_folder: Path, log_directory: Path, claude_sessions: list[str], now: datetime
+) -> Copying:
+    """Copy the allow-list's places in a Claude config folder, for `claude_sessions`, into `claude-config/`.
+
+    Every place in CLAUDE_CONFIG_FOLDER_ALLOW_LIST is copied: those naming
+    a Claude session once for each of `claude_sessions`, the others once.
+    This is the only function that reads from a Claude config folder outside
+    its projects folder, and it reads nothing the allow-list does not name.
+    The prompt history is shared by every Claude session, so one lock for
+    the config folder keeps two copies from racing.
+    """
+    relative_paths = []
+    skipped = []
+    for allowed in CLAUDE_CONFIG_FOLDER_ALLOW_LIST:
+        places = [allowed]
+        if SESSION_ID_PLACEHOLDER in allowed:
+            places = []
+            for claude_session in claude_sessions:
+                places.append(allowed.replace(SESSION_ID_PLACEHOLDER, claude_session))
+        for place in places:
+            found_files, found_skipped = list_files_at(config_folder, Path(place))
+            relative_paths.extend(found_files)
+            skipped.extend(found_skipped)
+    lock = lock_name("claude-config", str(config_folder))
+    with held_lock(log_directory, lock, "another copy from the Claude config folder"):
+        copying = copy_files(claude_config_mirror(config_folder), log_directory, relative_paths, now)
+    copying.skipped = skipped + copying.skipped
+    return copying
+
+
+def copy_files(mirror: Mirror, log_directory: Path, relative_paths: list[Path], now: datetime) -> Copying:
+    """Copy each of `relative_paths` from the mirror's source folder to its copies, skipping what cannot be read.
+
+    A file that is not there (yet, or any more) is passed over without a
+    note, and its earlier copy stays. A source goodall cannot read, or that
+    has turned into something other than a regular file, is skipped and
+    noted, and the rest is still copied. A copy goodall cannot write is a
+    problem with the log directory, so it raises OSError.
+    """
+    copying = Copying()
+    for relative_path in relative_paths:
+        source = mirror.source_folder / relative_path
+        try:
+            copying.outcomes.append(copy_file(mirror, log_directory, relative_path, now))
+        except FileNotFoundError as error:
+            if error.filename != str(source):
+                raise
+        except OSError as error:
+            if error.filename != str(source):
+                raise
+            copying.skipped.append(f"{relative_path}: {describe_error(error)}")
+    return copying
+
+
+def list_files_at(source_folder: Path, relative_path: Path) -> tuple[list[Path], list[str]]:
+    """The file at `relative_path`, or every regular file under it at any depth, by its path inside `source_folder`.
 
     Returns the files, sorted, and a note for each thing passed over: a
-    symbolic link (to a file or a folder: it could lead outside the Claude
-    projects folder, so it is never followed), a special file, or a folder
-    that cannot be read. A `relative_folder` that does not exist has no
-    files and no notes. Walks with a list of folders still to visit rather
-    than by recursion, so however deep Claude Code nests folders, Python's
-    recursion limit is never reached.
+    symbolic link (to a file or a folder: it could lead outside the folder
+    goodall copies from, so it is never followed), a special file, or a
+    folder that cannot be read. Nothing at `relative_path` means no files
+    and no notes. Walks with a list of folders still to visit rather than by
+    recursion, so however deep Claude Code nests folders, Python's recursion
+    limit is never reached.
     """
     files: list[Path] = []
     skipped: list[str] = []
-    top_status = status_or_none(projects_folder / relative_folder)
+    top_status = status_or_none(source_folder / relative_path)
     if top_status is None:
         return files, skipped
+    if stat.S_ISREG(top_status.st_mode):
+        return [relative_path], skipped
     if not stat.S_ISDIR(top_status.st_mode):
-        return files, [f"{relative_folder}: {describe_file_kind(top_status)}, which goodall does not copy"]
-    folders_to_visit = [relative_folder]
+        return files, [f"{relative_path}: {describe_file_kind(top_status)}, which goodall does not copy"]
+    folders_to_visit = [relative_path]
     while folders_to_visit:
         folder = folders_to_visit.pop()
         try:
-            with os.scandir(projects_folder / folder) as entries:
+            with os.scandir(source_folder / folder) as entries:
                 found = list(entries)
         except FileNotFoundError:
             continue
@@ -591,15 +814,15 @@ def list_files_inside(projects_folder: Path, relative_folder: Path) -> tuple[lis
             skipped.append(f"{folder}: {describe_error(error)}")
             continue
         for entry in found:
-            relative_path = folder / entry.name
+            entry_path = folder / entry.name
             if entry.is_symlink():
-                skipped.append(f"{relative_path}: a symbolic link, which goodall does not follow")
+                skipped.append(f"{entry_path}: a symbolic link, which goodall does not follow")
             elif entry.is_dir(follow_symlinks=False):
-                folders_to_visit.append(relative_path)
+                folders_to_visit.append(entry_path)
             elif entry.is_file(follow_symlinks=False):
-                files.append(relative_path)
+                files.append(entry_path)
             else:
-                skipped.append(f"{relative_path}: a special file, which goodall does not copy")
+                skipped.append(f"{entry_path}: a special file, which goodall does not copy")
     return sorted(files), sorted(skipped)
 
 
@@ -607,8 +830,6 @@ def describe_file_kind(file_status: os.stat_result) -> str:
     """What sort of thing a path is, for a note about why it was not copied."""
     if stat.S_ISLNK(file_status.st_mode):
         return "a symbolic link"
-    if stat.S_ISREG(file_status.st_mode):
-        return "a file where a folder was expected"
     return "a special file"
 
 
@@ -663,8 +884,8 @@ def make_folders(log_directory: Path, folder_names: list[str]) -> Path:
     return folder
 
 
-def copy_file(projects_folder: Path, log_directory: Path, relative_path: Path, now: datetime) -> FileOutcome:
-    """Copy one file from the Claude projects folder into `transcripts` in the log directory, at the same path.
+def copy_file(mirror: Mirror, log_directory: Path, relative_path: Path, now: datetime) -> FileOutcome:
+    """Copy one file from the mirror's source folder to its copies in the log directory, at the same path.
 
     Byte for byte and atomically, keeping the source's modification time.
 
@@ -675,11 +896,11 @@ def copy_file(projects_folder: Path, log_directory: Path, relative_path: Path, n
       normal use, so the earlier copy is normally the start of the new one.
     - When it is not (the source is shorter, or what was copied before has
       changed), the earlier copy is kept, never overwritten: it is moved to
-      `superseded-transcripts/<moment>/` at the same relative path, then
-      the new copy takes its place.
+      the mirror's superseded folder (keep_earlier_copy), then the new copy
+      takes its place.
     """
-    source = projects_folder / relative_path
-    destination = log_directory / TRANSCRIPTS_FOLDER_NAME / relative_path
+    source = mirror.source_folder / relative_path
+    destination = mirror.copies_folder(log_directory) / relative_path
     source_status = os.stat(source, follow_symlinks=False)
     if not stat.S_ISREG(source_status.st_mode):
         raise NotARegularFile(errno.EINVAL, "not a regular file", str(source))
@@ -696,13 +917,13 @@ def copy_file(projects_folder: Path, log_directory: Path, relative_path: Path, n
         if not stat.S_ISREG(source_status.st_mode):
             raise NotARegularFile(errno.EINVAL, "not a regular file", str(source))
         outcome = FileOutcome.COPIED
-        make_folders(log_directory, [TRANSCRIPTS_FOLDER_NAME, *relative_path.parent.parts])
+        make_folders(log_directory, [*mirror.copies_folder_names, *relative_path.parent.parts])
         temporary_file = destination.parent / f".{destination.name}.{secrets.token_hex(4)}{TEMPORARY_SUFFIX}"
         try:
             write_copy(source_descriptor, source_status.st_size, temporary_file)
             os.utime(temporary_file, ns=(source_status.st_atime_ns, source_status.st_mtime_ns))
             if copy_status is not None and not is_start_of(destination, temporary_file):
-                keep_earlier_copy(log_directory, relative_path, now)
+                keep_earlier_copy(mirror, log_directory, relative_path, now)
                 outcome = FileOutcome.COPIED_AND_EARLIER_COPY_KEPT
             os.replace(temporary_file, destination)
         finally:
@@ -744,20 +965,32 @@ def is_start_of(earlier_copy: Path, new_copy: Path) -> bool:
                 return False
 
 
-def keep_earlier_copy(log_directory: Path, relative_path: Path, now: datetime) -> None:
-    """Move the copy at `relative_path` to `superseded-transcripts/<moment>/<relative_path>`, keeping it.
+def keep_earlier_copy(mirror: Mirror, log_directory: Path, relative_path: Path, now: datetime) -> None:
+    """Move the copy at `relative_path` into the mirror's superseded folder, under `<moment>/`, keeping it.
 
-    The moment, in UTC to the microsecond, names the folder so a person can
-    see when each earlier copy was replaced. The kept copy sits outside
-    `transcripts/` on purpose, so a program reading `transcripts/` as a
-    Claude projects folder never sees two versions of one Claude session.
-    Raises FileExistsError rather than overwrite anything already kept there.
+    For `transcripts/` that is `superseded-transcripts/<moment>/<relative
+    path>`; for a Claude config folder's copies it is
+    `superseded-claude-config/<moment>/<name for that folder>/<relative
+    path>`. The moment, in UTC to the microsecond, names the folder so a
+    person can see when each earlier copy was replaced. Kept copies sit
+    outside `transcripts/` on purpose, so a program reading `transcripts/`
+    as a Claude projects folder never sees two versions of one Claude
+    session. Raises FileExistsError rather than overwrite anything already
+    kept there.
     """
-    kept_folder = make_folders(log_directory, [SUPERSEDED_FOLDER_NAME, format_moment(now), *relative_path.parent.parts])
+    kept_folder = make_folders(
+        log_directory,
+        [
+            mirror.superseded_folder_name,
+            format_moment(now),
+            *mirror.copies_folder_names[1:],
+            *relative_path.parent.parts,
+        ],
+    )
     kept_copy = kept_folder / relative_path.name
     if kept_copy.exists():
         raise FileExistsError(f"{kept_copy} is already there")
-    os.rename(log_directory / TRANSCRIPTS_FOLDER_NAME / relative_path, kept_copy)
+    os.rename(mirror.copies_folder(log_directory) / relative_path, kept_copy)
 
 
 def status_or_none(path: Path) -> os.stat_result | None:
