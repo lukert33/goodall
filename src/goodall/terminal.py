@@ -15,11 +15,14 @@ AGENTS.md):
   contributor can redirect results to a file and still see problems. In
   `--json` mode standard output carries exactly one JSON document and
   nothing else.
-- A command builds its results once, as records such as `Failure`. The text
-  screen and the JSON document are two renderings of the same record.
+- A command builds its results once, as records such as `Failure` and
+  `CheckResult`. The text screen and the JSON document are two renderings of
+  the same record. `CheckResult` lives here, beside `Failure`, because ADR
+  0012 makes "a check result" one of the things this module offers.
 - Colour is used only when the stream is a terminal, is switched off by the
   `NO_COLOR` environment variable (https://no-color.org), and is never the
-  only signal: the word FAIL is always printed.
+  only signal: the words FAIL, and in a check report pass, warn and skip,
+  are always printed.
 - Width is measured once, when the `Terminal` is made, and clamped so lines
   stay readable. Output that is not a terminal (a pipe, a file, a test) is
   always the fixed width, so it is the same on every machine.
@@ -33,7 +36,8 @@ import json
 import os
 import sys
 import textwrap
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
+from enum import StrEnum
 from typing import TextIO
 
 # Width used whenever output is not a terminal, and whenever a terminal's
@@ -49,11 +53,19 @@ MAXIMUM_WIDTH = 100
 # text is indented to match, so the three parts line up.
 LABEL_COLUMN_WIDTH = 6
 
-# ANSI escape sequences. Kept to bold and bold red: they read on light and
-# dark terminal themes alike.
+# ANSI escape sequences, in the basic eight colours, which every terminal
+# theme maps to something readable on its own background.
 BOLD_RED = "\x1b[1;31m"
+BOLD_YELLOW = "\x1b[1;33m"
+GREEN = "\x1b[32m"
 BOLD = "\x1b[1m"
 RESET = "\x1b[0m"
+
+# In the check report, a check's status word sits in a column after this
+# indent, and everything beneath a check (what happened, what to do next) is
+# indented to line up with the check's summary.
+CHECK_INDENT = "  "
+CHECK_DETAIL_INDENT = " " * 8
 
 
 @dataclass(frozen=True)
@@ -76,6 +88,138 @@ class Failure:
     def as_json(self) -> dict[str, str]:
         """Return this failure as a dictionary ready for `Terminal.write_json`."""
         return asdict(self)
+
+
+class CheckStatus(StrEnum):
+    """How one diagnostic check came out.
+
+    The values are what `--json` shows. A StrEnum, so `json.dumps` writes
+    the plain word.
+
+    - PASS: what the check looks for is true.
+    - FAIL: it is not, and goodall cannot work properly until it is fixed.
+    - WARN: it is not, but goodall still works in a reduced way, such as
+      "not recording" when the log directory is unplugged.
+    - SKIP: the check was not run because a check it depends on failed.
+    """
+
+    PASS = "pass"
+    FAIL = "fail"
+    WARN = "warn"
+    SKIP = "skip"
+
+
+# The word printed for each status. FAIL is in capitals so it stands out with
+# colour off; the others stay lowercase so the eye lands on failures first.
+STATUS_WORDS = {
+    CheckStatus.PASS: "pass",
+    CheckStatus.FAIL: "FAIL",
+    CheckStatus.WARN: "warn",
+    CheckStatus.SKIP: "skip",
+}
+
+# The colour of each status word, used only when colour is wanted.
+STATUS_COLOURS = {
+    CheckStatus.PASS: GREEN,
+    CheckStatus.FAIL: BOLD_RED,
+    CheckStatus.WARN: BOLD_YELLOW,
+    CheckStatus.SKIP: "",
+}
+
+
+@dataclass(frozen=True)
+class CheckResult:
+    """The result of one diagnostic check, as `goodall doctor` reports it.
+
+    The text report and the `--json` document are both built from a list of
+    these, so the two can never disagree.
+
+    - `id` is stable, such as "settings.local_settings_valid", so an agent
+      can branch on it; `summary` is the one line a person reads, and may be
+      reworded.
+    - `group` is the heading the check is shown under, such as "Settings".
+    - `failures` says what is wrong, in goodall's usual what, why and next
+      form. It is empty unless the status is FAIL or WARN, and never empty
+      when it is: a failed check always carries a next step.
+    - `waiting_for` is set only when the status is SKIP: the id of the
+      failed check this one depends on.
+    """
+
+    id: str
+    group: str
+    status: CheckStatus
+    summary: str
+    failures: list[Failure] = field(default_factory=list)
+    waiting_for: str | None = None
+
+    @property
+    def detail(self) -> str | None:
+        """What happened, as one paragraph, or None when nothing is wrong."""
+        if not self.failures:
+            return None
+        what_happened_parts = []
+        for failure in self.failures:
+            what_happened_parts.append(failure.what_happened)
+        return " ".join(what_happened_parts)
+
+    @property
+    def next_step(self) -> str | None:
+        """What to do next, as one paragraph, or None when nothing is wrong."""
+        if not self.failures:
+            return None
+        next_step_parts = []
+        for failure in self.failures:
+            next_step_parts.append(failure.what_to_do_next)
+        return " ".join(next_step_parts)
+
+    def as_json(self) -> dict[str, object]:
+        """Return this result as a dictionary ready for `Terminal.write_json`.
+
+        `detail` and `next_step` are there for an agent that wants one
+        sentence; `failures` keeps each problem's `kind`, for an agent that
+        wants to branch on exactly what went wrong.
+        """
+        failure_documents = []
+        for failure in self.failures:
+            failure_documents.append(failure.as_json())
+        return {
+            "id": self.id,
+            "group": self.group,
+            "status": str(self.status),
+            "summary": self.summary,
+            "detail": self.detail,
+            "next_step": self.next_step,
+            "waiting_for": self.waiting_for,
+            "failures": failure_documents,
+        }
+
+
+@dataclass(frozen=True)
+class CheckCounts:
+    """How many checks came out each way: the report's last line and the JSON summary."""
+
+    passed: int
+    warned: int
+    failed: int
+    skipped: int
+
+
+def count_checks(results: list[CheckResult]) -> CheckCounts:
+    """Count the results by status."""
+    passed = 0
+    warned = 0
+    failed = 0
+    skipped = 0
+    for result in results:
+        if result.status == CheckStatus.PASS:
+            passed += 1
+        elif result.status == CheckStatus.WARN:
+            warned += 1
+        elif result.status == CheckStatus.FAIL:
+            failed += 1
+        else:
+            skipped += 1
+    return CheckCounts(passed=passed, warned=warned, failed=failed, skipped=skipped)
 
 
 def clamp_width(measured_columns: int) -> int:
@@ -140,6 +284,7 @@ class Terminal:
         self.output_width = measure_width(standard_output)
         self.error_width = measure_width(standard_error)
         self.error_colour = colour_is_wanted(standard_error)
+        self.output_colour = colour_is_wanted(standard_output)
 
         # True once anything has been written to standard output, so the
         # next block knows to start with a blank line.
@@ -204,6 +349,78 @@ class Terminal:
             if position > 0:
                 self.standard_error.write("\n")
             self.show_failure(failure)
+
+    def show_check_report(self, results: list[CheckResult]) -> None:
+        """Write a diagnostic report to standard output: checks under group headings, then the counts.
+
+        The whole report goes to standard output, failed checks included,
+        because the report is the result the contributor asked for; it can be
+        redirected to a file or pasted into an issue in one piece.
+
+        Groups appear in the order of their first check, and checks in the
+        order given, which is the order they ran in. Beneath a failed or
+        warning check go what happened and the next step; beneath a skipped
+        check goes one line naming the check it was waiting for. A blank line
+        follows each failed or warning check, so one problem's next step is
+        never read as the next check's; skipped checks stay one under
+        another, since several usually wait for the same failure.
+        """
+        self.start_output_block()
+
+        summaries_by_id: dict[str, str] = {}
+        group_names: list[str] = []
+        for result in results:
+            summaries_by_id[result.id] = result.summary
+            if result.group not in group_names:
+                group_names.append(result.group)
+
+        group_blocks = []
+        for group_name in group_names:
+            group_results = [result for result in results if result.group == group_name]
+            heading = group_name
+            if self.output_colour:
+                heading = BOLD + group_name + RESET
+            group_text = heading + "\n"
+            for position, result in enumerate(group_results):
+                group_text += self.check_entry(result, summaries_by_id)
+                is_last_in_group = position == len(group_results) - 1
+                if result.failures and not is_last_in_group:
+                    group_text += "\n"
+            group_blocks.append(group_text)
+
+        counts = count_checks(results)
+        counts_line = (
+            f"{counts.passed} passed, {counts.warned} warned, {counts.failed} failed, {counts.skipped} skipped\n"
+        )
+        self.standard_output.write("\n".join(group_blocks) + "\n" + counts_line)
+
+    def check_entry(self, result: CheckResult, summaries_by_id: dict[str, str]) -> str:
+        """The lines for one check: its status word and summary, then anything beneath it.
+
+        Trap: wrapping happens before the status word is coloured, so escape
+        codes never count towards the line length.
+        """
+        word = STATUS_WORDS[result.status]
+        status_column = CHECK_INDENT + word.ljust(len(CHECK_DETAIL_INDENT) - len(CHECK_INDENT))
+        wrapped_summary = self.wrap(result.summary, self.output_width, CHECK_DETAIL_INDENT)
+        colour = STATUS_COLOURS[result.status]
+        if self.output_colour and colour != "":
+            status_column = status_column.replace(word, colour + word + RESET, 1)
+        entry = status_column + wrapped_summary[len(CHECK_DETAIL_INDENT) :] + "\n"
+
+        if result.waiting_for is not None:
+            # A skipped check names the summary of the one it waited for,
+            # which a person can find higher up in the report; --json gives
+            # the id instead.
+            waited_for_summary = summaries_by_id.get(result.waiting_for, result.waiting_for)
+            entry += self.wrap("Waiting for: " + waited_for_summary, self.output_width, CHECK_DETAIL_INDENT) + "\n"
+
+        failure_texts = []
+        for failure in result.failures:
+            what_happened = self.wrap(failure.what_happened, self.output_width, CHECK_DETAIL_INDENT)
+            next_step = self.wrap("Next: " + failure.what_to_do_next, self.output_width, CHECK_DETAIL_INDENT)
+            failure_texts.append(what_happened + "\n" + next_step + "\n")
+        return entry + "\n".join(failure_texts)
 
     def write_json(self, document: dict[str, object]) -> None:
         """Write one JSON document to standard output, and nothing else.

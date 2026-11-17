@@ -5,10 +5,10 @@ Called by the `goodall` console script (see pyproject.toml) and by
 captured terminal and check the returned exit code, so `main` returns a
 number instead of calling `sys.exit` itself.
 
-`goodall status` is built (see goodall.status). Every other subcommand is
-still a stub: it reports that it is not built yet and returns `ERROR` (1),
-not `USAGE_ERROR` (2), because the command line was valid and the feature is
-missing.
+`goodall status` (goodall.status) and `goodall doctor` (goodall.doctor)
+are built. Every other subcommand is still a stub: it reports that it is not
+built yet and returns `ERROR` (1), not `USAGE_ERROR` (2), because the
+command line was valid and the feature is missing.
 
 Design decisions a reader might otherwise reverse-engineer:
 
@@ -28,6 +28,7 @@ Design decisions a reader might otherwise reverse-engineer:
 import argparse
 
 from goodall import exit_codes
+from goodall.doctor import run_doctor
 from goodall.status import run_status
 from goodall.terminal import Failure, Terminal
 
@@ -51,6 +52,11 @@ def build_parser() -> argparse.ArgumentParser:
     onboard.set_defaults(command_name="onboard")
 
     doctor = commands.add_parser("doctor", help="Check this account and eval setup without changing anything.")
+    doctor.add_argument(
+        "--json",
+        action="store_true",
+        help="Print the results as one JSON document on standard output, for agents and scripts.",
+    )
     doctor.set_defaults(command_name="doctor")
 
     # The three work-block commands are top-level, not grouped, because a
@@ -157,5 +163,7 @@ def main(argv: list[str] | None = None, terminal: Terminal | None = None) -> int
 
     if command_name == "status":
         return run_status(terminal, as_json=arguments.json)
+    if command_name == "doctor":
+        return run_doctor(terminal, as_json=arguments.json)
 
     return run_stub(command_name, terminal)

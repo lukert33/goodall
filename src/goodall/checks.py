@@ -1,0 +1,181 @@
+"""The machinery every diagnostic check runs through: what a check is, and how a list of them is run.
+
+`goodall doctor` (goodall.doctor) builds one list of checks, in order, and
+hands it to `run_checks`. Each check is a small function that looks at one
+thing and returns a `CheckOutcome`; `run_checks` turns the outcomes into
+`CheckResult` records (goodall.terminal), which the terminal report and the
+`--json` document are both built from.
+
+How dependencies work, and why:
+
+- Each check names the checks it depends on, its `prerequisites`, by id.
+  A prerequisite must come earlier in the list; the list's order is the
+  order checks run in, so it can be read top to bottom.
+- When a check fails, every check that depends on it is skipped instead of
+  run, and its result names the failed check. A check that depends on a
+  skipped check is skipped too, and names the same failed check. So one
+  broken thing (missing local settings, say) shows as one failure, and the
+  contributor is pointed straight at it.
+- A warning skips nothing: a warning means goodall still works, in a
+  reduced way, so whatever depends on it can still be checked.
+- A check function can only pass, fail or warn (`passed`, `failed`,
+  `warned`). Skipping is decided here, never by a check, so a skip always
+  means a failure elsewhere in the same report. That is why `goodall
+  doctor`'s exit code can look at failures alone.
+
+This is deliberately a list and a loop, not a plugin system: a new check is
+a function plus one entry in a list.
+
+Checks share what they learn through a `CheckContext`. A check that reads
+local settings, for example, puts them there, and the checks that depend on
+it read them back instead of reading the file again. That is safe because a
+check runs only when every prerequisite passed or warned.
+
+Checks only look. `goodall doctor` promises to change nothing on the
+machine (ADR 0012), so no check may create, change or delete a file.
+"""
+
+from collections.abc import Callable
+from dataclasses import dataclass, field
+
+from goodall.eval_config import EvalConfig
+from goodall.local_settings import LocalSettings
+from goodall.terminal import CheckResult, CheckStatus, Failure
+
+
+@dataclass
+class CheckContext:
+    """What the checks have learned so far, for the checks that depend on them.
+
+    Every field starts empty. A field is filled by the check that learns it,
+    and read only by checks that list that check as a prerequisite.
+
+    - `local_settings_reading` is the full answer from reading local
+      settings: the settings, or every problem with them. One check decides
+      whether the file was found, the next whether it was valid.
+    - `local_settings` is set once local settings are known to be valid.
+    - `eval_config` is set once the eval config is known to be valid.
+    """
+
+    local_settings_reading: LocalSettings | list[Failure] | None = None
+    local_settings: LocalSettings | None = None
+    eval_config: EvalConfig | None = None
+
+
+@dataclass(frozen=True)
+class CheckOutcome:
+    """What one check function found: a status, and what is wrong when something is.
+
+    Make one with `passed`, `failed` or `warned` rather than directly, so a
+    failure or warning always carries at least one next step.
+    """
+
+    status: CheckStatus
+    failures: list[Failure] = field(default_factory=list)
+
+
+def passed() -> CheckOutcome:
+    """The outcome of a check that found what it looked for."""
+    return CheckOutcome(status=CheckStatus.PASS)
+
+
+def failed(failures: list[Failure]) -> CheckOutcome:
+    """The outcome of a check that found something goodall cannot work with.
+
+    Raises ValueError when `failures` is empty, because every failed check
+    must tell the contributor what to do next.
+    """
+    if not failures:
+        raise ValueError("A failed check must say what is wrong and what to do next.")
+    return CheckOutcome(status=CheckStatus.FAIL, failures=failures)
+
+
+def warned(failures: list[Failure]) -> CheckOutcome:
+    """The outcome of a check that found a problem goodall can work around, such as "not recording".
+
+    Raises ValueError when `failures` is empty, for the same reason as `failed`.
+    """
+    if not failures:
+        raise ValueError("A check that warns must say what is wrong and what to do next.")
+    return CheckOutcome(status=CheckStatus.WARN, failures=failures)
+
+
+# A check function looks at one thing, using what earlier checks put in the
+# context, and returns what it found.
+CheckFunction = Callable[[CheckContext], CheckOutcome]
+
+
+@dataclass(frozen=True)
+class Check:
+    """One diagnostic check.
+
+    - `id` is stable and dotted, group first, such as
+      "settings.local_settings_valid". Agents branch on it, so it is never
+      renamed once released.
+    - `group` is the heading the check appears under in the report.
+    - `summary` is the one line a person reads, written as the statement the
+      check confirms, such as "Local settings are valid". The status word in
+      front of it says whether it held.
+    - `prerequisites` are the ids of the checks this one depends on, all of
+      which must come earlier in the list.
+    - `run` is the check function.
+    """
+
+    id: str
+    group: str
+    summary: str
+    prerequisites: list[str]
+    run: CheckFunction
+
+
+def run_checks(checks: list[Check], context: CheckContext) -> list[CheckResult]:
+    """Run `checks` in order and return one result for each, in the same order.
+
+    A check whose prerequisite failed, or was itself skipped, is not run; its
+    result is SKIP, naming the check that failed. Raises ValueError when a
+    check names a prerequisite that has not run before it, which is a
+    mistake in goodall's own list of checks, not in the contributor's setup.
+    """
+    results_by_id: dict[str, CheckResult] = {}
+    results: list[CheckResult] = []
+    for check in checks:
+        failed_prerequisite = find_failed_prerequisite(check, results_by_id)
+        if failed_prerequisite is None:
+            outcome = check.run(context)
+            result = CheckResult(
+                id=check.id,
+                group=check.group,
+                status=outcome.status,
+                summary=check.summary,
+                failures=outcome.failures,
+            )
+        else:
+            result = CheckResult(
+                id=check.id,
+                group=check.group,
+                status=CheckStatus.SKIP,
+                summary=check.summary,
+                waiting_for=failed_prerequisite,
+            )
+        results_by_id[check.id] = result
+        results.append(result)
+    return results
+
+
+def find_failed_prerequisite(check: Check, results_by_id: dict[str, CheckResult]) -> str | None:
+    """Return the id of the failed check that stops `check` running, or None if it can run.
+
+    For a prerequisite that was itself skipped, this is the check that
+    prerequisite was waiting for, so every skip names the real cause.
+    """
+    for prerequisite_id in check.prerequisites:
+        if prerequisite_id not in results_by_id:
+            raise ValueError(
+                f"The check {check.id} depends on {prerequisite_id}, which must come before it in the list of checks."
+            )
+        prerequisite_result = results_by_id[prerequisite_id]
+        if prerequisite_result.status == CheckStatus.FAIL:
+            return prerequisite_id
+        if prerequisite_result.status == CheckStatus.SKIP:
+            return prerequisite_result.waiting_for
+    return None

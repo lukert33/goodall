@@ -28,18 +28,15 @@ always has the keys `work_block_active`, `eval`, `contributor` and
 `failures`; `eval` and `contributor` are null whenever `failures` is not
 empty.
 
-The folder checks live here, not in goodall.local_settings, because they ask
-about the machine rather than the file; move them when a second command
-(goodall doctor, or the prompt gate) needs them.
+The folder checks themselves live in goodall.folders, because
+`goodall doctor` asks the same questions and must word the answers the same
+way.
 """
-
-import os
-import stat
-from pathlib import Path
 
 from goodall import exit_codes
 from goodall.eval_config import EvalForThisAccount, read_eval_for_this_account
-from goodall.local_settings import FolderSetting, LocalSettings, read_local_settings
+from goodall.folders import describe_folder_problem, log_directory_unreachable_failure, record_repo_missing_failure
+from goodall.local_settings import read_local_settings
 from goodall.terminal import Failure, Terminal
 
 
@@ -120,79 +117,3 @@ def report_failures(terminal: Terminal, failures: list[Failure], as_json: bool) 
     else:
         terminal.show_failures(failures)
     return exit_codes.ERROR
-
-
-def describe_folder_problem(folder: Path, needs_writing: bool) -> str | None:
-    """Say what is wrong with `folder`, as the end of a sentence, or return None if nothing is.
-
-    Only looks; nothing is created or changed. Trap: Path.exists() and
-    Path.is_dir() raise PermissionError when a folder above cannot be
-    searched, so this asks with stat() and turns every error into words.
-    """
-    try:
-        folder_status = folder.stat()
-    except (FileNotFoundError, NotADirectoryError):
-        return "does not exist"
-    except OSError as stat_error:
-        return f"cannot be reached: {stat_error.strerror}"
-
-    if not stat.S_ISDIR(folder_status.st_mode):
-        return "is a file, not a folder"
-    if needs_writing and not os.access(folder, os.W_OK | os.X_OK):
-        return "cannot be written to by this macOS user account"
-    return None
-
-
-def where_goodall_looked(folder_setting: FolderSetting) -> str:
-    """A sentence naming the full path goodall used, or nothing when it is exactly what was written.
-
-    Messages name a folder as written first, because that is what the
-    contributor will search for in the file; this adds the expanded path
-    when a leading ~ made the two differ.
-    """
-    if folder_setting.as_written == str(folder_setting.path):
-        return ""
-    return f" Goodall looked for {folder_setting.path}."
-
-
-def record_repo_missing_failure(settings: LocalSettings, problem: str) -> Failure:
-    """The failure for a record repo folder that is not there."""
-    return Failure(
-        kind="record_repo_missing",
-        what_happened=(
-            f"The record repo folder {settings.record_repo.as_written} {problem}."
-            + where_goodall_looked(settings.record_repo)
-        ),
-        why=(
-            "The record repo holds this eval's eval config and its records, "
-            "so goodall cannot tell whether a work block is active without it."
-        ),
-        what_to_do_next=(
-            f"If the record repo is somewhere else on this Mac, correct record_repo in {settings.settings_file}. "
-            f"If it is not on this Mac yet, clone it to {settings.record_repo.path}. Then run goodall status again."
-        ),
-    )
-
-
-def log_directory_unreachable_failure(settings: LocalSettings, problem: str) -> Failure:
-    """The failure for a log directory goodall cannot write raw records to.
-
-    Worded as "not recording", not as an error in goodall, because an
-    unplugged drive is an everyday event (ADR 0008).
-    """
-    return Failure(
-        kind="log_directory_unreachable",
-        what_happened=(
-            f"Not recording: the log directory {settings.log_directory.as_written} {problem}, "
-            "so no work block can be active." + where_goodall_looked(settings.log_directory)
-        ),
-        why=(
-            "Raw records are written to the log directory. When goodall cannot write there it records "
-            "nothing, and says so rather than lose records without telling you."
-        ),
-        what_to_do_next=(
-            "If the log directory is on an external drive, connect it. Otherwise create the folder, make sure "
-            f"this macOS user account can write to it, or correct log_directory in {settings.settings_file}. "
-            "Then run goodall status again."
-        ),
-    )
