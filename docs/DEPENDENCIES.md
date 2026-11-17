@@ -11,21 +11,37 @@ again before adding or upgrading anything.
 
 ## At a glance
 
-What has to be on the Mac, or may be, for goodall to work. Whoever owns the
-Mac installs these: an eval account is a standard macOS user account and
-cannot install software itself. The linked sections give the reasons and the
-checks behind each row.
+What has to be on the Mac, or may be, for goodall to work, and which macOS
+user account has to put it there. An eval account is a standard macOS user
+account: it cannot install software for the whole Mac. Anything marked
+"administrator" below has to be installed from an administrator macOS user
+account on the same Mac, usually by whoever set the Mac up or by the
+researcher who runs the eval, before the eval account can use it. The linked
+sections give the reasons and the checks behind each row.
 
-| What | Needed? | What it is for |
-|---|---|---|
-| [Python 3.12 or newer](#adopted-runtime) | Required | Runs goodall. The Python that comes with macOS is too old. |
-| [An installer: uv, or an alternative](#needed-to-install) | Required to install | Puts goodall and a new enough Python on the Mac. uv is the documented route; pipx or pip are allowed. Use uv 0.13.4 or newer. |
-| [git](#programs-goodall-runs-or-works-alongside) | Required | Saves the eval's records and sends them to the record repo. |
-| [Claude Code](#programs-goodall-runs-or-works-alongside) | Required | The AI agent tool whose work goodall records. |
-| [GitHub's `gh`](#programs-goodall-runs-or-works-alongside) | Required by `goodall doctor` | Lets `goodall doctor` check the GitHub sign-in, so goodall never handles the token itself. |
-| [1Password's `op`](#programs-goodall-runs-or-works-alongside) | Required only when the eval uses secrets | Looks up secrets the eval needs, without goodall storing them. |
-| [`inspect-ai` and `inspect-scout`](#approved-not-yet-used) | Optional, only for the export | Turns records into a form the Inspect analysis tools read. Brings 95 packages, so only those who export install them. |
-| [ActivityWatch](#activitywatch-the-highest-risk-recommendation) | Optional, recommended | Notes which app and window were in use, to back up what the human did. |
+| What | Needed? | Who installs it | What it is for |
+|---|---|---|---|
+| [Python 3.12 or newer](#adopted-runtime) | Required | Comes with the installer below | Runs goodall. The Python that comes with macOS is too old. |
+| [An installer: uv, or an alternative](#needed-to-install) | Required to install | Administrator, if installed with Homebrew or for every account on the Mac. uv can also be installed inside one account without administrator rights. | Puts goodall and a new enough Python on the Mac. uv is the documented route; pipx or pip are allowed. Use uv 0.13.4 or newer. |
+| goodall itself | Required | Whoever ran the installer. It must end up somewhere the eval account can run it. | Records the eval. |
+| [git](#programs-goodall-runs-or-works-alongside) | Required | Administrator | Saves the eval's records and sends them to the record repo. |
+| [Claude Code](#programs-goodall-runs-or-works-alongside) | Required | Not yet checked: see the note below | The AI agent tool whose work goodall records. |
+| [GitHub's `gh`](#programs-goodall-runs-or-works-alongside) | Required by `goodall doctor` | Administrator | Lets `goodall doctor` check the GitHub sign-in, so goodall never handles the token itself. |
+| [1Password's `op`](#programs-goodall-runs-or-works-alongside) | Required only when the eval uses secrets | Administrator | Looks up secrets the eval needs, without goodall storing them. |
+| [`inspect-ai` and `inspect-scout`](#approved-not-yet-used) | Optional, only for the export | Whoever installed goodall | Turns records into a form the Inspect analysis tools read. Brings 95 packages, so only those who export install them. |
+| [ActivityWatch](#activitywatch-the-highest-risk-recommendation) | Optional, recommended | Administrator | Notes which app and window were in use, to back up what the human did. |
+
+Signing in is separate from installing, and always happens inside the eval
+account: Claude Code, `gh` and, when the eval uses secrets, 1Password.
+
+None of the "who installs it" column has been tried in a real eval account
+yet. It is written from how each program is normally installed on macOS:
+git, `gh`, `op` and ActivityWatch are installed for the whole Mac, through
+Apple's developer tools, Homebrew or an installer that asks for an
+administrator's password. Whether Claude Code and uv install cleanly inside a
+standard account, and where goodall should live so that an eval account can
+run it, are to be settled when the first eval account is set up on a real
+Mac.
 
 ## Standing rules
 
@@ -228,6 +244,8 @@ governance or release practice changes.
 Recorded so that "not stated" is never mistaken for "confirmed safe".
 
 - Whether OpenAI's acquisition of Astral has closed.
+- Which macOS user account has to install each program. The "Who installs
+  it" column in "At a glance" has not been tried in a real eval account.
 - pytest's transitive dependency count beyond its four direct dependencies.
 - When pytest's temporary-directory issue was first reported privately.
 - Who currently employs mypy's core maintainers.
