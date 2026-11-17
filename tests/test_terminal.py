@@ -80,6 +80,27 @@ def test_no_color_variable_turns_colour_off_even_on_a_terminal(monkeypatch: pyte
     assert standard_error.getvalue() == EXPECTED_SCREEN
 
 
+SECOND_FAILURE = Failure(
+    kind="second_example",
+    what_happened="A second thing went wrong.",
+    why="Two problems can be found at once.",
+    what_to_do_next="Fix both.",
+)
+
+
+def test_several_failures_are_separated_by_a_blank_line() -> None:
+    standard_error = io.StringIO()
+    terminal = Terminal(standard_output=io.StringIO(), standard_error=standard_error)
+
+    terminal.show_failures([EXAMPLE_FAILURE, SECOND_FAILURE])
+
+    assert standard_error.getvalue() == (
+        EXPECTED_SCREEN
+        + "\n"
+        + "FAIL  A second thing went wrong.\n\nWhy   Two problems can be found at once.\n\nNext  Fix both.\n"
+    )
+
+
 def test_json_failure_is_one_document_on_standard_output() -> None:
     standard_output = io.StringIO()
     standard_error = io.StringIO()
