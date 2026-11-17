@@ -508,7 +508,25 @@ def test_valid_eval_reports_the_eval_the_contributor_and_no_work_block(eval_acco
         "Workstream   research, your main workstream\n"
         "\n"
         "No work block is active, so nothing is being recorded.\n"
+        "\n"
+        "To start a work block on research, your main workstream, run goodall start.\n"
+        "\n"
+        "For another, run goodall start --workstream NAME (engineering, go-to-market).\n"
     )
+
+
+def test_no_suggestion_for_another_workstream_when_the_eval_has_only_the_main_one(eval_account: EvalAccount) -> None:
+    eval_account.make_valid()
+    eval_account.write_eval_config(
+        VALID_EVAL_CONFIG_TEXT.replace(
+            'workstreams = ["engineering", "research", "go-to-market"]', 'workstreams = ["research"]'
+        )
+    )
+
+    _, standard_output, _ = run_goodall(["status"])
+
+    assert "run goodall start." in standard_output
+    assert "--workstream" not in standard_output
 
 
 def test_valid_eval_as_json_gives_the_same_facts(eval_account: EvalAccount) -> None:
