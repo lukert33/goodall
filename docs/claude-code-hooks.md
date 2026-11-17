@@ -17,17 +17,23 @@ built; until then, nothing installs them.
 
 Heartbeats are recorded only while a work block is active. Transcripts are
 copied whether or not one is, byte for byte, into `transcripts/` in the log
-directory, in the same folder layout as Claude Code's own `projects` folder.
+directory, in the same folder layout as Claude Code's own `projects` folder
+(ADR 0015). Goodall copies everything Claude Code keeps for a Claude
+session: the transcript and the whole of the session's folder beside it,
+subagent transcripts and tool results included.
 A Claude Code that is killed fires no hook, so `goodall start`, `goodall stop`
 and `goodall status` also copy any transcript that changed since it was last
 copied. A copy that fails inside a hook is silent in Claude Code and noted in
 `transcript-sync/failed-copies.jsonl` in the log directory, and
 `goodall status` reports it.
 
-Goodall finds Claude Code's transcripts in `~/.claude/projects`, or in
-`projects` inside the folder `CLAUDE_CONFIG_DIR` names when that Claude Code
-setting is set. If you set it, set it in your terminal too, so
-`goodall status` looks in the same place as the hooks.
+Goodall finds Claude Code's transcripts wherever Claude Code keeps them, with
+nothing for you to set. The hooks run inside Claude Code, so they look where
+it writes, and each one that copies notes that folder in
+`transcript-sync/claude-projects-folders.json` in the log directory.
+`goodall start`, `goodall stop` and `goodall status` then cover every folder
+noted there, as well as `~/.claude/projects` and the folder your terminal's
+own settings point to.
 
 ## The settings
 

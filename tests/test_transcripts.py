@@ -5,8 +5,11 @@ and `goodall start` / `status`; these tests pin each piece on its own, with
 synthetic files in tmp_path.
 """
 
+import json
 import os
 import stat
+import subprocess
+import sys
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -193,3 +196,81 @@ def test_a_note_about_skipped_files_names_the_first_few_and_counts_the_rest() ->
     assert "tool-results/4.txt" in sentence
     assert "tool-results/5.txt" not in sentence
     assert sentence.endswith("; and 3 more")
+
+
+def remembered_folders(log_directory: Path) -> list[str]:
+    remembered_file = log_directory / "transcript-sync" / "claude-projects-folders.json"
+    folders: list[str] = json.loads(remembered_file.read_text())["claude_projects_folders"]
+    return folders
+
+
+def test_remembering_a_folder_already_remembered_leaves_the_file_untouched(tmp_path: Path) -> None:
+    folders = make_folders(tmp_path)
+    transcripts.remember_claude_projects_folder(folders.log_directory, folders.projects_folder)
+    remembered_file = folders.log_directory / "transcript-sync" / "claude-projects-folders.json"
+    inode_before = remembered_file.stat().st_ino
+
+    transcripts.remember_claude_projects_folder(folders.log_directory, folders.projects_folder)
+
+    assert remembered_folders(folders.log_directory) == [str(folders.projects_folder)]
+    assert remembered_file.stat().st_ino == inode_before
+
+
+def test_remembered_folders_never_grow_past_the_limit_and_the_oldest_is_forgotten_first(tmp_path: Path) -> None:
+    folders = make_folders(tmp_path)
+    folder_count = transcripts.REMEMBERED_FOLDERS_LIMIT + 3
+    for number in range(folder_count):
+        transcripts.remember_claude_projects_folder(folders.log_directory, tmp_path / f"claude-{number}" / "projects")
+
+    remembered = remembered_folders(folders.log_directory)
+
+    assert len(remembered) == transcripts.REMEMBERED_FOLDERS_LIMIT
+    assert remembered[0] == str(tmp_path / "claude-3" / "projects")
+    assert remembered[-1] == str(tmp_path / f"claude-{folder_count - 1}" / "projects")
+
+
+def test_a_remembered_folders_file_that_cannot_be_read_as_json_is_replaced(tmp_path: Path) -> None:
+    folders = make_folders(tmp_path)
+    sync_folder = folders.log_directory / "transcript-sync"
+    sync_folder.mkdir()
+    (sync_folder / "claude-projects-folders.json").write_text('{"claude_projects_folders": ["cut sh')
+
+    transcripts.remember_claude_projects_folder(folders.log_directory, folders.projects_folder)
+
+    assert remembered_folders(folders.log_directory) == [str(folders.projects_folder)]
+
+
+def test_hooks_remembering_different_folders_at_the_same_moment_lose_none_of_them(tmp_path: Path) -> None:
+    folders = make_folders(tmp_path)
+    script = (
+        "import sys\n"
+        "from pathlib import Path\n"
+        "from goodall import transcripts\n"
+        "transcripts.remember_claude_projects_folder(Path(sys.argv[1]), Path(sys.argv[2]))\n"
+    )
+    processes = []
+    for number in range(8):
+        projects_folder = tmp_path / f"claude-{number}" / "projects"
+        processes.append(
+            subprocess.Popen([sys.executable, "-c", script, str(folders.log_directory), str(projects_folder)])
+        )
+    for process in processes:
+        assert process.wait(timeout=30) == 0
+
+    expected = [str(tmp_path / f"claude-{number}" / "projects") for number in range(8)]
+    assert sorted(remembered_folders(folders.log_directory)) == sorted(expected)
+
+
+def test_sweep_copies_a_claude_session_once_however_many_ways_its_folder_is_known(tmp_path: Path) -> None:
+    folders = make_folders(tmp_path)
+    folders.source.write_bytes(b"line\n")
+    linked_projects_folder = tmp_path / "linked-projects"
+    linked_projects_folder.symlink_to(folders.projects_folder)
+    transcripts.remember_claude_projects_folder(folders.log_directory, folders.projects_folder.resolve())
+    transcripts.remember_claude_projects_folder(folders.log_directory, tmp_path / "gone" / "projects")
+
+    result = transcripts.sweep(linked_projects_folder, folders.log_directory, NOW)
+
+    assert result.claude_sessions_copied == 1
+    assert result.problems == []
+    assert folders.copy.read_bytes() == b"line\n"

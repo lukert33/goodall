@@ -468,10 +468,29 @@ class GoodallRun:
         return " ".join((self.standard_output + "\n" + self.standard_error).split())
 
 
-def run_goodall(eval_account: EvalAccount, monkeypatch: pytest.MonkeyPatch, arguments: list[str]) -> GoodallRun:
-    """Run a goodall command in this process, with a captured terminal, the fake runner and a fixed clock."""
+# Passed to run_goodall to say the terminal's CLAUDE_CONFIG_DIR is the one the hooks use.
+SAME_AS_HOOKS = Path("same-as-hooks")
+
+
+def run_goodall(
+    eval_account: EvalAccount,
+    monkeypatch: pytest.MonkeyPatch,
+    arguments: list[str],
+    terminal_claude_config_directory: Path | None = SAME_AS_HOOKS,
+) -> GoodallRun:
+    """Run a goodall command in this process, with a captured terminal, the fake runner and a fixed clock.
+
+    The terminal's CLAUDE_CONFIG_DIR is the hooks' unless
+    `terminal_claude_config_directory` names another folder, or is None
+    for a terminal where it is not set at all.
+    """
     monkeypatch.setenv("GOODALL_CONFIG_DIR", str(eval_account.config_directory))
-    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(eval_account.claude_config_directory))
+    if terminal_claude_config_directory is None:
+        monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+    elif terminal_claude_config_directory == SAME_AS_HOOKS:
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(eval_account.claude_config_directory))
+    else:
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(terminal_claude_config_directory))
     for name in list(os.environ):
         if name.startswith("GIT_"):
             monkeypatch.delenv(name)
@@ -698,3 +717,93 @@ def test_two_copies_of_one_claude_session_never_run_at_once(tmp_path: Path) -> N
     assert files_and_bytes(eval_account.copied_transcripts) == {
         f"{PROJECT_FOLDER_NAME}/{CLAUDE_SESSION}.jsonl": FIRST_LINES,
     }
+
+
+# ---------------------------------------------------------------------------
+# Out of the box: the sweep finds the folder Claude Code used, whatever the terminal says
+# ---------------------------------------------------------------------------
+
+OTHER_SESSION = "5b8e2a71-9c04-4d3f-b6a2-17e0c9d4f8a3"
+
+
+def test_status_from_a_terminal_without_claude_config_dir_sweeps_the_folder_the_hooks_used(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Claude Code runs with CLAUDE_CONFIG_DIR set, so its hooks do too; the
+    # person's terminal has never heard of it.
+    eval_account = make_eval_account(tmp_path)
+    eval_account.transcript.write_bytes(FIRST_LINES)
+    run_hook(eval_account, "PostToolUse", hook_input(eval_account, "PostToolUse", tool_name="Bash"))
+    # Then Claude Code is killed mid-turn: no more hooks, but more was written.
+    with eval_account.transcript.open("ab") as transcript:
+        transcript.write(MORE_LINES)
+    # And another Claude session in the same folder was killed before any hook copied it.
+    (eval_account.project_folder / f"{OTHER_SESSION}.jsonl").write_bytes(MORE_LINES)
+
+    status = run_goodall(eval_account, monkeypatch, ["status"], terminal_claude_config_directory=None)
+
+    assert files_and_bytes(eval_account.copied_transcripts) == {
+        f"{PROJECT_FOLDER_NAME}/{CLAUDE_SESSION}.jsonl": FIRST_LINES + MORE_LINES,
+        f"{PROJECT_FOLDER_NAME}/{OTHER_SESSION}.jsonl": MORE_LINES,
+    }
+    assert "Brought the copies of 2 Claude sessions' transcripts up to date" in status.everything_printed
+
+
+def test_status_from_a_terminal_with_a_different_claude_config_dir_sweeps_both_folders(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    eval_account = make_eval_account(tmp_path)
+    eval_account.transcript.write_bytes(FIRST_LINES)
+    run_hook(eval_account, "Stop", hook_input(eval_account, "Stop"))
+    with eval_account.transcript.open("ab") as transcript:
+        transcript.write(MORE_LINES)
+    terminal_claude_config_directory = tmp_path / "terminal-claude-config"
+    terminal_project_folder = terminal_claude_config_directory / "projects" / "-Users-ada-elsewhere"
+    terminal_project_folder.mkdir(parents=True)
+    (terminal_project_folder / f"{OTHER_SESSION}.jsonl").write_bytes(FIRST_LINES)
+
+    status = run_goodall(
+        eval_account, monkeypatch, ["status"], terminal_claude_config_directory=terminal_claude_config_directory
+    )
+
+    assert "Brought the copies of 2 Claude sessions' transcripts up to date" in status.everything_printed
+    assert files_and_bytes(eval_account.copied_transcripts) == {
+        f"{PROJECT_FOLDER_NAME}/{CLAUDE_SESSION}.jsonl": FIRST_LINES + MORE_LINES,
+        f"-Users-ada-elsewhere/{OTHER_SESSION}.jsonl": FIRST_LINES,
+    }
+
+
+def test_start_sweeps_the_default_claude_folder_even_when_no_hook_ever_ran_there(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Claude Code with no CLAUDE_CONFIG_DIR writes to ~/.claude/projects;
+    # killed before its first tool call, it fired no copying hook at all.
+    eval_account = make_eval_account(tmp_path)
+    default_project_folder = Path.home() / ".claude" / "projects" / PROJECT_FOLDER_NAME
+    default_project_folder.mkdir(parents=True)
+    (default_project_folder / f"{OTHER_SESSION}.jsonl").write_bytes(FIRST_LINES)
+
+    start = run_goodall(eval_account, monkeypatch, ["start"])
+
+    assert start.exit_code == 0, start.standard_error
+    assert files_and_bytes(eval_account.copied_transcripts) == {
+        f"{PROJECT_FOLDER_NAME}/{OTHER_SESSION}.jsonl": FIRST_LINES,
+    }
+
+
+def test_a_hook_remembers_the_claude_projects_folder_from_its_own_environment_never_from_its_input(
+    tmp_path: Path,
+) -> None:
+    eval_account = make_eval_account(tmp_path)
+    eval_account.transcript.write_bytes(FIRST_LINES)
+    elsewhere_project_folder = tmp_path / "elsewhere" / "projects" / PROJECT_FOLDER_NAME
+    elsewhere_project_folder.mkdir(parents=True)
+    elsewhere_transcript = elsewhere_project_folder / f"{CLAUDE_SESSION}.jsonl"
+    elsewhere_transcript.write_bytes(FIRST_LINES)
+
+    run_hook(eval_account, "Stop", hook_input(eval_account, "Stop", transcript_path=str(elsewhere_transcript)))
+
+    remembered_file = eval_account.log_directory / "transcript-sync" / "claude-projects-folders.json"
+    remembered = json.loads(remembered_file.read_text())["claude_projects_folders"]
+    assert remembered == [str((eval_account.claude_config_directory / "projects").resolve())]
+    assert stat.S_IMODE(remembered_file.stat().st_mode) == 0o600

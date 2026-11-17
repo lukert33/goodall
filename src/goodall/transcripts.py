@@ -17,6 +17,7 @@ that reads that folder, Inspect Scout's claude_code importer included:
     <log directory>/transcript-sync/failed-copies.jsonl   copies hooks could not make
     <log directory>/transcript-sync/reported/...          those, once goodall status said so
     <log directory>/transcript-sync/locks/<session id>.lock
+    <log directory>/transcript-sync/claude-projects-folders.json   where hooks found Claude Code
 
 Who calls it: `goodall hook` (goodall.hook) copies one Claude session's
 files after PostToolUse, Stop and SessionEnd, with `copy_from_hook`; and
@@ -29,11 +30,13 @@ Where the Claude projects folder is: `projects` inside Claude Code's own
 folder, which is `~/.claude` unless the environment variable
 CLAUDE_CONFIG_DIR names another. CLAUDE_CONFIG_DIR is Claude Code's own
 setting, not goodall's; goodall honours it so it looks where Claude Code
-writes, and tests point it at tmp_path so the real home folder, which holds
-a person's private prompts, stays out of reach. Trap: a terminal where
-CLAUDE_CONFIG_DIR is not set while Claude Code runs with it would make
-`goodall status` sweep the wrong folder; the hooks are unaffected, since
-they inherit Claude Code's environment.
+writes, and tests point it (and HOME) at tmp_path so the real home folder,
+which holds a person's private prompts, stays out of reach. The hooks
+inherit Claude Code's environment, so they always look in the right place,
+but a terminal may not have the same CLAUDE_CONFIG_DIR. So each hook that
+copies remembers its projects folder in the log directory, and the sweep
+covers every folder a hook remembered, the default `~/.claude/projects`, and
+the terminal's own: a person never needs to know the variable exists.
 
 Decisions a reader would otherwise reverse-engineer (PROVISIONAL):
 
@@ -83,7 +86,7 @@ import secrets
 import stat
 import time
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -107,6 +110,19 @@ REPORTED_FOLDER_NAME = "reported"
 # One lock file per Claude session, in `transcript-sync/locks/`, so two
 # copies of one Claude session never run at once.
 LOCKS_FOLDER_NAME = "locks"
+
+# The Claude projects folders hooks have copied from, as JSON:
+# {"claude_projects_folders": ["/Users/ada/.claude/projects", ...]}, oldest
+# first. Its own lock, in `locks/`, keeps two hooks from losing each other's
+# folder; the name cannot clash with a Claude session's, which is a UUID.
+REMEMBERED_FOLDERS_FILE_NAME = "claude-projects-folders.json"
+REMEMBERED_FOLDERS_LOCK_NAME = "claude-projects-folders"
+
+# The most folders remembered. An eval account has one or two; the limit
+# only keeps a misbehaving setup from growing the file without bound. When
+# it is reached the folder remembered longest ago is forgotten, and the
+# next hook that copies from it remembers it again.
+REMEMBERED_FOLDERS_LIMIT = 20
 
 # How long a copy waits for another copy of the same Claude session to
 # finish before giving up. Copies take well under a second; a hook must
@@ -147,8 +163,13 @@ def claude_projects_folder() -> Path:
     """
     claude_config_directory = os.environ.get("CLAUDE_CONFIG_DIR", "")
     if claude_config_directory == "":
-        return Path.home() / ".claude" / "projects"
+        return default_claude_projects_folder()
     return Path(claude_config_directory).expanduser() / "projects"
+
+
+def default_claude_projects_folder() -> Path:
+    """Where Claude Code keeps its transcripts when CLAUDE_CONFIG_DIR is not set: `~/.claude/projects`."""
+    return Path.home() / ".claude" / "projects"
 
 
 def copy_from_hook(
@@ -163,11 +184,20 @@ def copy_from_hook(
     only from inside the Claude projects folder. A transcript that does not
     exist yet (Claude Code creates it after the first prompt) is not an
     error; there is simply nothing to copy.
+
+    `projects_folder` must come from the hook's own environment
+    (claude_projects_folder), never from its input: it is remembered for
+    the sweep, before the transcript path is even checked, and the sweep
+    copies whatever it finds there.
     """
+    try:
+        real_projects_folder = projects_folder.resolve(strict=True)
+    except FileNotFoundError:
+        return
+    remember_claude_projects_folder(log_directory, real_projects_folder)
     if not transcript_path.is_absolute() or transcript_path.name != f"{claude_session}.jsonl":
         raise TranscriptPathRefused("the transcript path is not a Claude session's transcript")
     try:
-        real_projects_folder = projects_folder.resolve(strict=True)
         real_transcript_path = transcript_path.resolve(strict=True)
     except FileNotFoundError:
         return
@@ -179,6 +209,100 @@ def copy_from_hook(
     session_copy = copy_claude_session(real_projects_folder, log_directory, relative_parts[0], claude_session, now)
     if session_copy.skipped:
         raise FilesSkipped(describe_skipped(session_copy.skipped))
+
+
+def remember_claude_projects_folder(log_directory: Path, projects_folder: Path) -> None:
+    """Add `projects_folder` to the folders the sweep covers, kept in `transcript-sync/` in the log directory.
+
+    A hook calls this each time it copies, so the file is first read without
+    the lock, and when the folder is already there, as it nearly always is,
+    nothing is written: one small read per hook. Otherwise, under the lock,
+    the file is read again (another hook may just have added a folder), the
+    folder is added at the end, the oldest are dropped past
+    REMEMBERED_FOLDERS_LIMIT, and the whole file is replaced by renaming a
+    temporary file over it, so a reader never sees half of it.
+    """
+    folder_text = str(projects_folder)
+    if folder_text in read_remembered_claude_projects_folders(log_directory):
+        return
+    with held_lock(log_directory, REMEMBERED_FOLDERS_LOCK_NAME, "remembering a Claude projects folder"):
+        remembered = read_remembered_claude_projects_folders(log_directory)
+        if folder_text in remembered:
+            return
+        remembered.append(folder_text)
+        remembered = remembered[-REMEMBERED_FOLDERS_LIMIT:]
+        sync_folder = make_folders(log_directory, [SYNC_FOLDER_NAME])
+        remembered_file = sync_folder / REMEMBERED_FOLDERS_FILE_NAME
+        temporary_file = sync_folder / f".{REMEMBERED_FOLDERS_FILE_NAME}.{secrets.token_hex(4)}{TEMPORARY_SUFFIX}"
+        try:
+            descriptor = os.open(temporary_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, FILE_PERMISSIONS)
+            with os.fdopen(descriptor, "w", encoding="utf-8") as temporary:
+                json.dump({"claude_projects_folders": remembered}, temporary, indent=2)
+                temporary.write("\n")
+            os.replace(temporary_file, remembered_file)
+        finally:
+            temporary_file.unlink(missing_ok=True)
+
+
+def read_remembered_claude_projects_folders(log_directory: Path) -> list[str]:
+    """The Claude projects folders hooks have remembered, oldest first; none when the file is missing.
+
+    A file that is not the expected JSON (it was edited by hand, say) counts
+    as empty, so the next hook replaces it rather than every hook failing.
+    It is only goodall's bookkeeping, not a record. Raises OSError when the
+    file is there but cannot be read.
+    """
+    remembered_file = log_directory / SYNC_FOLDER_NAME / REMEMBERED_FOLDERS_FILE_NAME
+    try:
+        remembered_text = remembered_file.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return []
+    try:
+        remembered = json.loads(remembered_text)
+    except ValueError:
+        return []
+    if not isinstance(remembered, dict):
+        return []
+    folders = remembered.get("claude_projects_folders")
+    if not isinstance(folders, list):
+        return []
+    folder_texts = []
+    for folder in folders:
+        if isinstance(folder, str):
+            folder_texts.append(folder)
+    return folder_texts
+
+
+def claude_projects_folders_to_sweep(own_projects_folder: Path, log_directory: Path) -> tuple[list[Path], list[str]]:
+    """Every Claude projects folder the sweep covers, each once, by its real path, with problems found on the way.
+
+    The folders are this process's own (from its environment), the default
+    `~/.claude/projects`, and every folder hooks have remembered. Two names
+    for one folder (through a symbolic link, say) count once, so nothing is
+    copied twice. A folder that does not exist is passed over without a
+    word: most accounts never have more than one.
+    """
+    problems = []
+    candidates = [own_projects_folder, default_claude_projects_folder()]
+    try:
+        for folder_text in read_remembered_claude_projects_folders(log_directory):
+            candidates.append(Path(folder_text))
+    except OSError as error:
+        problems.append(
+            f"The list of Claude projects folders hooks used, in the log directory: {describe_error(error)}."
+        )
+    real_folders: list[Path] = []
+    for candidate in candidates:
+        try:
+            real_folder = candidate.resolve(strict=True)
+        except FileNotFoundError:
+            continue
+        except OSError as error:
+            problems.append(f"The Claude projects folder {candidate}: {describe_error(error)}.")
+            continue
+        if real_folder not in real_folders:
+            real_folders.append(real_folder)
+    return real_folders, problems
 
 
 class TranscriptPathRefused(ValueError):
@@ -273,24 +397,38 @@ def format_moment(moment: datetime) -> str:
     return moment.astimezone(UTC).strftime("%Y%m%dT%H%M%S.%fZ")
 
 
-def sweep(projects_folder: Path, log_directory: Path, now: datetime) -> SweepResult:
-    """Copy every Claude session in every project folder that has changed since it was last copied.
+def sweep(own_projects_folder: Path, log_directory: Path, now: datetime) -> SweepResult:
+    """Copy every Claude session, in every Claude projects folder goodall knows, that changed since it was copied.
 
     `goodall start`, `stop` and `status` run this, because a Claude Code
     killed with SIGKILL, or a Mac that lost power, fires no hook, and the
     sweep is then the only thing that copies what the hooks missed.
 
-    It covers every Claude session in the Claude projects folder, not only
-    those a work block's heartbeats named: an eval account is used for the
-    eval and nothing else (ADR 0008), so copying too much is the safer
-    mistake. A Claude session is a `<session id>.jsonl` file, or a
-    `<session id>/` folder, directly inside a project folder; anything else
-    is left alone. Unchanged files cost two stats each and are not read.
+    It covers every Claude session in every Claude projects folder from
+    claude_projects_folders_to_sweep, not only those a work block's
+    heartbeats named: an eval account is used for the eval and nothing else
+    (ADR 0008), so copying too much is the safer mistake. A Claude session
+    is a `<session id>.jsonl` file, or a `<session id>/` folder, directly
+    inside a project folder; anything else is left alone. Unchanged files
+    cost two stats each and are not read.
 
     Never raises for anything on the disk: whatever cannot be read or
     written becomes one of `problems`, and the rest is still copied.
     """
     result = SweepResult()
+    projects_folders, result.problems = claude_projects_folders_to_sweep(own_projects_folder, log_directory)
+    for projects_folder in projects_folders:
+        sweep_projects_folder(projects_folder, log_directory, now, result)
+    try:
+        take_failed_hook_copies(log_directory, now, result)
+        remove_stale_temporary_files(log_directory / TRANSCRIPTS_FOLDER_NAME, now)
+    except OSError as error:
+        result.problems.append(f"Tidying {SYNC_FOLDER_NAME} in the log directory: {describe_error(error)}.")
+    return result
+
+
+def sweep_projects_folder(projects_folder: Path, log_directory: Path, now: datetime, result: SweepResult) -> None:
+    """Copy every changed Claude session in one Claude projects folder, adding what happened to `result`."""
     try:
         project_folder_names = list_folders(projects_folder)
     except OSError as error:
@@ -316,12 +454,6 @@ def sweep(projects_folder: Path, log_directory: Path, now: datetime) -> SweepRes
             if FileOutcome.COPIED in outcomes or FileOutcome.COPIED_AND_EARLIER_COPY_KEPT in outcomes:
                 result.claude_sessions_copied += 1
             result.earlier_copies_kept += outcomes.count(FileOutcome.COPIED_AND_EARLIER_COPY_KEPT)
-    try:
-        take_failed_hook_copies(log_directory, now, result)
-        remove_stale_temporary_files(log_directory / TRANSCRIPTS_FOLDER_NAME, now)
-    except OSError as error:
-        result.problems.append(f"Tidying {SYNC_FOLDER_NAME} in the log directory: {describe_error(error)}.")
-    return result
 
 
 def describe_error(error: OSError) -> str:
@@ -480,19 +612,27 @@ def describe_file_kind(file_status: os.stat_result) -> str:
     return "a special file"
 
 
-@contextmanager
-def claude_session_lock(log_directory: Path, claude_session: str) -> Iterator[None]:
+def claude_session_lock(log_directory: Path, claude_session: str) -> AbstractContextManager[None]:
     """Hold the lock on one Claude session's copies, waiting up to LOCK_WAIT for another copy to finish.
 
     Why: Claude Code runs the PostToolUse hooks of parallel tool calls at
     the same moment. Two copies racing could rename their copies in the
     wrong order, and the later one would then find a copy it is not the
-    start of and keep it aside for nothing. The lock is an advisory
-    `flock`, which the system releases when the process ends, so a killed
-    copy never leaves it held. Raises TimeoutError after LOCK_WAIT.
+    start of and keep it aside for nothing.
+    """
+    return held_lock(log_directory, claude_session, f"another copy of Claude session {claude_session}")
+
+
+@contextmanager
+def held_lock(log_directory: Path, lock_name: str, what_waits: str) -> Iterator[None]:
+    """Hold `transcript-sync/locks/<lock_name>.lock`, waiting up to LOCK_WAIT for whoever holds it.
+
+    The lock is an advisory `flock`, which the system releases when the
+    process ends, so a killed hook never leaves it held. Raises TimeoutError,
+    naming `what_waits`, after LOCK_WAIT.
     """
     lock_folder = make_folders(log_directory, [SYNC_FOLDER_NAME, LOCKS_FOLDER_NAME])
-    descriptor = os.open(lock_folder / f"{claude_session}.lock", os.O_WRONLY | os.O_CREAT, FILE_PERMISSIONS)
+    descriptor = os.open(lock_folder / f"{lock_name}.lock", os.O_WRONLY | os.O_CREAT, FILE_PERMISSIONS)
     try:
         give_up_at = time.monotonic() + LOCK_WAIT.total_seconds()
         while True:
@@ -501,7 +641,7 @@ def claude_session_lock(log_directory: Path, claude_session: str) -> Iterator[No
                 break
             except BlockingIOError:
                 if time.monotonic() > give_up_at:
-                    raise TimeoutError(f"another copy of Claude session {claude_session} took too long") from None
+                    raise TimeoutError(f"{what_waits} took too long") from None
                 time.sleep(LOCK_POLL_SECONDS)
         yield
     finally:
