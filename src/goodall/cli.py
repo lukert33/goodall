@@ -5,8 +5,9 @@ Called by the `goodall` console script (see pyproject.toml) and by
 directly with a captured terminal and a fake runner, and check the returned
 exit code, so `main` returns a number instead of calling `sys.exit` itself.
 
-`goodall status` (goodall.status) and `goodall doctor` (goodall.doctor)
-are built. Every other subcommand is still a stub: it reports that it is not
+`goodall status` (goodall.status), `goodall doctor` (goodall.doctor), and
+`goodall journal` and `goodall intervene` (goodall.entries) are built.
+Every other subcommand is still a stub: it reports that it is not
 built yet and returns `ERROR` (1), not `USAGE_ERROR` (2), because the
 command line was valid and the feature is missing.
 
@@ -27,9 +28,11 @@ Design decisions a reader might otherwise reverse-engineer:
 """
 
 import argparse
+from pathlib import Path
 
-from goodall import exit_codes
+from goodall import exit_codes, records
 from goodall.doctor import run_doctor
+from goodall.entries import DECISION_MEANINGS, EntryRequest, InterventionDetails, run_intervene, run_journal
 from goodall.runner import RealRunner, Runner
 from goodall.status import run_status
 from goodall.terminal import Failure, Terminal
@@ -82,10 +85,77 @@ def build_parser() -> argparse.ArgumentParser:
     )
     status.set_defaults(command_name="status")
 
-    journal = commands.add_parser("journal", help="Add an entry to the eval journal in the record repo.")
+    journal = commands.add_parser(
+        "journal",
+        help="Add an entry to the eval journal in the record repo.",
+        description="Add a journal entry: a note about what was decided or done, and by whom.",
+        epilog=(
+            "examples:\n"
+            '  goodall journal "Chose Postgres over SQLite; I decided, the agent wrote the comparison."\n'
+            "  pbpaste | goodall journal              (several lines, copied first)\n"
+            "  goodall journal --file ~/Desktop/note.txt"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    add_entry_text_arguments(journal, "What was decided or done, and by whom.")
     journal.set_defaults(command_name="journal")
 
-    intervene = commands.add_parser("intervene", help="Log a researcher intervention in the record repo.")
+    # The decisions' meanings come from goodall.entries, so help and failure
+    # messages explain them in the same words.
+    decision_lines = []
+    for decision, meaning in DECISION_MEANINGS.items():
+        decision_lines.append(f"  {decision.ljust(10)} {meaning}")
+    intervene = commands.add_parser(
+        "intervene",
+        help="Add an intervention to the record repo: a moment you stepped in for or over an agent.",
+        description=(
+            "Add an intervention: a moment when you overrode, corrected, redirected or rescued an agent, "
+            "or had to act because the agent could not."
+        ),
+        epilog=(
+            "examples:\n"
+            "  goodall intervene --category agent-limitation --decision modify \\\n"
+            '      "It tried to delete a failing test; I told it to fix the date parsing."\n'
+            "  pbpaste | goodall intervene --category infrastructure --decision escalate\n"
+            "  goodall intervene --category policy-mandated --decision approve --occurred-at 14:05 \\\n"
+            "      --file ~/Desktop/review.txt\n"
+            "\n"
+            "decisions:\n" + "\n".join(decision_lines)
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    add_entry_text_arguments(intervene, "What happened and why.")
+    intervene.add_argument(
+        "--category",
+        metavar="<category>",
+        help="Which of the eval's intervention categories this is, from intervention_categories in eval.toml.",
+    )
+    intervene.add_argument(
+        "--decision",
+        metavar="<decision>",
+        help="What you decided: approve, modify, reject, escalate or terminate (see below).",
+    )
+    intervene.add_argument(
+        "--interrupted",
+        choices=records.INTERRUPTED_ACTIVITIES,
+        help=(
+            "Only if you cut the agent short: what it was doing. generate means writing its reply, tool_call "
+            "running a tool, between_turns neither."
+        ),
+    )
+    intervene.add_argument(
+        "--claude-session",
+        metavar="<session id>",
+        help="The Claude session it happened in, as the Session ID that /status shows in Claude Code.",
+    )
+    intervene.add_argument(
+        "--occurred-at",
+        metavar="<time>",
+        help=(
+            "When it happened, if not just now, on this Mac's clock: a time such as 14:05 (the most recent "
+            "14:05), or a date and time such as '2026-11-16 14:05'."
+        ),
+    )
     intervene.set_defaults(command_name="intervene")
 
     hook = commands.add_parser("hook", help="Handle a Claude Code hook event (called by Claude Code, not by people).")
@@ -115,6 +185,27 @@ def build_parser() -> argparse.ArgumentParser:
     release.set_defaults(command_name="release")
 
     return parser
+
+
+def add_entry_text_arguments(parser: argparse.ArgumentParser, text_help: str) -> None:
+    """Add the ways of giving an entry's text, and --json, which journal and intervene share.
+
+    The text is optional to argparse because it may instead come from
+    --file or from standard input; goodall.entries reports a missing text
+    itself, with examples to copy.
+    """
+    parser.add_argument("text", nargs="?", help=text_help + " Leave it out to pipe the text in instead.")
+    parser.add_argument(
+        "--file",
+        metavar="<path>",
+        type=Path,
+        help="Read the text from this plain text file, for an entry written in TextEdit or another editor.",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Print the result as one JSON document on standard output, for agents and scripts.",
+    )
 
 
 def run_stub(command_name: str, terminal: Terminal) -> int:
@@ -183,5 +274,18 @@ def main(argv: list[str] | None = None, terminal: Terminal | None = None, runner
         return run_status(terminal, as_json=arguments.json)
     if command_name == "doctor":
         return run_doctor(terminal, runner, as_json=arguments.json)
+    if command_name == "journal":
+        entry_request = EntryRequest(text=arguments.text, as_json=arguments.json, text_file=arguments.file)
+        return run_journal(terminal, runner, entry_request)
+    if command_name == "intervene":
+        entry_request = EntryRequest(text=arguments.text, as_json=arguments.json, text_file=arguments.file)
+        intervention_details = InterventionDetails(
+            category=arguments.category,
+            decision=arguments.decision,
+            interrupted=arguments.interrupted,
+            claude_session=arguments.claude_session,
+            occurred_at=arguments.occurred_at,
+        )
+        return run_intervene(terminal, runner, entry_request, intervention_details)
 
     return run_stub(command_name, terminal)

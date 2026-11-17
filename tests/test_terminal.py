@@ -320,3 +320,25 @@ def test_a_passing_check_with_a_note_shows_the_note_beneath_it_and_in_json() -> 
     )
     assert result.as_json()["note"] == result.note
     assert REPORT_RESULTS[4].as_json()["note"] is None
+
+
+def test_commands_to_try_are_shown_one_per_line_and_never_wrapped() -> None:
+    standard_error = io.StringIO()
+    terminal = Terminal(standard_output=io.StringIO(), standard_error=standard_error)
+    long_command = 'goodall intervene --category agent-limitation --decision modify "What happened, and who decided"'
+    failure = Failure(
+        kind="example_text_missing",
+        what_happened="No text was given.",
+        why="Goodall never asks.",
+        what_to_do_next="Pass the text.",
+        commands_to_try=(long_command, "pbpaste | goodall intervene"),
+    )
+
+    terminal.show_failure(failure)
+
+    assert standard_error.getvalue().endswith(f"\n\nTry   {long_command}\n      pbpaste | goodall intervene\n")
+    assert failure.as_json()["commands_to_try"] == [long_command, "pbpaste | goodall intervene"]
+
+
+def test_a_failure_without_commands_to_try_keeps_its_four_json_keys() -> None:
+    assert set(EXAMPLE_FAILURE.as_json()) == {"kind", "what_happened", "why", "what_to_do_next"}

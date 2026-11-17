@@ -9,8 +9,10 @@ and reads back exactly what a contributor would have seen.
 Rules this module keeps (ADR 0012, and "Command-line conventions" in
 AGENTS.md):
 
-- It never asks a question. There is deliberately no input method here; the
-  setup page is the only place goodall asks a person anything.
+- It never asks a question. There is deliberately no prompting method here;
+  the setup page is the only place goodall asks a person anything. The one
+  thing it reads is text piped in with a command (`read_piped_text`), and
+  it never waits on a keyboard for it.
 - Results go to standard output and failures go to standard error, so a
   contributor can redirect results to a file and still see problems. In
   `--json` mode standard output carries exactly one JSON document and
@@ -80,16 +82,31 @@ class Failure:
     `kind` is a short fixed name such as "local_settings_missing". It appears
     only in JSON, so an agent can branch on it without matching English
     sentences, which may be reworded.
+
+    `commands_to_try` holds whole commands a person can copy and run, such
+    as `pbpaste | goodall journal`. They are shown one per line and never
+    wrapped, because a command split across two lines no longer runs when
+    pasted. Most failures have none.
     """
 
     kind: str
     what_happened: str
     why: str
     what_to_do_next: str
+    commands_to_try: tuple[str, ...] = ()
 
-    def as_json(self) -> dict[str, str]:
-        """Return this failure as a dictionary ready for `Terminal.write_json`."""
-        return asdict(self)
+    def as_json(self) -> dict[str, object]:
+        """Return this failure as a dictionary ready for `Terminal.write_json`.
+
+        `commands_to_try` appears only when there are some, so every other
+        failure keeps the four keys it has always had.
+        """
+        document: dict[str, object] = asdict(self)
+        if not self.commands_to_try:
+            del document["commands_to_try"]
+        else:
+            document["commands_to_try"] = list(self.commands_to_try)
+        return document
 
 
 class CheckStatus(StrEnum):
@@ -289,7 +306,12 @@ class Terminal:
     `io.StringIO` objects.
     """
 
-    def __init__(self, standard_output: TextIO | None = None, standard_error: TextIO | None = None) -> None:
+    def __init__(
+        self,
+        standard_output: TextIO | None = None,
+        standard_error: TextIO | None = None,
+        standard_input: TextIO | None = None,
+    ) -> None:
         # Trap: the defaults are looked up now rather than in the signature,
         # so that anything that swaps sys.stdout before goodall runs (pytest's
         # capture, contextlib.redirect_stdout) is respected.
@@ -297,8 +319,13 @@ class Terminal:
             standard_output = sys.stdout
         if standard_error is None:
             standard_error = sys.stderr
+        if standard_input is None:
+            # Trap: sys.stdin is None when goodall is started with standard
+            # input closed; read_piped_text treats that as nothing piped.
+            standard_input = sys.stdin
         self.standard_output = standard_output
         self.standard_error = standard_error
+        self.standard_input: TextIO | None = standard_input
 
         # Measured once, so one command's output never changes width halfway
         # through if the window is resized.
@@ -310,6 +337,23 @@ class Terminal:
         # True once anything has been written to standard output, so the
         # next block knows to start with a blank line.
         self.output_started = False
+
+    def read_piped_text(self, maximum_characters: int) -> str | None:
+        """Return what was piped to standard input, or None when nothing can be piped.
+
+        This is not a question: it reads text that was sent with the command
+        (`pbpaste | goodall journal`), never what a person types in answer to
+        a prompt. So when standard input is a terminal, which means a person
+        at the keyboard and nothing piped, it returns None at once instead of
+        waiting for them to type.
+
+        It reads at most one character more than `maximum_characters`, so a
+        caller can tell the text was too long without goodall ever holding
+        an endless stream in memory.
+        """
+        if self.standard_input is None or self.standard_input.isatty():
+            return None
+        return self.standard_input.read(maximum_characters + 1)
 
     def show_facts(self, facts: list[tuple[str, str]]) -> None:
         """Write labelled facts to standard output, one per line, values lined up in one column.
@@ -355,14 +399,40 @@ class Terminal:
             break_on_hyphens=False,
         )
 
-    def show_failure(self, failure: Failure) -> None:
+    def show_warnings(self, warnings: list[Failure]) -> None:
+        """Write problems that did not stop the command to standard error, labelled WARN instead of FAIL.
+
+        A warning has the same three parts as a failure, because it still
+        needs a next step; only the label says the command itself succeeded.
+        """
+        for position, warning in enumerate(warnings):
+            if position > 0:
+                self.standard_error.write("\n")
+            self.show_failure(warning, label="WARN", label_colour=BOLD_YELLOW)
+
+    def show_failure(self, failure: Failure, label: str = "FAIL", label_colour: str = BOLD_RED) -> None:
         """Write a failure to standard error as three labelled paragraphs."""
         paragraphs = [
-            self.labelled_paragraph("FAIL", failure.what_happened, BOLD_RED),
+            self.labelled_paragraph(label, failure.what_happened, label_colour),
             self.labelled_paragraph("Why", failure.why, BOLD),
             self.labelled_paragraph("Next", failure.what_to_do_next, BOLD),
         ]
+        if failure.commands_to_try:
+            paragraphs.append(self.commands_paragraph(failure.commands_to_try))
         self.standard_error.write("\n\n".join(paragraphs) + "\n")
+
+    def commands_paragraph(self, commands: tuple[str, ...]) -> str:
+        """Commands to copy, labelled "Try", one per line and never wrapped, so each pastes as it stands."""
+        label = "Try".ljust(LABEL_COLUMN_WIDTH)
+        if self.error_colour:
+            label = BOLD + "Try" + RESET + label[len("Try") :]
+        lines = []
+        for position, command in enumerate(commands):
+            if position == 0:
+                lines.append(label + command)
+            else:
+                lines.append(" " * LABEL_COLUMN_WIDTH + command)
+        return "\n".join(lines)
 
     def show_failures(self, failures: list[Failure]) -> None:
         """Write several failures to standard error, one after another, with a blank line between them."""
