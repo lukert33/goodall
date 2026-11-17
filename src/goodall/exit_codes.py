@@ -17,5 +17,13 @@ ERROR = 1
 USAGE_ERROR = 2
 
 # The prompt gate is closed: no work block is active, so the prompt must not
-# go through to the agent. Used by the Claude Code hook path to block a prompt.
+# go through to the agent. For goodall's own commands that report on the
+# gate. Trap: `goodall hook` does not return it; see the next code.
 PROMPT_GATE_CLOSED = 3
+
+# Claude Code's own code for "refuse this prompt". Only `goodall hook
+# UserPromptSubmit` returns it (goodall.hook), because Claude Code refuses a
+# prompt only when a hook exits 2 and treats any other code as a hook error
+# to show while letting the prompt through. It is the same number as
+# USAGE_ERROR because Claude Code chose it, not goodall.
+CLAUDE_CODE_REFUSES_PROMPT = 2

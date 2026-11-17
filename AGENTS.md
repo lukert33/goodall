@@ -88,8 +88,14 @@ first.
 - One command, `goodall`, with subcommands.
 - Commands that agents call offer `--json` with a stable shape.
 - Exit codes: `0` success, `1` error, `2` usage error, `3` the prompt gate is
-  closed.
+  closed. `goodall hook` is the exception: it speaks Claude Code's codes, so it
+  refuses a prompt with `2` and never returns `3` (docs/claude-code-hooks.md).
+- Exit `0` when what was asked is done and nothing is lost, even if goodall
+  still has delivery to finish (shown as a warning); exit `1` only when it
+  did not happen and has to be redone or fixed first.
 - Every failure message says what to do next.
+- Until goodall reaches version 0.9, a message may point at a command that is not
+  built yet, provided that command's stub says how to do the same step by hand.
 
 ## Code style
 

@@ -133,6 +133,10 @@ class Command:
     - `timeout_seconds` is how long it may run before it is killed.
     - `extra_environment` holds environment variables the program gets on
       top of goodall's own environment.
+    - `removed_environment_prefixes`: any variable in goodall's own
+      environment whose name starts with one of these is left out of the
+      program's, so a stray setting (git's `GIT_DIR`, say) cannot steer it.
+      `extra_environment` is applied afterwards, so it can still set one.
     - `working_directory` is the folder it runs in; None means the folder
       goodall was run from.
     """
@@ -142,6 +146,7 @@ class Command:
     timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS
     extra_environment: dict[str, str] = field(default_factory=dict)
     working_directory: Path | None = None
+    removed_environment_prefixes: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         """Refuse an extra environment variable whose name says it holds a secret.
@@ -222,20 +227,25 @@ def first_non_blank_line(text: str) -> str | None:
 
 
 def environment_for(command: Command) -> dict[str, str]:
-    """The environment `command`'s program runs with: all of goodall's own, plus its extra variables.
+    """The environment `command`'s program runs with: goodall's own, plus its extra variables.
 
-    Nothing is taken out. That matters for 1Password: on a Mac that runs
-    unattended, op signs in with a service account token it reads from
-    OP_SERVICE_ACCOUNT_TOKEN, so that variable must reach op unchanged.
-    Goodall never reads the value; it only passes it on, as it passes on
-    PATH.
+    Nothing is taken out unless the command asks for it by naming prefixes
+    in `removed_environment_prefixes` (record repo operations remove git's
+    own variables that way). That matters for 1Password: on a Mac that
+    runs unattended, op signs in with a service account token it reads
+    from OP_SERVICE_ACCOUNT_TOKEN, so that variable must reach op
+    unchanged. Goodall never reads the value; it only passes it on, as it
+    passes on PATH.
 
     Built only as the program starts, and never stored in a `Command` or a
     `CommandResult`, so no message or exception made from those can hold a
     secret from the environment. A function of its own so a test can see
     what the real runner would give a command that the fake runner ran.
     """
-    environment = dict(os.environ)
+    environment = {}
+    for name, value in os.environ.items():
+        if not name.startswith(tuple(command.removed_environment_prefixes)):
+            environment[name] = value
     environment.update(command.extra_environment)
     return environment
 

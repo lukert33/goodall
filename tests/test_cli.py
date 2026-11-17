@@ -13,9 +13,11 @@ is added to the parser it must be added here too, or
 import argparse
 import contextlib
 import io
+from pathlib import Path
 
 from goodall import cli, exit_codes
 from goodall.fake_runner import FakeRunner
+from goodall.terminal import Terminal
 
 # Each entry is the words a user types after `goodall`. The hook command also
 # needs an event name, which `arguments_for` supplies.
@@ -24,6 +26,7 @@ PLANNED_COMMANDS = [
     "doctor",
     "start",
     "stop",
+    "fixblock",
     "status",
     "journal",
     "intervene",
@@ -110,9 +113,11 @@ def test_old_session_command_is_unknown() -> None:
 
 
 def test_start_accepts_a_workstream() -> None:
+    # The option is accepted, so goodall goes on to look for local settings,
+    # which this test has none of.
     exit_code, output = run_goodall(["start", "--workstream", "research"])
     assert exit_code == exit_codes.ERROR
-    assert "goodall start is not built yet" in output
+    assert "No local settings were found" in output
 
 
 def test_start_workstream_option_needs_a_name() -> None:
@@ -134,7 +139,7 @@ def test_group_without_subcommand_is_usage_error() -> None:
 
 
 # Commands that do something real, so they no longer report "not built yet".
-BUILT_COMMANDS = ["status", "doctor"]
+BUILT_COMMANDS = ["status", "doctor", "journal", "intervene", "start", "stop", "fixblock", "hook"]
 
 
 def test_every_stub_returns_error_and_names_itself() -> None:
@@ -146,6 +151,14 @@ def test_every_stub_returns_error_and_names_itself() -> None:
         assert f"goodall {command_name} is not built yet" in output
 
 
+def test_every_stub_says_what_to_do_by_hand_in_the_meantime() -> None:
+    for command_name in PLANNED_COMMANDS:
+        if command_name in BUILT_COMMANDS:
+            continue
+        _, output = run_goodall(arguments_for(command_name))
+        assert "By hand:" in output, f"goodall {command_name} gives no by-hand way"
+
+
 def test_no_stub_points_a_researcher_at_goodall_s_own_tooling() -> None:
     # A researcher reads these; goodall's issue tracker means nothing to them.
     for command_name in PLANNED_COMMANDS:
@@ -154,6 +167,12 @@ def test_no_stub_points_a_researcher_at_goodall_s_own_tooling() -> None:
         _, output = run_goodall(arguments_for(command_name))
         assert "bd " not in output, f"goodall {command_name} mentions bd"
         assert "goodall repo" not in output, f"goodall {command_name} mentions the goodall repo"
+
+
+def test_onboard_stub_names_the_two_by_hand_steps() -> None:
+    _, output = run_goodall(["onboard"])
+    assert "local-settings.toml" in output
+    assert "docs/claude-code-hooks.md" in output
 
 
 def test_onboard_stub_says_how_to_set_up_an_eval_account_by_hand() -> None:
@@ -168,10 +187,52 @@ def test_onboard_stub_says_how_to_set_up_an_eval_account_by_hand() -> None:
     assert "~/.config/goodall/" in one_line
 
 
-def test_hook_without_event_name_is_usage_error() -> None:
-    exit_code, output = run_goodall(["hook"])
-    assert exit_code == exit_codes.USAGE_ERROR
-    assert "event_name" in output
+def test_a_stub_that_a_goodall_message_points_at_has_a_real_by_hand_way() -> None:
+    # Until goodall reaches 0.9 (AGENTS.md), a message may point at a command
+    # that is not built, but only if that command's stub says how to do the
+    # step by hand. The default "Nothing for now" does not count.
+    source_folder = Path(cli.__file__).parent
+    source_text = ""
+    for source_file in source_folder.glob("*.py"):
+        if source_file.name != "cli.py":
+            source_text += source_file.read_text()
+    for command_name in PLANNED_COMMANDS:
+        if command_name in BUILT_COMMANDS:
+            continue
+        if f"goodall {command_name}" in source_text:
+            _, output = run_goodall(arguments_for(command_name))
+            assert "Nothing for now" not in output, f"a message points at goodall {command_name}, which has no way"
+
+
+class KeyboardInput(io.StringIO):
+    """Standard input that says it is a terminal: a person typing, nothing piped."""
+
+    def isatty(self) -> bool:
+        return True
+
+
+def test_hook_without_event_name_run_by_a_person_is_an_error_that_shows_the_fix() -> None:
+    # Claude Code reads exit 2 as "refuse the prompt" or "do not stop", so a
+    # hook command missing its event name must exit 1, which Claude Code
+    # shows as a hook error and otherwise ignores.
+    standard_error = io.StringIO()
+    terminal = Terminal(standard_output=io.StringIO(), standard_error=standard_error, standard_input=KeyboardInput())
+
+    exit_code = cli.main(["hook"], terminal=terminal, runner=FakeRunner())
+
+    assert exit_code == exit_codes.ERROR
+    assert "goodall hook UserPromptSubmit" in standard_error.getvalue()
+
+
+def test_hook_without_event_name_from_claude_code_is_an_error_that_prints_nothing() -> None:
+    standard_output = io.StringIO()
+    standard_error = io.StringIO()
+    terminal = Terminal(standard_output, standard_error, standard_input=io.StringIO("{cut short"))
+
+    exit_code = cli.main(["hook"], terminal=terminal, runner=FakeRunner())
+
+    assert exit_code == exit_codes.ERROR
+    assert standard_output.getvalue() == standard_error.getvalue() == ""
 
 
 def test_unknown_command_is_usage_error() -> None:

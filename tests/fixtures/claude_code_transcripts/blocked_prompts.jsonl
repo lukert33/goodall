@@ -1,0 +1,8 @@
+{"type":"queue-operation","operation":"enqueue","timestamp":"2026-03-07T09:00:00.000Z","sessionId":"session-s","content":"Start the example task."}
+{"type":"system","uuid":"s-0002","parentUuid":null,"sessionId":"session-s","timestamp":"2026-03-07T09:00:00.200Z","isSidechain":false,"subtype":"informational","level":"warning","content":"UserPromptSubmit operation blocked by hook: [example-gate]: No work block is active. Start one first."}
+{"type":"last-prompt","sessionId":"session-s","lastPrompt":"Start the example task.","leafUuid":"s-0002"}
+{"type":"system","uuid":"s-0004","parentUuid":"s-0002","sessionId":"session-s","timestamp":"2026-03-07T09:01:00.000Z","isSidechain":false,"subtype":"informational","level":"warning","content":"An example warning about something else."}
+{"type":"queue-operation","operation":"enqueue","timestamp":"2026-03-07T09:02:00.000Z","sessionId":"session-s","content":"Second example prompt."}
+{"type":"queue-operation","operation":"dequeue","timestamp":"2026-03-07T09:02:00.010Z","sessionId":"session-s"}
+{"type":"user","uuid":"u-0007","parentUuid":"s-0004","sessionId":"session-s","timestamp":"2026-03-07T09:02:00.020Z","isSidechain":false,"origin":{"kind":"human"},"message":{"role":"user","content":"Second example prompt."}}
+{"type":"system","uuid":"s-0008","parentUuid":"u-0007","sessionId":"session-s","timestamp":"2026-03-07T09:03:00.000Z","isSidechain":false,"subtype":"informational","level":"warning","content":"UserPromptSubmit operation blocked by hook: [example-gate]: No work block is active. Start one first."}

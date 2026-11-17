@@ -14,6 +14,11 @@ def test_exit_codes_have_documented_values() -> None:
     assert exit_codes.PROMPT_GATE_CLOSED == 3
 
 
+def test_the_hook_refuses_a_prompt_with_claude_codes_own_code() -> None:
+    # Claude Code refuses a prompt only when its hook exits 2.
+    assert exit_codes.CLAUDE_CODE_REFUSES_PROMPT == 2
+
+
 def test_old_session_gate_name_is_gone() -> None:
     # The closed-gate code was renamed to match the glossary's "prompt gate".
     # Keeping the old name as an alias would let "session" creep back in.

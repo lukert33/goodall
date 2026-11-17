@@ -56,6 +56,7 @@ from pathlib import Path
 
 from goodall.local_settings import LocalSettings, is_whole_number
 from goodall.quoting import can_show_name, toml_error_as_shown
+from goodall.records import UNKNOWN_WORKSTREAM
 from goodall.secrets_manager import looks_like_a_secret_reference
 from goodall.terminal import Failure
 
@@ -346,6 +347,12 @@ def read_name_list(config_file: Path, table: dict[str, object], key: str, proble
         else:
             problems.append(duplicate_failure(config_file, f"{key} lists one name more than once"))
     if duplicates:
+        return None
+    # Trap: goodall records `unknown` when it cannot tell which workstream a
+    # work block was for, so a real workstream by that name would make those
+    # work blocks look attributed.
+    if key == "workstreams" and UNKNOWN_WORKSTREAM in names:
+        problems.append(reserved_workstream_failure(config_file))
         return None
     return names
 
@@ -754,6 +761,25 @@ def duplicate_failure(config_file: Path, what_is_repeated: str) -> Failure:
             "person or workstream."
         ),
         what_to_do_next=f"Remove or rename the repeated entry in {config_file} so each appears once.",
+    )
+
+
+def reserved_workstream_failure(config_file: Path) -> Failure:
+    """The failure for a workstream named `unknown`, which goodall keeps for work blocks it cannot attribute."""
+    return Failure(
+        kind="eval_config_reserved_name",
+        what_happened=(
+            f"In the eval config at {config_file}, workstreams lists {UNKNOWN_WORKSTREAM}, but the name "
+            f"{UNKNOWN_WORKSTREAM} is reserved."
+        ),
+        why=(
+            f"Goodall records a work block with the workstream {UNKNOWN_WORKSTREAM} when it cannot tell which "
+            "workstream it was for, until someone says which with goodall fixblock. A real workstream by that name "
+            "would be mixed up with those."
+        ),
+        what_to_do_next=(
+            f"Rename that workstream in {config_file} to a name that says what the work is, such as other or general."
+        ),
     )
 
 

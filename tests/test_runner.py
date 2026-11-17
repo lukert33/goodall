@@ -127,6 +127,24 @@ def test_extra_environment_variables_reach_the_program_alongside_goodalls_own() 
     assert result.standard_output == "on True\n"
 
 
+def test_environment_variables_with_a_removed_prefix_never_reach_the_program(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GOODALL_STRAY_ONE", "from outside")
+    monkeypatch.setenv("GOODALL_STRAY_TWO", "from outside")
+    script = (
+        'import os; print(sorted(name for name in os.environ if name.startswith("GOODALL_STRAY")), '
+        '"PATH" in os.environ)'
+    )
+    command = Command(
+        [PYTHON, "-c", script],
+        removed_environment_prefixes=["GOODALL_STRAY"],
+        extra_environment={"GOODALL_STRAY_KEPT": "set by goodall"},
+    )
+
+    result = RealRunner().run(command)
+
+    assert result.standard_output == "['GOODALL_STRAY_KEPT'] True\n"
+
+
 def test_a_command_runs_in_the_folder_it_names(tmp_path: Path) -> None:
     command = Command([PYTHON, "-c", "import os; print(os.getcwd())"], working_directory=tmp_path)
 
