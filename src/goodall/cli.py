@@ -1,12 +1,14 @@
 """The `goodall` command line: parses arguments and runs one subcommand.
 
 Called by the `goodall` console script (see pyproject.toml) and by
-`python -m goodall`. Tests call `main(argv)` directly and check the returned
-exit code, so `main` returns a number instead of calling `sys.exit` itself.
+`python -m goodall`. Tests call `main(argv, terminal=...)` directly with a
+captured terminal and check the returned exit code, so `main` returns a
+number instead of calling `sys.exit` itself.
 
-Every subcommand is a stub for now. Each one prints that it is not built yet
-and returns `ERROR` (1), not `USAGE_ERROR` (2): the command line was valid,
-the feature is missing.
+`goodall status` is built (see goodall.status). Every other subcommand is
+still a stub: it reports that it is not built yet and returns `ERROR` (1),
+not `USAGE_ERROR` (2), because the command line was valid and the feature is
+missing.
 
 Design decisions a reader might otherwise reverse-engineer:
 
@@ -16,15 +18,18 @@ Design decisions a reader might otherwise reverse-engineer:
 - argparse normally calls `sys.exit` on a usage error (and after `--help`).
   `main` catches that `SystemExit` and returns its code, so callers always get
   a number back.
-- Output is printed directly here for now. AGENTS.md invariant 9 says all
-  terminal input and output goes through one UI module; the stubs move to
-  that module when it exists.
+- Everything goodall says goes through the `Terminal` passed to `main`
+  (goodall.terminal). The one exception is argparse's own help and usage
+  messages, which argparse prints itself.
+- `main` will also accept a runner, the one gateway for starting other
+  programs (ADR 0011), once that module exists; no command needs it yet.
 """
 
 import argparse
-import sys
 
 from goodall import exit_codes
+from goodall.status import run_status
+from goodall.terminal import Failure, Terminal
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -62,6 +67,11 @@ def build_parser() -> argparse.ArgumentParser:
     stop.set_defaults(command_name="stop")
 
     status = commands.add_parser("status", help="Show whether a work block is active.")
+    status.add_argument(
+        "--json",
+        action="store_true",
+        help="Print the result as one JSON document on standard output, for agents and scripts.",
+    )
     status.set_defaults(command_name="status")
 
     journal = commands.add_parser("journal", help="Add an entry to the eval journal in the record repo.")
@@ -99,26 +109,33 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def run_stub(command_name: str) -> int:
+def run_stub(command_name: str, terminal: Terminal) -> int:
     """Report that a planned command has no implementation yet.
 
     Returns ERROR rather than USAGE_ERROR because the user typed a valid
     command; it is goodall that cannot do it yet.
     """
-    print(
-        f"goodall {command_name} is not built yet. "
-        "Nothing was changed. Check `bd ready` in the goodall repo for progress.",
-        file=sys.stderr,
+    terminal.show_failure(
+        Failure(
+            kind="not_built",
+            what_happened=f"goodall {command_name} is not built yet. Nothing was changed.",
+            why="This command is planned, but nobody has written it yet.",
+            what_to_do_next="Check bd ready in the goodall repo for progress.",
+        )
     )
     return exit_codes.ERROR
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None, terminal: Terminal | None = None) -> int:
     """Run goodall with the given arguments and return its exit code.
 
-    `argv` defaults to the real command line. Passing a list lets tests run
-    commands without a subprocess.
+    `argv` defaults to the real command line. `terminal` defaults to one
+    writing to the real standard output and standard error. Passing both lets
+    a test run any command without a subprocess and read back what it
+    printed.
     """
+    if terminal is None:
+        terminal = Terminal()
     parser = build_parser()
 
     try:
@@ -135,7 +152,10 @@ def main(argv: list[str] | None = None) -> int:
         # No command, or a group like `export` without its subcommand:
         # show the most specific help available and treat it as a usage error.
         group_parser = getattr(arguments, "group_parser", parser)
-        group_parser.print_help(sys.stderr)
+        group_parser.print_help(terminal.standard_error)
         return exit_codes.USAGE_ERROR
 
-    return run_stub(command_name)
+    if command_name == "status":
+        return run_status(terminal, as_json=arguments.json)
+
+    return run_stub(command_name, terminal)
