@@ -1114,8 +1114,10 @@ def test_a_secret_looking_name_in_the_shared_env_file_fails_saying_to_move_it_to
         assert "RECOGNISABLEFAKEVALUE" not in printed
     assert "  FAIL        The shared env file holds no secrets\n" in standard_output
     document = json.loads(json_output)
+    # The key is reported for its format, the most certain reason; the
+    # other variable for its name.
     assert failure_kinds(document, "secrets.shared_env_file_holds_no_secrets") == [
-        "shared_env_file_secret_name",
+        "shared_env_file_value_is_a_key",
         "shared_env_file_secret_name",
     ]
     shared_check = check_document(document, "secrets.shared_env_file_holds_no_secrets")
@@ -1171,12 +1173,122 @@ def test_a_secret_reference_in_the_shared_env_file_fails_because_it_would_not_be
     assert "move this to the env file as a reference" in next_step
 
 
+# Synthetic values in each recognised key format (goodall.quoting.KEY_FORMATS),
+# with the issuer the failure names. Each is built from two pieces, so a
+# secret scanner reading this file does not mistake it for a leaked key.
+KEYS_IN_RECOGNISED_FORMATS = {
+    "Anthropic": "sk-" + "ant-api03-SYNTHETICsyntheticSYNTHETIC",
+    "OpenAI project": "sk-" + "proj-SYNTHETICsyntheticSYNTHETIC0123",
+    "OpenAI": "sk-" + "SYNTHETICsyntheticSYNTHETICsynthetic0123",
+    "GitHub classic": "ghp_" + "SYNTHETICsyntheticSYNTHETICsynthetic",
+    "GitHub OAuth": "gho_" + "SYNTHETICsyntheticSYNTHETICsynthetic",
+    "GitHub user-to-server": "ghu_" + "SYNTHETICsyntheticSYNTHETICsynthetic",
+    "GitHub server-to-server": "ghs_" + "SYNTHETICsyntheticSYNTHETICsynthetic",
+    "GitHub refresh": "ghr_" + "SYNTHETICsyntheticSYNTHETICsynthetic",
+    "GitHub fine-grained": "github_pat_" + "SYNTHETICsynthetic_SYNTHETICsynthetic",
+    "AWS access key id": "AKIA" + "SYNTHETIC0000000",
+    "AWS temporary access key id": "ASIA" + "SYNTHETIC0000000",
+    "Slack bot": "xoxb-" + "0000000000-SYNTHETICsynthetic",
+    "Slack user": "xoxp-" + "0000000000-SYNTHETICsynthetic",
+    "Slack app": "xoxa-" + "0000000000-SYNTHETICsynthetic",
+    "Google": "AIza" + "SyntheticSYNTHETICsyntheticSYNTHETI",
+    "1Password service account": "ops_" + "SYNTHETICsynthetic" * 3,
+    "PEM private key": "-----BEGIN " + "PRIVATE KEY-----SYNTHETIC",
+    "PEM RSA private key": "-----BEGIN " + "RSA PRIVATE KEY-----SYNTHETIC",
+    "JSON Web Token": "eyJ" + "SYNTHETICsynthetic.eyJSYNTHETICsynthetic.SYNTHETICsynthetic",
+}
+
+
+@pytest.mark.parametrize("key_format", list(KEYS_IN_RECOGNISED_FORMATS))
+def test_a_value_in_a_recognised_key_format_in_the_shared_env_file_fails_without_showing_it(
+    healthy_account: EvalAccount, key_format: str
+) -> None:
+    key = KEYS_IN_RECOGNISED_FORMATS[key_format]
+    # Quoted, because a PEM header holds spaces. The name says nothing about
+    # a secret, so only the value's format can catch it.
+    healthy_account.shared_env_file.write_text(VALID_SHARED_ENV_FILE_TEXT + f'DEPLOY_SETTING="{key}"\n')
+
+    exit_code, standard_output, standard_error = run_goodall(["doctor"])
+    json_exit_code, json_output, json_error = run_goodall(["doctor", "--json"])
+
+    assert exit_code == json_exit_code == exit_codes.ERROR
+    for printed in [standard_output, standard_error, json_output, json_error]:
+        assert "SYNTHETIC" not in printed
+    assert "  FAIL        The shared env file holds no secrets\n" in standard_output
+    document = json.loads(json_output)
+    assert failure_kinds(document, "secrets.shared_env_file_holds_no_secrets") == ["shared_env_file_value_is_a_key"]
+    shared_check = check_document(document, "secrets.shared_env_file_holds_no_secrets")
+    assert isinstance(shared_check["detail"], str)
+    assert "The value of DEPLOY_SETTING, on line 6 of the shared env file" in shared_check["detail"]
+    next_step = shared_check["next_step"]
+    assert isinstance(next_step, str)
+    assert "Delete line 6 of" in next_step
+    assert "If the shared env file was ever committed or pushed, treat the key as exposed" in next_step
+    assert "A secret belongs in 1Password, with a secret reference to it in the env file at" in next_step
+
+
+def test_a_key_under_a_name_that_could_be_a_secret_is_reported_by_its_line_alone(
+    healthy_account: EvalAccount,
+) -> None:
+    key = KEYS_IN_RECOGNISED_FORMATS["GitHub classic"]
+    healthy_account.shared_env_file.write_text(VALID_SHARED_ENV_FILE_TEXT + f"{PASTED_BASE64_TOKEN}={key}\n")
+
+    exit_code, standard_output, _ = run_goodall(["doctor", "--json"])
+
+    assert exit_code == exit_codes.ERROR
+    assert "SYNTHETIC" not in standard_output
+    document = json.loads(standard_output)
+    assert failure_kinds(document, "secrets.shared_env_file_holds_no_secrets") == ["shared_env_file_value_is_a_key"]
+    detail = check_document(document, "secrets.shared_env_file_holds_no_secrets")["detail"]
+    assert isinstance(detail, str)
+    assert "the variable whose name goodall does not show, on line 6" in detail
+
+
+def test_a_key_pasted_as_a_name_in_the_shared_env_file_fails_by_its_line_number(healthy_account: EvalAccount) -> None:
+    # A key with no dash in its format reads as a variable name.
+    key = KEYS_IN_RECOGNISED_FORMATS["AWS access key id"]
+    healthy_account.shared_env_file.write_text(VALID_SHARED_ENV_FILE_TEXT + f"{key}=x\n")
+
+    exit_code, standard_output, _ = run_goodall(["doctor", "--json"])
+
+    assert exit_code == exit_codes.ERROR
+    assert "SYNTHETIC" not in standard_output
+    document = json.loads(standard_output)
+    assert failure_kinds(document, "secrets.shared_env_file_holds_no_secrets") == ["shared_env_file_name_is_a_key"]
+    detail = check_document(document, "secrets.shared_env_file_holds_no_secrets")["detail"]
+    assert isinstance(detail, str)
+    assert detail.startswith("Line 6 of the shared env file at ")
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        # A UUID, a 40-character git commit id and a short word: long
+        # identifiers and ordinary settings, not keys.
+        "123e4567-e89b-12d3-a456-426614174000",
+        "9fceb02d0ae598e95dc970b74767f19372d61af8",
+        "otlp",
+    ],
+)
+def test_identifiers_and_ordinary_words_in_the_shared_env_file_do_not_fail(
+    healthy_account: EvalAccount, value: str
+) -> None:
+    healthy_account.shared_env_file.write_text(VALID_SHARED_ENV_FILE_TEXT + f"SOME_SETTING={value}\n")
+
+    exit_code, document = doctor_json()
+
+    assert exit_code == exit_codes.SUCCESS
+    assert check_document(document, "secrets.shared_env_file_holds_no_secrets")["status"] in ["pass", "warn"]
+
+
 @pytest.mark.parametrize(
     "line",
     [
-        f"SOME_SETTING={PASTED_KEY}",
         'OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer RECOGNISABLEFAKEVALUE0123456789abcdef"',
         "AWS_ID=AKIARECOGNISABLEFAKEVALUE7",
+        # A long identifier is shaped like a token too, which is why an
+        # anonymous token shape only warns.
+        "BUILD_COMMIT=9fceb02d0ae598e95dc970b74767f19372d61af8",
     ],
 )
 def test_a_value_in_the_shared_env_file_that_looks_like_a_random_token_is_a_warning(

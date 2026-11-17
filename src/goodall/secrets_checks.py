@@ -23,10 +23,12 @@ Two further judgements, beyond what ADR 0010 settles:
   it names the vaults and items an eval's secrets are kept in, and an
   account that could change it could point a program at another secret.
 - In the shared env file, a value that is a secret reference fails, because
-  nothing would resolve it; a value shaped like a key or token only warns,
-  because that is a guess (goodall.quoting.looks_like_a_random_token).
-  The same goes for a variable name shaped like a key or token: a base64
-  token pasted with its = padding reads as a name.
+  nothing would resolve it. A value in a recognised key format, such as
+  Anthropic's `sk-ant-`, fails too, because that is close to certain
+  (goodall.quoting.key_format_in). A value merely shaped like a long random
+  token only warns, because UUIDs and git commit ids share that shape
+  (goodall.quoting.looks_like_a_random_token). Variable names get the same
+  two rules: a base64 token pasted with its = padding reads as a name.
 
 The most important rule in this module: no value from either file ever
 appears in a message, because any of them could be a key pasted by mistake,
@@ -61,7 +63,7 @@ from goodall.checks import Check, CheckContext, CheckOutcome, could_not_verify, 
 from goodall.env_files import EnvEntry, EnvFileNotRead, EnvLineProblem, read_env_file, variable_as_shown
 from goodall.local_settings import LocalSettings
 from goodall.program_checks import TOOLS_GROUP, check_program_installed
-from goodall.quoting import looks_like_a_random_token
+from goodall.quoting import KeyFormat, key_format_in, looks_like_a_random_token
 from goodall.runner import looks_like_a_secret_name
 from goodall.secrets_manager import (
     DISPLAY_NAMES,
@@ -284,13 +286,23 @@ def check_shared_env_file_holds_no_secrets(context: CheckContext) -> CheckOutcom
     for line_problem in reading.problems:
         problems.append(shared_env_file_line_failure(shared_env_file, line_problem))
     for entry in reading.entries:
-        if looks_like_a_secret_name(entry.name):
+        value_key_format = key_format_in(entry.value)
+        name_key_format = key_format_in(entry.name)
+        if value_key_format is not None:
+            problems.append(
+                shared_env_file_key_failure(shared_env_file, entry, value_key_format, local_settings, in_name=False)
+            )
+        elif looks_like_a_secret_name(entry.name):
             problems.append(
                 shared_env_file_secret_name_failure(shared_env_file, entry.name, entry.line_number, local_settings)
             )
         elif looks_like_a_secret_reference(entry.value):
             problems.append(
                 shared_env_file_secret_reference_failure(shared_env_file, entry.name, entry.line_number, local_settings)
+            )
+        elif name_key_format is not None:
+            problems.append(
+                shared_env_file_key_failure(shared_env_file, entry, name_key_format, local_settings, in_name=True)
             )
         elif looks_like_a_random_token(entry.name):
             suspicions.append(shared_env_file_name_looks_secret_failure(shared_env_file, entry.line_number))
@@ -393,6 +405,48 @@ def shared_env_file_secret_name_failure(
             f"{shared_env_file}, and add {name} to {env_file} with its secret reference, of the form "
             f"{reference_form}. If the value was a real secret, change it with whoever issued it, because it "
             "may already have been committed."
+        ),
+    )
+
+
+def shared_env_file_key_failure(
+    shared_env_file: Path, entry: EnvEntry, key_format: KeyFormat, local_settings: LocalSettings, in_name: bool
+) -> Failure:
+    """The failure for a key in a recognised format in the shared env file, in a value or pasted as a name.
+
+    A failure, not a warning like an anonymous token shape, because a
+    recognised prefix is close to certain. Nothing of the key is shown,
+    only what kind of key it is; when the key is the name, the variable is
+    referred to by its line alone. The shared env file is committed, so
+    the next step assumes the key may already be public.
+    """
+    env_file = env_file_path(local_settings)
+    display_name = DISPLAY_NAMES[local_settings.secrets_manager]
+    reference_form = REFERENCE_FORMS[local_settings.secrets_manager]
+    if in_name:
+        kind = "shared_env_file_name_is_a_key"
+        what_happened = (
+            f"Line {entry.line_number} of the shared env file at {shared_env_file} starts with what has the "
+            f"format of {key_format.described}. Goodall does not show it."
+        )
+    else:
+        kind = "shared_env_file_value_is_a_key"
+        what_happened = (
+            f"The value of {variable_as_shown(entry.name)}, on line {entry.line_number} of the shared env file at "
+            f"{shared_env_file}, has the format of {key_format.described}. Goodall does not show it."
+        )
+    return Failure(
+        kind=kind,
+        what_happened=what_happened,
+        why=(
+            "The shared env file is committed to the record repo, which every contributor can read and which "
+            "may be published, so it must never hold a secret."
+        ),
+        what_to_do_next=(
+            f"Delete line {entry.line_number} of {shared_env_file}, and commit the change to the record repo. If "
+            "the shared env file was ever committed or pushed, treat the key as exposed: revoke it with "
+            f"{key_format.issuer} and create a new one. A secret belongs in {display_name}, with a secret "
+            f"reference to it in the env file at {env_file}, of the form {reference_form}."
         ),
     )
 
