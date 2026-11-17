@@ -13,12 +13,16 @@ was seen to use in the hook spike (goodall-fs9.1, `bd memories transcript`):
     <projects folder>/<project folder>/<session id>.jsonl
     <projects folder>/<project folder>/<session id>/subagents/agent-<id>.jsonl
                                                    (with .meta.json and .prefix.json beside it)
+
+and, as a listing of a real projects folder's file names showed (no file
+was opened), `custom-title.json` and `tool-results/` inside `<session id>/`.
 """
 
 import fcntl
 import io
 import json
 import os
+import stat
 import subprocess
 import sys
 import time
@@ -204,6 +208,143 @@ def test_a_hook_copies_the_claude_sessions_subagent_files_in_the_same_layout(tmp
         f"{PROJECT_FOLDER_NAME}/{CLAUDE_SESSION}.jsonl": FIRST_LINES,
         **expected_subagent_files,
     }
+
+
+# A PNG's first bytes: binary, not text, and not valid UTF-8.
+PNG_BYTES = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01"
+
+
+def write_whole_claude_session_folder(eval_account: EvalAccount) -> dict[str, bytes]:
+    """Fill `<session id>/` with every kind of file Claude Code 2.1.x was seen to keep there, and more.
+
+    The names follow what a Claude projects folder holds (listed by name
+    only): `custom-title.json` directly inside, `subagents/`, and
+    `tool-results/` with text, images and a `pdf-<id>/` folder of pages.
+    A folder nested a dozen levels deep and an unknown kind of file stand
+    for whatever a later Claude Code version adds. Returns the files as the
+    copy should hold them.
+    """
+    session_folder = eval_account.project_folder / CLAUDE_SESSION
+    deep_folder = Path("future-feature") / "/".join(f"level-{number}" for number in range(12))
+    session_files = {
+        Path("custom-title.json"): b'{"title":"Fix the tests"}',
+        Path("subagents") / "agent-a1b2c3.jsonl": b'{"type":"user","isSidechain":true}\n',
+        Path("subagents") / "agent-a1b2c3.meta.json": b'{"agentType":"Explore"}',
+        Path("subagents") / "nested" / "agent-d4e5f6.jsonl": b'{"type":"user"}\n',
+        Path("tool-results") / "toolu_01ABC.txt": b"3 passed\n",
+        Path("tool-results") / "toolu_01DEF.png": PNG_BYTES,
+        Path("tool-results") / "mcp-0f6c1d2e-page.html": b"<p>Caf\xc3\xa9</p>",
+        Path("tool-results") / "pdf-5b8e2a71-9c04-4d3f-b6a2-17e0c9d4f8a3" / "page-1.jpg": b"\xff\xd8\xff\xe0",
+        deep_folder / "something.unknown": b"\x00\x01\x02",
+        Path(".hidden-file"): b"hidden\n",
+    }
+    expected = {}
+    for relative_path, contents in session_files.items():
+        (session_folder / relative_path).parent.mkdir(parents=True, exist_ok=True)
+        (session_folder / relative_path).write_bytes(contents)
+        expected[f"{PROJECT_FOLDER_NAME}/{CLAUDE_SESSION}/{relative_path}"] = contents
+    return expected
+
+
+def test_a_hook_copies_the_whole_claude_session_folder_byte_for_byte_in_claude_codes_layout(tmp_path: Path) -> None:
+    eval_account = make_eval_account(tmp_path)
+    eval_account.transcript.write_bytes(FIRST_LINES)
+    expected_session_files = write_whole_claude_session_folder(eval_account)
+
+    completed = run_hook(eval_account, "PostToolUse", hook_input(eval_account, "PostToolUse", tool_name="Read"))
+
+    assert (completed.returncode, completed.stdout, completed.stderr) == (0, "", "")
+    assert files_and_bytes(eval_account.copied_transcripts) == {
+        f"{PROJECT_FOLDER_NAME}/{CLAUDE_SESSION}.jsonl": FIRST_LINES,
+        **expected_session_files,
+    }
+    for copied_path in eval_account.copied_transcripts.rglob("*"):
+        expected_mode = 0o700 if copied_path.is_dir() else 0o600
+        assert stat.S_IMODE(copied_path.stat().st_mode) == expected_mode, copied_path
+    # Nothing failed, so nothing was noted for goodall status.
+    assert not (eval_account.log_directory / "transcript-sync" / "failed-copies.jsonl").exists()
+
+
+def test_a_session_file_rewritten_in_place_is_copied_again_and_its_earlier_copy_kept_aside(tmp_path: Path) -> None:
+    eval_account = make_eval_account(tmp_path)
+    eval_account.transcript.write_bytes(FIRST_LINES)
+    meta_file = eval_account.project_folder / CLAUDE_SESSION / "subagents" / "agent-a1b2c3.meta.json"
+    meta_file.parent.mkdir(parents=True)
+    meta_file.write_bytes(b'{"agentType":"Explore","status":"running"}')
+    run_hook(eval_account, "PostToolUse", hook_input(eval_account, "PostToolUse", tool_name="Agent"))
+    # Rewritten in place, not appended to: the new contents do not start with the old.
+    meta_file.write_bytes(b'{"agentType":"Explore","status":"done"}')
+
+    completed = run_hook(eval_account, "Stop", hook_input(eval_account, "Stop"))
+
+    assert completed.returncode == 0
+    meta_name = f"{PROJECT_FOLDER_NAME}/{CLAUDE_SESSION}/subagents/agent-a1b2c3.meta.json"
+    assert files_and_bytes(eval_account.copied_transcripts)[meta_name] == b'{"agentType":"Explore","status":"done"}'
+    assert superseded_copies(eval_account) == {meta_name: b'{"agentType":"Explore","status":"running"}'}
+
+
+def test_a_session_file_that_disappears_from_claude_codes_folder_keeps_its_copy(tmp_path: Path) -> None:
+    eval_account = make_eval_account(tmp_path)
+    eval_account.transcript.write_bytes(FIRST_LINES)
+    tool_result = eval_account.project_folder / CLAUDE_SESSION / "tool-results" / "toolu_01ABC.txt"
+    tool_result.parent.mkdir(parents=True)
+    tool_result.write_bytes(b"3 passed\n")
+    run_hook(eval_account, "PostToolUse", hook_input(eval_account, "PostToolUse", tool_name="Bash"))
+    tool_result.unlink()
+    tool_result.parent.rmdir()
+
+    completed = run_hook(eval_account, "Stop", hook_input(eval_account, "Stop"))
+
+    assert completed.returncode == 0
+    assert files_and_bytes(eval_account.copied_transcripts) == {
+        f"{PROJECT_FOLDER_NAME}/{CLAUDE_SESSION}.jsonl": FIRST_LINES,
+        f"{PROJECT_FOLDER_NAME}/{CLAUDE_SESSION}/tool-results/toolu_01ABC.txt": b"3 passed\n",
+    }
+    assert not (eval_account.log_directory / "transcript-sync" / "failed-copies.jsonl").exists()
+
+
+def test_links_special_files_and_unreadable_files_in_a_session_folder_are_skipped_and_noted_and_the_rest_copied(
+    tmp_path: Path, locked_folders: list[Path]
+) -> None:
+    eval_account = make_eval_account(tmp_path)
+    eval_account.transcript.write_bytes(FIRST_LINES)
+    session_folder = eval_account.project_folder / CLAUDE_SESSION
+    tool_results = session_folder / "tool-results"
+    tool_results.mkdir(parents=True)
+    (tool_results / "toolu_01ABC.txt").write_bytes(b"3 passed\n")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (elsewhere / "private.txt").write_bytes(b"private\n")
+    # A link to a file outside the projects folder, and a link to a folder.
+    (tool_results / "toolu_01LNK.txt").symlink_to(elsewhere / "private.txt")
+    (session_folder / "linked-folder").symlink_to(elsewhere)
+    # A named pipe: opening it to read would wait for a writer forever.
+    os.mkfifo(tool_results / "toolu_01FIF.txt")
+    unreadable_file = tool_results / "toolu_01UNR.txt"
+    unreadable_file.write_bytes(b"secret\n")
+    unreadable_file.chmod(0)
+    unreadable_folder = session_folder / "unreadable-folder"
+    unreadable_folder.mkdir()
+    (unreadable_folder / "inside.txt").write_bytes(b"inside\n")
+    unreadable_folder.chmod(0)
+    locked_folders.append(unreadable_folder)
+
+    try:
+        completed = run_hook(eval_account, "Stop", hook_input(eval_account, "Stop"))
+    finally:
+        unreadable_file.chmod(0o600)
+
+    assert (completed.returncode, completed.stdout, completed.stderr) == (0, "", "")
+    assert files_and_bytes(eval_account.copied_transcripts) == {
+        f"{PROJECT_FOLDER_NAME}/{CLAUDE_SESSION}.jsonl": FIRST_LINES,
+        f"{PROJECT_FOLDER_NAME}/{CLAUDE_SESSION}/tool-results/toolu_01ABC.txt": b"3 passed\n",
+    }
+    failed_copies = eval_account.log_directory / "transcript-sync" / "failed-copies.jsonl"
+    problem = json.loads(failed_copies.read_text())["problem"]
+    for skipped_name in ["toolu_01LNK.txt", "linked-folder", "toolu_01FIF.txt", "toolu_01UNR.txt", "unreadable-folder"]:
+        assert skipped_name in problem
+    assert "private" not in problem
+    assert "secret" not in problem
 
 
 def superseded_copies(eval_account: EvalAccount) -> dict[str, bytes]:

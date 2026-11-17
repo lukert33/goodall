@@ -6,11 +6,11 @@ Claude Code's projects folder, so the copied folder can be read by anything
 that reads that folder, Inspect Scout's claude_code importer included:
 
     <Claude projects folder>/<project folder>/<session id>.jsonl
-    <Claude projects folder>/<project folder>/<session id>/subagents/agent-<id>.jsonl
-                                                         (and .meta.json, .prefix.json)
+    <Claude projects folder>/<project folder>/<session id>/...   everything, at any depth:
+        custom-title.json, subagents/, tool-results/ (text, images, pdf-<id>/ pages), ...
       are copied to
     <log directory>/transcripts/<project folder>/<session id>.jsonl
-    <log directory>/transcripts/<project folder>/<session id>/subagents/...
+    <log directory>/transcripts/<project folder>/<session id>/...
 
     and goodall keeps, beside them:
     <log directory>/superseded-transcripts/<moment>/...   earlier copies that were replaced
@@ -37,10 +37,16 @@ they inherit Claude Code's environment.
 
 Decisions a reader would otherwise reverse-engineer (PROVISIONAL):
 
+- Goodall copies everything Claude Code keeps for a Claude session, not
+  only the transcripts: tool results, images and whatever a later version
+  adds. Storage is the cost of a complete raw record, and a file left out
+  now cannot be copied after Claude Code deletes it.
 - Goodall copies only from inside the Claude projects folder. The path a
   hook names comes from outside goodall, so a path that resolves anywhere
-  else, through `..` or a symbolic link, is refused; so are symbolic links
-  among a Claude session's subagent files.
+  else, through `..` or a symbolic link, is refused. Inside a Claude
+  session's folder, symbolic links are never followed, special files are
+  never opened, and both are skipped and noted for `goodall status`, as
+  are files that cannot be read; the rest is still copied.
 - Files are copied to a temporary file in the destination folder, which is
   then renamed over the copy. A rename is atomic, so a copy interrupted at
   any moment, even by SIGKILL, leaves the old copy or the new one, never a
@@ -69,6 +75,7 @@ Decisions a reader would otherwise reverse-engineer (PROVISIONAL):
 """
 
 import enum
+import errno
 import fcntl
 import json
 import os
@@ -106,10 +113,6 @@ LOCKS_FOLDER_NAME = "locks"
 # not hold Claude Code up for long, and the next hook or sweep tries again.
 LOCK_WAIT = timedelta(seconds=10)
 LOCK_POLL_SECONDS = 0.01
-
-# Where Claude Code keeps a Claude session's subagent transcripts, inside a
-# folder named after the session.
-SUBAGENTS_FOLDER_NAME = "subagents"
 
 # Readable and writable by this macOS user account only.
 FILE_PERMISSIONS = 0o600
@@ -173,11 +176,31 @@ def copy_from_hook(
     relative_parts = real_transcript_path.relative_to(real_projects_folder).parts
     if len(relative_parts) != 2 or relative_parts[1] != transcript_path.name:
         raise TranscriptPathRefused("the transcript path is not directly inside a project folder")
-    copy_claude_session(real_projects_folder, log_directory, relative_parts[0], claude_session, now)
+    session_copy = copy_claude_session(real_projects_folder, log_directory, relative_parts[0], claude_session, now)
+    if session_copy.skipped:
+        raise FilesSkipped(describe_skipped(session_copy.skipped))
 
 
 class TranscriptPathRefused(ValueError):
     """A hook named a transcript path goodall will not copy from; the message says why, without the path."""
+
+
+class FilesSkipped(Exception):
+    """Some of a Claude session's files were not copied, though the rest were; the message says which and why."""
+
+
+# How many skipped files a note names before it only counts the rest, so a
+# folder of a thousand unreadable files makes one readable line, not a page.
+SKIPPED_NAMED_LIMIT = 5
+
+
+def describe_skipped(skipped: list[str]) -> str:
+    """One sentence about what was not copied: the first few notes in full, then how many more."""
+    named = skipped[:SKIPPED_NAMED_LIMIT]
+    sentence = f"{len(skipped)} thing(s) in the Claude session's folder were not copied: " + "; ".join(named)
+    if len(skipped) > len(named):
+        sentence += f"; and {len(skipped) - len(named)} more"
+    return sentence
 
 
 @dataclass
@@ -281,10 +304,15 @@ def sweep(projects_folder: Path, log_directory: Path, now: datetime) -> SweepRes
             continue
         for claude_session in claude_sessions:
             try:
-                outcomes = copy_claude_session(projects_folder, log_directory, project_folder_name, claude_session, now)
+                session_copy = copy_claude_session(
+                    projects_folder, log_directory, project_folder_name, claude_session, now
+                )
             except OSError as error:
                 result.problems.append(f"Claude session {claude_session}: {describe_error(error)}.")
                 continue
+            if session_copy.skipped:
+                result.problems.append(f"Claude session {claude_session}: {describe_skipped(session_copy.skipped)}.")
+            outcomes = session_copy.outcomes
             if FileOutcome.COPIED in outcomes or FileOutcome.COPIED_AND_EARLIER_COPY_KEPT in outcomes:
                 result.claude_sessions_copied += 1
             result.earlier_copies_kept += outcomes.count(FileOutcome.COPIED_AND_EARLIER_COPY_KEPT)
@@ -351,31 +379,105 @@ def list_claude_sessions(project_folder: Path) -> list[str]:
     return sorted(claude_sessions)
 
 
+@dataclass
+class ClaudeSessionCopy:
+    """What copying one Claude session did: an outcome for each file copied or left alone, and what was skipped.
+
+    `skipped` holds one short note per thing in the Claude session's folder
+    that was not copied, naming it by its path inside the Claude projects
+    folder and saying why: `<project>/<id>/tool-results/x.txt: Permission
+    denied`. Never anything read from inside a file.
+    """
+
+    outcomes: list[FileOutcome] = field(default_factory=list)
+    skipped: list[str] = field(default_factory=list)
+
+
 def copy_claude_session(
     projects_folder: Path, log_directory: Path, project_folder_name: str, claude_session: str, now: datetime
-) -> list[FileOutcome]:
+) -> ClaudeSessionCopy:
     """Copy one Claude session's files into the same places under the log directory's `transcripts` folder.
 
-    The files are the transcript, `<session id>.jsonl`, and every file in
-    `<session id>/subagents/` (each subagent's transcript, with its
-    `.meta.json` and `.prefix.json`). Anything else in `<session id>/`,
-    and any folder inside `subagents/`, is not copied. A file that is not
-    there (yet, or any more) is skipped. Returns what happened to each file
-    copied or left alone.
+    The files are the transcript, `<session id>.jsonl`, and everything under
+    the Claude session's folder, `<session id>/`, however deep: subagent
+    transcripts, tool results, images, and whatever a later Claude Code
+    version keeps there. A file that is not there (yet, or any more) is
+    passed over without a note, and its earlier copy stays. Symbolic links,
+    special files (a named pipe, say), and files or folders that cannot be
+    read are skipped and noted in `skipped`, and everything else is still
+    copied. Anything else going wrong (the log directory cannot be written,
+    say) raises OSError.
     """
     relative_paths = [Path(project_folder_name) / f"{claude_session}.jsonl"]
-    subagents_folder = Path(project_folder_name) / claude_session / SUBAGENTS_FOLDER_NAME
-    for subagent_file_name in list_regular_files(projects_folder / subagents_folder):
-        relative_paths.append(subagents_folder / subagent_file_name)
-    outcomes = []
+    session_files, skipped = list_files_inside(projects_folder, Path(project_folder_name) / claude_session)
+    relative_paths.extend(session_files)
+    session_copy = ClaudeSessionCopy(skipped=skipped)
     with claude_session_lock(log_directory, claude_session):
         for relative_path in relative_paths:
+            source = projects_folder / relative_path
             try:
-                outcomes.append(copy_file(projects_folder, log_directory, relative_path, now))
+                session_copy.outcomes.append(copy_file(projects_folder, log_directory, relative_path, now))
             except FileNotFoundError as error:
-                if error.filename != str(projects_folder / relative_path):
+                if error.filename != str(source):
                     raise
-    return outcomes
+            except OSError as error:
+                # Only a source goodall cannot read is skipped; a copy it
+                # cannot write is a problem with the log directory, raised.
+                if error.filename != str(source):
+                    raise
+                session_copy.skipped.append(f"{relative_path}: {describe_error(error)}")
+    return session_copy
+
+
+def list_files_inside(projects_folder: Path, relative_folder: Path) -> tuple[list[Path], list[str]]:
+    """Every regular file under `relative_folder`, at any depth, by its path inside the Claude projects folder.
+
+    Returns the files, sorted, and a note for each thing passed over: a
+    symbolic link (to a file or a folder: it could lead outside the Claude
+    projects folder, so it is never followed), a special file, or a folder
+    that cannot be read. A `relative_folder` that does not exist has no
+    files and no notes. Walks with a list of folders still to visit rather
+    than by recursion, so however deep Claude Code nests folders, Python's
+    recursion limit is never reached.
+    """
+    files: list[Path] = []
+    skipped: list[str] = []
+    top_status = status_or_none(projects_folder / relative_folder)
+    if top_status is None:
+        return files, skipped
+    if not stat.S_ISDIR(top_status.st_mode):
+        return files, [f"{relative_folder}: {describe_file_kind(top_status)}, which goodall does not copy"]
+    folders_to_visit = [relative_folder]
+    while folders_to_visit:
+        folder = folders_to_visit.pop()
+        try:
+            with os.scandir(projects_folder / folder) as entries:
+                found = list(entries)
+        except FileNotFoundError:
+            continue
+        except OSError as error:
+            skipped.append(f"{folder}: {describe_error(error)}")
+            continue
+        for entry in found:
+            relative_path = folder / entry.name
+            if entry.is_symlink():
+                skipped.append(f"{relative_path}: a symbolic link, which goodall does not follow")
+            elif entry.is_dir(follow_symlinks=False):
+                folders_to_visit.append(relative_path)
+            elif entry.is_file(follow_symlinks=False):
+                files.append(relative_path)
+            else:
+                skipped.append(f"{relative_path}: a special file, which goodall does not copy")
+    return sorted(files), sorted(skipped)
+
+
+def describe_file_kind(file_status: os.stat_result) -> str:
+    """What sort of thing a path is, for a note about why it was not copied."""
+    if stat.S_ISLNK(file_status.st_mode):
+        return "a symbolic link"
+    if stat.S_ISREG(file_status.st_mode):
+        return "a file where a folder was expected"
+    return "a special file"
 
 
 @contextmanager
@@ -404,25 +506,6 @@ def claude_session_lock(log_directory: Path, claude_session: str) -> Iterator[No
         yield
     finally:
         os.close(descriptor)
-
-
-def list_regular_files(folder: Path) -> list[str]:
-    """The names of the regular files directly inside `folder`, sorted; none when it is missing or not a real folder.
-
-    Symbolic links are skipped, and so is a `folder` reached through one
-    (checked for `folder` and its parent), so nothing outside the Claude
-    projects folder is copied by way of a link.
-    """
-    for folder_to_check in [folder.parent, folder]:
-        folder_status = status_or_none(folder_to_check)
-        if folder_status is None or not stat.S_ISDIR(folder_status.st_mode):
-            return []
-    file_names = []
-    with os.scandir(folder) as entries:
-        for entry in entries:
-            if entry.is_file(follow_symlinks=False):
-                file_names.append(entry.name)
-    return sorted(file_names)
 
 
 def make_folders(log_directory: Path, folder_names: list[str]) -> Path:
@@ -457,19 +540,21 @@ def copy_file(projects_folder: Path, log_directory: Path, relative_path: Path, n
     """
     source = projects_folder / relative_path
     destination = log_directory / TRANSCRIPTS_FOLDER_NAME / relative_path
-    source_descriptor = os.open(source, os.O_RDONLY | os.O_NOFOLLOW)
+    source_status = os.stat(source, follow_symlinks=False)
+    if not stat.S_ISREG(source_status.st_mode):
+        raise NotARegularFile(errno.EINVAL, "not a regular file", str(source))
+    copy_status = status_or_none(destination)
+    if is_same_size_and_time(copy_status, source_status):
+        return FileOutcome.UNCHANGED
+
+    # O_NOFOLLOW refuses a symbolic link put in the file's place since the
+    # stat above; O_NONBLOCK keeps a named pipe put there from waiting
+    # forever for a writer. The fstat then checks what was really opened.
+    source_descriptor = os.open(source, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     try:
         source_status = os.fstat(source_descriptor)
         if not stat.S_ISREG(source_status.st_mode):
-            raise OSError(f"{source} is not a regular file")
-        copy_status = status_or_none(destination)
-        if (
-            copy_status is not None
-            and copy_status.st_size == source_status.st_size
-            and copy_status.st_mtime_ns == source_status.st_mtime_ns
-        ):
-            return FileOutcome.UNCHANGED
-
+            raise NotARegularFile(errno.EINVAL, "not a regular file", str(source))
         outcome = FileOutcome.COPIED
         make_folders(log_directory, [TRANSCRIPTS_FOLDER_NAME, *relative_path.parent.parts])
         temporary_file = destination.parent / f".{destination.name}.{secrets.token_hex(4)}{TEMPORARY_SUFFIX}"
@@ -485,6 +570,19 @@ def copy_file(projects_folder: Path, log_directory: Path, relative_path: Path, n
     finally:
         os.close(source_descriptor)
     return outcome
+
+
+class NotARegularFile(OSError):
+    """A path goodall was to copy is not a regular file: a named pipe, a device, or a link put in its place."""
+
+
+def is_same_size_and_time(copy_status: os.stat_result | None, source_status: os.stat_result) -> bool:
+    """True when a copy exists with the source's size and modification time, to the nanosecond."""
+    return (
+        copy_status is not None
+        and copy_status.st_size == source_status.st_size
+        and copy_status.st_mtime_ns == source_status.st_mtime_ns
+    )
 
 
 def is_start_of(earlier_copy: Path, new_copy: Path) -> bool:

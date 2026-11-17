@@ -139,3 +139,57 @@ def test_sweep_skips_symbolic_links_among_subagent_files(tmp_path: Path) -> None
 
     copied_subagents_folder = folders.log_directory / "transcripts" / "-Users-ada-work" / CLAUDE_SESSION / "subagents"
     assert sorted(path.name for path in copied_subagents_folder.iterdir()) == ["agent-a1.jsonl"]
+
+
+def test_copy_file_refuses_a_named_pipe_without_waiting_for_a_writer(tmp_path: Path) -> None:
+    folders = make_folders(tmp_path)
+    os.mkfifo(folders.source)
+
+    with pytest.raises(transcripts.NotARegularFile) as raised:
+        folders.copy_file()
+
+    assert raised.value.filename == str(folders.source)
+    assert not folders.copy.exists()
+
+
+def test_list_files_inside_finds_files_nested_far_deeper_than_python_would_recurse_comfortably(tmp_path: Path) -> None:
+    folders = make_folders(tmp_path)
+    deep_folder = Path("-Users-ada-work") / CLAUDE_SESSION / "/".join(["d"] * 200)
+    (folders.projects_folder / deep_folder).mkdir(parents=True)
+    (folders.projects_folder / deep_folder / "result.txt").write_bytes(b"deep\n")
+
+    files, skipped = transcripts.list_files_inside(folders.projects_folder, Path("-Users-ada-work") / CLAUDE_SESSION)
+
+    assert files == [deep_folder / "result.txt"]
+    assert skipped == []
+
+
+def test_sweep_copies_the_rest_of_a_claude_session_and_reports_what_it_skipped(tmp_path: Path) -> None:
+    folders = make_folders(tmp_path)
+    folders.source.write_bytes(b"line\n")
+    tool_results = folders.projects_folder / "-Users-ada-work" / CLAUDE_SESSION / "tool-results"
+    tool_results.mkdir(parents=True)
+    (tool_results / "a.txt").write_bytes(b"result\n")
+    os.mkfifo(tool_results / "b.txt")
+
+    result = transcripts.sweep(folders.projects_folder, folders.log_directory, NOW)
+
+    assert result.claude_sessions_copied == 1
+    copied_result = (
+        folders.log_directory / "transcripts" / "-Users-ada-work" / CLAUDE_SESSION / "tool-results" / "a.txt"
+    )
+    assert copied_result.read_bytes() == b"result\n"
+    assert len(result.problems) == 1
+    assert CLAUDE_SESSION in result.problems[0]
+    assert "tool-results/b.txt: a special file" in result.problems[0]
+
+
+def test_a_note_about_skipped_files_names_the_first_few_and_counts_the_rest() -> None:
+    skipped = [f"tool-results/{number}.txt: Permission denied" for number in range(8)]
+
+    sentence = transcripts.describe_skipped(skipped)
+
+    assert sentence.startswith("8 thing(s) in the Claude session's folder were not copied: tool-results/0.txt")
+    assert "tool-results/4.txt" in sentence
+    assert "tool-results/5.txt" not in sentence
+    assert sentence.endswith("; and 3 more")
