@@ -6,8 +6,11 @@ Claude Code's projects folder, so the copied folder can be read by anything
 that reads that folder, Inspect Scout's claude_code importer included:
 
     <Claude projects folder>/<project folder>/<session id>.jsonl
-      is copied to
+    <Claude projects folder>/<project folder>/<session id>/subagents/agent-<id>.jsonl
+                                                         (and .meta.json, .prefix.json)
+      are copied to
     <log directory>/transcripts/<project folder>/<session id>.jsonl
+    <log directory>/transcripts/<project folder>/<session id>/subagents/...
 
 Who calls it: `goodall hook` (goodall.hook) copies one Claude session's
 files after PostToolUse, Stop and SessionEnd. This module is on the hook
@@ -42,6 +45,10 @@ from pathlib import Path
 # The folder in the log directory that mirrors Claude Code's projects folder.
 TRANSCRIPTS_FOLDER_NAME = "transcripts"
 
+# Where Claude Code keeps a Claude session's subagent transcripts, inside a
+# folder named after the session.
+SUBAGENTS_FOLDER_NAME = "subagents"
+
 # Readable and writable by this macOS user account only.
 FILE_PERMISSIONS = 0o600
 FOLDER_PERMISSIONS = 0o700
@@ -74,10 +81,50 @@ def copy_from_hook(projects_folder: Path, log_directory: Path, claude_session: s
 def copy_claude_session(
     projects_folder: Path, log_directory: Path, project_folder_name: str, claude_session: str
 ) -> None:
-    """Copy one Claude session's transcript into the same place under the log directory's `transcripts` folder."""
-    source = projects_folder / project_folder_name / f"{claude_session}.jsonl"
+    """Copy one Claude session's files into the same places under the log directory's `transcripts` folder.
+
+    The files are the transcript, `<session id>.jsonl`, and every file in
+    `<session id>/subagents/` (each subagent's transcript, with its
+    `.meta.json` and `.prefix.json`). Anything else in `<session id>/`,
+    and any folder inside `subagents/`, is not copied.
+    """
+    project_folder = projects_folder / project_folder_name
+    source = project_folder / f"{claude_session}.jsonl"
     copied_project_folder = make_folders(log_directory, [TRANSCRIPTS_FOLDER_NAME, project_folder_name])
     copy_file(source, copied_project_folder / source.name, log_directory / "superseded" / source.name)
+
+    subagents_folder = project_folder / claude_session / SUBAGENTS_FOLDER_NAME
+    subagent_files = list_regular_files(subagents_folder)
+    if not subagent_files:
+        return
+    copied_subagents_folder = make_folders(
+        log_directory, [TRANSCRIPTS_FOLDER_NAME, project_folder_name, claude_session, SUBAGENTS_FOLDER_NAME]
+    )
+    for subagent_file in subagent_files:
+        copy_file(
+            subagent_file,
+            copied_subagents_folder / subagent_file.name,
+            log_directory / "superseded" / subagent_file.name,
+        )
+
+
+def list_regular_files(folder: Path) -> list[Path]:
+    """The regular files directly inside `folder`, sorted; none when it is missing or not a real folder.
+
+    Symbolic links are skipped, and so is a `folder` reached through one
+    (checked for `folder` and its parent), so nothing outside the Claude
+    projects folder is copied by way of a link.
+    """
+    for folder_to_check in [folder.parent, folder]:
+        folder_status = status_or_none(folder_to_check)
+        if folder_status is None or not stat.S_ISDIR(folder_status.st_mode):
+            return []
+    regular_files = []
+    with os.scandir(folder) as entries:
+        for entry in entries:
+            if entry.is_file(follow_symlinks=False):
+                regular_files.append(Path(entry.path))
+    return sorted(regular_files)
 
 
 def make_folders(log_directory: Path, folder_names: list[str]) -> Path:

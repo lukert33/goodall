@@ -133,6 +133,36 @@ def test_a_stop_hook_copies_the_transcript_byte_for_byte_in_claude_codes_layout(
     }
 
 
+def write_subagent_files(eval_account: EvalAccount) -> dict[str, bytes]:
+    """Write one subagent's three files beside the transcript, and return them as the copy should hold them."""
+    subagents_folder = eval_account.project_folder / CLAUDE_SESSION / "subagents"
+    subagents_folder.mkdir(parents=True)
+    subagent_files = {
+        "agent-a1b2c3.jsonl": b'{"type":"user","isSidechain":true,"message":{"content":"Find the bug"}}\n',
+        "agent-a1b2c3.meta.json": b'{"agentType":"Explore"}',
+        "agent-a1b2c3.prefix.json": b'{"prefix":[]}\n',
+    }
+    expected = {}
+    for file_name, contents in subagent_files.items():
+        (subagents_folder / file_name).write_bytes(contents)
+        expected[f"{PROJECT_FOLDER_NAME}/{CLAUDE_SESSION}/subagents/{file_name}"] = contents
+    return expected
+
+
+def test_a_hook_copies_the_claude_sessions_subagent_files_in_the_same_layout(tmp_path: Path) -> None:
+    eval_account = make_eval_account(tmp_path)
+    eval_account.transcript.write_bytes(FIRST_LINES)
+    expected_subagent_files = write_subagent_files(eval_account)
+
+    completed = run_hook(eval_account, "PostToolUse", hook_input(eval_account, "PostToolUse", tool_name="Agent"))
+
+    assert completed.returncode == 0
+    assert files_and_bytes(eval_account.copied_transcripts) == {
+        f"{PROJECT_FOLDER_NAME}/{CLAUDE_SESSION}.jsonl": FIRST_LINES,
+        **expected_subagent_files,
+    }
+
+
 def test_a_transcript_that_grew_between_two_hooks_is_copied_again_in_full(tmp_path: Path) -> None:
     eval_account = make_eval_account(tmp_path)
     eval_account.transcript.write_bytes(FIRST_LINES)
