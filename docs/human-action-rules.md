@@ -33,6 +33,9 @@ looking at real results, without re-reading transcripts.
 | `tool_call_rejection` | `rejection_from_tool_result` | `tool_call_id`, `tool_name`, `decision` (always `"reject"`), `feedback` |
 | `shell_command` | `shell_command_from_bash_input` | `text` (the command as typed), `output_line_number`, `output_entry_id` |
 | `slash_command` | `slash_command_from_command_tags` | `command_name`, `arguments` (both as typed), `command_type` (`"local"` or `"prompt"`) |
+| `tool_call_approval_once` | `approval_from_permission_decision` | `tool_call_id`, `tool_name`, `decision` (always `"approve"`), `permission_source`, `grant_scope`, `rule_source` |
+| `tool_call_approval_always` | `approval_from_permission_decision` | as above |
+| `permission_prompt_dismissal` | `dismissal_from_permission_decision` | `tool_call_id`, `tool_name`, `decision` (always `"reject"`) |
 
 `tool_name` is read from the assistant entry that made the call, when it is in
 the same transcript; only the name is kept, never the tool's input.
@@ -58,6 +61,25 @@ Only entries of type `user` can hold a human action. Within one:
    interrupted by user for tool use]" (`tool_call`, call id unknown). When the
    entry's parent is a rejection, the marker is the end of that rejection and
    is not counted again.
+3a. **Permission decision** (`permission_decision_from_entry`, whose actions
+   name the rules `approval_from_permission_decision` and
+   `dismissal_from_permission_decision`). Claude Code 2.1.289 and later write
+   `permissionDecision` (`decision`, `source`, and sometimes `reasonType`,
+   `grantScope`, `ruleSource`) on every tool result entry. Read only when the
+   entry answers exactly one call (every entry in the structure scan did):
+   - `source: user_temporary`, `decision: accept`: `tool_call_approval_once`.
+   - `source: user_permanent`, `decision: accept`: `tool_call_approval_always`,
+     the person chose "always allow" and a standing rule was added
+     (`ruleSource` says where, such as `localSettings`).
+   - `source: user_abort`, `decision: reject`: `permission_prompt_dismissal`,
+     the person dismissed the prompt without choosing. Seen once in the scan.
+   - `source: config` (a settings rule, the permission mode or the auto-mode
+     classifier) and `source: hook` decided without the person: no action.
+   - Any other source is reported as unfamiliar.
+
+   A refusal the person chose carries no `permissionDecision`; rule 1 finds
+   it. Approvals in transcripts older than 2.1.289 are not recorded and
+   cannot be found.
 4. **Prepended context** (`strip_prepended_context`). Leading
    `<system-reminder>...</system-reminder>` blocks are removed; what is left is
    what the person typed.
@@ -97,13 +119,13 @@ Only entries of type `user` can hold a human action. Within one:
 Reported, with line number and a reason that names no content: a line that is
 not JSON or not an object, an entry with no type or an unknown type, a user
 entry with no message content, an unknown content block type, an unknown
-`origin.kind`. Blank lines are skipped. Parsing always carries on.
+`origin.kind`, an unknown `permissionDecision.source`. Blank lines are skipped.
+Parsing always carries on.
 
 ## Not detected in version 2
 
-- **Permission approvals.** Newer transcripts carry `permissionDecision` on
-  tool results, with `source` values such as `user_temporary` and
-  `user_permanent`, which look like the person's approvals. Not yet used.
+- **Permission approvals before Claude Code 2.1.289**, which wrote no
+  `permissionDecision`.
 - **Interruptions between turns**, which leave nothing in a transcript.
 - **Prompts refused by the prompt gate**, which leave a `queue-operation`
   entry, not a user entry.

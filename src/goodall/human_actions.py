@@ -78,6 +78,13 @@ class ClaudeCodeMarkers:
     slash_command_name_tags: tuple[str, str]
     slash_command_message_tags: tuple[str, str]
     slash_command_arguments_tags: tuple[str, str]
+    # Values of `permissionDecision.source` on a tool result entry. The first
+    # three are the person at Claude Code's permission prompt; the others
+    # decided without asking them. Any other value is reported as unfamiliar.
+    approved_once_source: str
+    approved_always_source: str
+    dismissed_source: str
+    known_permission_sources: tuple[str, ...]
     # Block types known to appear in a "user" entry's message content.
     known_content_block_types: tuple[str, ...]
     # Values of a "user" entry's `origin.kind`; only "human" is the person.
@@ -128,6 +135,10 @@ def claude_code_markers() -> ClaudeCodeMarkers:
         slash_command_name_tags=("<command-name>", "</command-name>"),
         slash_command_message_tags=("<command-message>", "</command-message>"),
         slash_command_arguments_tags=("<command-args>", "</command-args>"),
+        approved_once_source="user_temporary",
+        approved_always_source="user_permanent",
+        dismissed_source="user_abort",
+        known_permission_sources=("user_temporary", "user_permanent", "user_abort", "config", "hook"),
         known_content_block_types=("text", "image", "document", "tool_result"),
         known_origin_kinds=("human", "task-notification", "peer", "coordinator"),
         prepended_context_opening_tag="<system-reminder>",
@@ -285,7 +296,69 @@ class SlashCommand:
     duration_seconds: float | None = field(default=None, init=False)
 
 
-TranscriptAction = TypedPrompt | Interruption | ToolCallRejection | ShellCommand | SlashCommand
+@dataclass(frozen=True, kw_only=True)
+class ToolCallApproval:
+    """The person allowed a tool call when Claude Code asked them.
+
+    `kind` keeps the two choices apart: "tool_call_approval_once" (allow this
+    call) and "tool_call_approval_always" (allow it and add a standing rule,
+    so later calls like it are not asked about). `decision` is always
+    "approve", Inspect's ApprovalEvent value. `permission_source`,
+    `grant_scope` and `rule_source` are Claude Code's own values, kept as
+    written so the split can be revisited.
+    """
+
+    line_number: int
+    entry_id: str | None
+    session_id: str | None
+    timestamp: str | None
+    kind: Literal["tool_call_approval_once", "tool_call_approval_always"]
+    tool_call_id: str | None
+    tool_name: str | None
+    permission_source: str
+    grant_scope: str | None
+    rule_source: str | None
+    transcript_path: Path | None = field(default=None, compare=False)
+    decision: Literal["approve"] = field(default="approve", init=False)
+    source: str = field(default=SOURCE, init=False)
+    rule: str = field(default="approval_from_permission_decision", init=False)
+    duration_seconds: float | None = field(default=None, init=False)
+
+
+@dataclass(frozen=True, kw_only=True)
+class PermissionPromptDismissal:
+    """The person dismissed Claude Code's permission prompt without choosing.
+
+    Recorded by Claude Code as a refusal whose source is "user_abort". It is
+    kept apart from `ToolCallRejection`, where the person chose to refuse,
+    because the transcript does not say what the person meant by it.
+    `decision` is "reject", Inspect's ApprovalEvent value, because the call
+    did not run.
+    """
+
+    line_number: int
+    entry_id: str | None
+    session_id: str | None
+    timestamp: str | None
+    tool_call_id: str | None
+    tool_name: str | None
+    transcript_path: Path | None = field(default=None, compare=False)
+    decision: Literal["reject"] = field(default="reject", init=False)
+    source: str = field(default=SOURCE, init=False)
+    kind: str = field(default="permission_prompt_dismissal", init=False)
+    rule: str = field(default="dismissal_from_permission_decision", init=False)
+    duration_seconds: float | None = field(default=None, init=False)
+
+
+TranscriptAction = (
+    TypedPrompt
+    | Interruption
+    | ToolCallRejection
+    | ShellCommand
+    | SlashCommand
+    | ToolCallApproval
+    | PermissionPromptDismissal
+)
 
 
 @dataclass(frozen=True)
@@ -477,6 +550,13 @@ def read_user_content(entry: dict[str, Any], markers: ClaudeCodeMarkers) -> User
         origin_kind = origin.get("kind")
         if not isinstance(origin_kind, str) or origin_kind not in markers.known_origin_kinds:
             user_content.unfamiliar_reasons.append(f"unknown origin kind {str(origin_kind)[:60]!r}")
+
+    permission_decision = entry.get("permissionDecision")
+    if isinstance(permission_decision, dict):
+        permission_source = permission_decision.get("source")
+        if not isinstance(permission_source, str) or permission_source not in markers.known_permission_sources:
+            reason = f"unknown permission decision source {str(permission_source)[:60]!r}"
+            user_content.unfamiliar_reasons.append(reason)
     return user_content
 
 
@@ -514,6 +594,12 @@ def actions_from_user_entry(
             interruption = interruption_from_tool_result(place, tool_result, markers)
             if interruption is not None:
                 actions.append(interruption)
+        # The permission decision is written on the entry, not on a result,
+        # so it is read only when the entry answers exactly one call.
+        if len(content.tool_results) == 1:
+            decision = permission_decision_from_entry(entry, place, content.tool_results[0], markers, memory)
+            if decision is not None:
+                actions.append(decision)
         return actions
 
     interruption = interruption_from_marker(place, content.text, markers)
@@ -735,6 +821,66 @@ def rejection_from_tool_result(
         tool_call_id=tool_call_id if isinstance(tool_call_id, str) else None,
         tool_name=tool_name_for(tool_result, memory),
         feedback=feedback,
+    )
+
+
+def permission_decision_from_entry(
+    entry: dict[str, Any],
+    place: EntryPlace,
+    tool_result: dict[str, Any],
+    markers: ClaudeCodeMarkers,
+    memory: TranscriptMemory,
+) -> ToolCallApproval | PermissionPromptDismissal | None:
+    """Rule: a permission decision whose source is the person is an approval or a dismissal.
+
+    Newer Claude Code versions (seen from 2.1.289) write `permissionDecision`
+    on every tool result entry, saying who allowed or refused the call. Only
+    the sources naming the person count; "config" (settings, the permission
+    mode or the auto-mode classifier) and "hook" decided without asking them.
+    A refusal the person chose leaves no decision here and is found by
+    `rejection_from_tool_result` instead.
+    """
+    permission_decision = entry.get("permissionDecision")
+    if not isinstance(permission_decision, dict):
+        return None
+    permission_source = permission_decision.get("source")
+    decision = permission_decision.get("decision")
+    tool_call_id = tool_result.get("tool_use_id")
+    if not isinstance(tool_call_id, str):
+        tool_call_id = None
+
+    if permission_source == markers.dismissed_source and decision == "reject":
+        return PermissionPromptDismissal(
+            line_number=place.line_number,
+            entry_id=place.entry_id,
+            session_id=place.session_id,
+            timestamp=place.timestamp,
+            transcript_path=place.transcript_path,
+            tool_call_id=tool_call_id,
+            tool_name=tool_name_for(tool_result, memory),
+        )
+    if decision != "accept":
+        return None
+    if permission_source == markers.approved_once_source:
+        kind: Literal["tool_call_approval_once", "tool_call_approval_always"] = "tool_call_approval_once"
+    elif permission_source == markers.approved_always_source:
+        kind = "tool_call_approval_always"
+    else:
+        return None
+    grant_scope = permission_decision.get("grantScope")
+    rule_source = permission_decision.get("ruleSource")
+    return ToolCallApproval(
+        line_number=place.line_number,
+        entry_id=place.entry_id,
+        session_id=place.session_id,
+        timestamp=place.timestamp,
+        transcript_path=place.transcript_path,
+        kind=kind,
+        tool_call_id=tool_call_id,
+        tool_name=tool_name_for(tool_result, memory),
+        permission_source=permission_source,
+        grant_scope=grant_scope if isinstance(grant_scope, str) else None,
+        rule_source=rule_source if isinstance(rule_source, str) else None,
     )
 
 

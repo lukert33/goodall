@@ -12,8 +12,10 @@ from pathlib import Path
 from goodall.human_actions import (
     RULES_VERSION,
     Interruption,
+    PermissionPromptDismissal,
     ShellCommand,
     SlashCommand,
+    ToolCallApproval,
     ToolCallRejection,
     TypedPrompt,
     UnfamiliarEntry,
@@ -326,6 +328,71 @@ def test_slash_commands_keep_the_name_and_arguments_as_typed() -> None:
     assert result.actions[0].kind == "slash_command"
     assert result.actions[0].rule == "slash_command_from_command_tags"
     assert result.unfamiliar_entries == []
+
+
+def test_permission_decisions_keep_apart_approving_once_approving_always_and_dismissing() -> None:
+    result = parse_human_actions(FIXTURES / "permission_decisions.jsonl")
+
+    assert result.actions == [
+        ToolCallApproval(
+            line_number=2,
+            entry_id="u-0002",
+            session_id="session-p",
+            timestamp="2026-03-04T09:00:05.000Z",
+            kind="tool_call_approval_once",
+            tool_call_id="toolu_example_21",
+            tool_name="Bash",
+            permission_source="user_temporary",
+            grant_scope="once",
+            rule_source=None,
+        ),
+        # "Always allow": the person added a standing rule.
+        ToolCallApproval(
+            line_number=4,
+            entry_id="u-0004",
+            session_id="session-p",
+            timestamp="2026-03-04T09:01:07.000Z",
+            kind="tool_call_approval_always",
+            tool_call_id="toolu_example_22",
+            tool_name="Edit",
+            permission_source="user_permanent",
+            grant_scope=None,
+            rule_source="localSettings",
+        ),
+        # Line 6 was allowed by configuration and line 8 refused by a hook:
+        # neither asked the person.
+        PermissionPromptDismissal(
+            line_number=10,
+            entry_id="u-0010",
+            session_id="session-p",
+            timestamp="2026-03-04T09:04:09.000Z",
+            tool_call_id="toolu_example_25",
+            tool_name="Bash",
+        ),
+        # Some versions write no grant scope for a one-off approval.
+        ToolCallApproval(
+            line_number=12,
+            entry_id="u-0012",
+            session_id="session-p",
+            timestamp="2026-03-04T09:05:04.000Z",
+            kind="tool_call_approval_once",
+            tool_call_id="toolu_example_26",
+            tool_name="Bash",
+            permission_source="user_temporary",
+            grant_scope=None,
+            rule_source=None,
+        ),
+    ]
+    approval = result.actions[0]
+    assert isinstance(approval, ToolCallApproval)
+    assert approval.decision == "approve"
+    assert approval.rule == "approval_from_permission_decision"
+    # A source the rules do not know is reported, not guessed at.
+    assert result.unfamiliar_entries == [
+        UnfamiliarEntry(
+            line_number=13, entry_id="u-0013", reason="unknown permission decision source 'example_future_source'"
+        ),
+    ]
 
 
 def test_text_the_harness_wrote_is_not_a_human_action() -> None:
