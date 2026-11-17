@@ -38,7 +38,7 @@ copies remembers its projects folder in the log directory, and the sweep
 covers every folder a hook remembered, the default `~/.claude/projects`, and
 the terminal's own: a person never needs to know the variable exists.
 
-Decisions a reader would otherwise reverse-engineer (PROVISIONAL):
+Decisions a reader would otherwise reverse-engineer (the layout is ADR 0015):
 
 - Goodall copies everything Claude Code keeps for a Claude session, not
   only the transcripts: tool results, images and whatever a later version
