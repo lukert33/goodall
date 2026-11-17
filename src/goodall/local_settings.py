@@ -146,13 +146,12 @@ class LocalSettings:
 class RelativeConfigDirectoryError(ValueError):
     """GOODALL_CONFIG_DIR is set to a relative path, which goodall refuses.
 
-    `value` is the variable's value exactly as it was set, so a message can
-    quote it back.
+    Deliberately carries no copy of the value: it may be a key pasted into
+    the wrong variable, and goodall never repeats such text (ADR 0006).
     """
 
-    def __init__(self, value: str) -> None:
-        super().__init__(f"{CONFIG_DIRECTORY_VARIABLE} must be an absolute path, not {value!r}")
-        self.value = value
+    def __init__(self) -> None:
+        super().__init__(f"{CONFIG_DIRECTORY_VARIABLE} must be an absolute path")
 
 
 def find_local_settings_location() -> LocalSettingsLocation:
@@ -174,7 +173,7 @@ def find_local_settings_location() -> LocalSettingsLocation:
 
     override_directory = Path(override_value).expanduser()
     if not override_directory.is_absolute():
-        raise RelativeConfigDirectoryError(override_value)
+        raise RelativeConfigDirectoryError()
     return LocalSettingsLocation(config_directory=override_directory, chosen_by_override=True)
 
 
@@ -187,8 +186,8 @@ def read_local_settings() -> LocalSettings | list[Failure]:
     """
     try:
         location = find_local_settings_location()
-    except RelativeConfigDirectoryError as relative_directory_error:
-        return [relative_config_directory_failure(relative_directory_error.value)]
+    except RelativeConfigDirectoryError:
+        return [relative_config_directory_failure()]
     return read_local_settings_file(location)
 
 
@@ -403,18 +402,22 @@ def local_settings_unreadable_failure(settings_file: Path, read_error: OSError) 
     )
 
 
-def relative_config_directory_failure(value: str) -> Failure:
-    """The failure for a GOODALL_CONFIG_DIR that is not an absolute path."""
+def relative_config_directory_failure() -> Failure:
+    """The failure for a GOODALL_CONFIG_DIR that is not an absolute path.
+
+    Takes no value on purpose: the message must never repeat what the
+    variable holds, which may be a pasted secret (ADR 0006).
+    """
     return Failure(
         kind="config_directory_not_absolute",
-        what_happened=f"{CONFIG_DIRECTORY_VARIABLE} is set to {value}, which is not an absolute path.",
+        what_happened=f"{CONFIG_DIRECTORY_VARIABLE} is not an absolute path. Goodall does not show its value, in case it is a secret.",
         why=(
             "Goodall would look for local settings relative to whichever folder a command started in, "
             "so two commands could find two different evals."
         ),
         what_to_do_next=(
-            f"Set {CONFIG_DIRECTORY_VARIABLE} to a path starting with / or ~, "
-            "or unset it to use local settings in your home folder."
+            f"Set {CONFIG_DIRECTORY_VARIABLE} to an absolute path, which is a full path starting with /, "
+            "for example /Users/you/goodall-config, or unset it to use local settings in your home folder."
         ),
     )
 

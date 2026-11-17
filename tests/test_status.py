@@ -22,6 +22,10 @@ from goodall import cli, exit_codes
 from goodall.terminal import Terminal
 
 
+# An obviously made-up key, used wherever a test checks that goodall never repeats a value.
+SYNTHETIC_SECRET = "sk-ant-api03-SYNTHETICsyntheticSYNTHETIC"
+
+
 def run_goodall(arguments: list[str]) -> tuple[int, str, str]:
     """Run goodall with a captured terminal.
 
@@ -117,9 +121,29 @@ def test_relative_override_is_refused(tmp_path: Path, monkeypatch: pytest.Monkey
 
     assert exit_code == exit_codes.ERROR
     assert standard_output == ""
-    assert standard_error.startswith("FAIL  GOODALL_CONFIG_DIR is set to relative/goodall-config")
+    assert standard_error.startswith("FAIL  GOODALL_CONFIG_DIR is not an absolute path")
     assert "absolute" in standard_error
     assert files_under(tmp_path) == []
+
+
+@pytest.mark.parametrize("extra_arguments", [[], ["--json"]])
+def test_relative_override_is_never_repeated_back_because_it_may_be_a_pasted_secret(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, extra_arguments: list[str]
+) -> None:
+    # Someone who pastes a key into the wrong variable must not see goodall
+    # print it (ADR 0006), so the message names the variable and nothing else.
+    monkeypatch.setenv("GOODALL_CONFIG_DIR", SYNTHETIC_SECRET)
+    monkeypatch.chdir(tmp_path)
+
+    exit_code, standard_output, standard_error = run_goodall(["status", *extra_arguments])
+
+    assert exit_code == exit_codes.ERROR
+    assert "SYNTHETIC" not in standard_output + standard_error
+    message = " ".join((standard_output + standard_error).split())
+    assert "GOODALL_CONFIG_DIR" in message
+    assert "full path starting with /" in message
+    assert "for example /Users/you/goodall-config" in message
+    assert "unset it" in message
 
 
 def test_status_json_reports_the_same_failure_on_standard_output(empty_config_directory: Path) -> None:

@@ -459,6 +459,23 @@ def test_relative_settings_folder_override_fails_the_found_check(
     assert statuses(document)["settings.local_settings_found"] == "fail"
 
 
+@pytest.mark.parametrize("extra_arguments", [[], ["--json"]])
+def test_relative_settings_folder_override_is_never_repeated_back(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, extra_arguments: list[str]
+) -> None:
+    # The value may be a key pasted into the wrong variable (ADR 0006).
+    monkeypatch.setenv("GOODALL_CONFIG_DIR", "sk-ant-api03-SYNTHETICsyntheticSYNTHETIC")
+    monkeypatch.chdir(tmp_path)
+
+    exit_code, standard_output, standard_error = run_goodall(["doctor", *extra_arguments])
+
+    assert exit_code == exit_codes.ERROR
+    assert "SYNTHETIC" not in standard_output + standard_error
+    message = " ".join((standard_output + standard_error).split())
+    assert "full path starting with /" in message
+    assert "for example /Users/you/goodall-config" in message
+
+
 def test_missing_record_repo_skips_the_eval_config_but_still_checks_the_log_directory(
     healthy_account: EvalAccount,
 ) -> None:
