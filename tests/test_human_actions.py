@@ -13,6 +13,8 @@ from goodall.human_actions import (
     RULES_VERSION,
     Interruption,
     PermissionPromptDismissal,
+    PlanApproval,
+    QuestionAnswer,
     ShellCommand,
     SlashCommand,
     ToolCallApproval,
@@ -393,6 +395,59 @@ def test_permission_decisions_keep_apart_approving_once_approving_always_and_dis
             line_number=13, entry_id="u-0013", reason="unknown permission decision source 'example_future_source'"
         ),
     ]
+
+
+def test_answers_to_the_agents_questions_and_plan_approvals_are_found() -> None:
+    result = parse_human_actions(FIXTURES / "questions_and_plans.jsonl")
+
+    assert result.actions == [
+        # The answer dialog also writes a one-off approval; the answer is the
+        # action, so the approval is not counted a second time.
+        QuestionAnswer(
+            line_number=2,
+            entry_id="u-0002",
+            session_id="session-q",
+            timestamp="2026-03-05T09:00:30.000Z",
+            tool_call_id="toolu_example_31",
+            question_count=2,
+            answers=("Blue", "Somewhere in between, please"),
+        ),
+        # Declining to answer is a refusal of the question tool.
+        ToolCallRejection(
+            line_number=4,
+            entry_id="u-0004",
+            session_id="session-q",
+            timestamp="2026-03-05T09:01:20.000Z",
+            tool_call_id="toolu_example_32",
+            tool_name="AskUserQuestion",
+            feedback=None,
+        ),
+        PlanApproval(
+            line_number=6,
+            entry_id="u-0006",
+            session_id="session-q",
+            timestamp="2026-03-05T09:02:40.000Z",
+            tool_call_id="toolu_example_33",
+        ),
+        # Rejecting a plan is a refusal of the plan tool, with feedback.
+        ToolCallRejection(
+            line_number=8,
+            entry_id="u-0008",
+            session_id="session-q",
+            timestamp="2026-03-05T09:03:30.000Z",
+            tool_call_id="toolu_example_34",
+            tool_name="ExitPlanMode",
+            feedback="Make the example plan shorter.",
+        ),
+        # Line 10 is near miss: a command whose output begins with the plan
+        # approval words is not a plan approval.
+    ]
+    plan_approval = result.actions[2]
+    assert isinstance(plan_approval, PlanApproval)
+    assert plan_approval.decision == "approve"
+    assert plan_approval.rule == "plan_approval_from_tool_result"
+    assert result.actions[0].rule == "question_answer_from_tool_result"
+    assert result.unfamiliar_entries == []
 
 
 def test_text_the_harness_wrote_is_not_a_human_action() -> None:

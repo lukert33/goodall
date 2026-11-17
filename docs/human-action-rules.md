@@ -36,6 +36,8 @@ looking at real results, without re-reading transcripts.
 | `tool_call_approval_once` | `approval_from_permission_decision` | `tool_call_id`, `tool_name`, `decision` (always `"approve"`), `permission_source`, `grant_scope`, `rule_source` |
 | `tool_call_approval_always` | `approval_from_permission_decision` | as above |
 | `permission_prompt_dismissal` | `dismissal_from_permission_decision` | `tool_call_id`, `tool_name`, `decision` (always `"reject"`) |
+| `question_answer` | `question_answer_from_tool_result` | `tool_call_id`, `question_count`, `answers` (as given) |
+| `plan_approval` | `plan_approval_from_tool_result` | `tool_call_id`, `decision` (always `"approve"`) |
 
 `tool_name` is read from the assistant entry that made the call, when it is in
 the same transcript; only the name is kept, never the tool's input.
@@ -79,7 +81,19 @@ Only entries of type `user` can hold a human action. Within one:
 
    A refusal the person chose carries no `permissionDecision`; rule 1 finds
    it. Approvals in transcripts older than 2.1.289 are not recorded and
-   cannot be found.
+   cannot be found. When rule 3b or 3c found an action for the same entry,
+   the decision is part of it and is not counted again (answering the
+   question tool also writes a `user_temporary` approval).
+3b. **Question answer** (`question_answer_from_tool_result`). A tool result
+   that is not an error, on an entry whose `toolUseResult` has a `questions`
+   list and an `answers` object: the person answered the agent's question
+   tool (AskUserQuestion). `answers` are the answer values; the questions are
+   the model's words and are not kept. Declining to answer is a rejection
+   (rule 1).
+3c. **Plan approval** (`plan_approval_from_tool_result`). A tool result that
+   is not an error, whose text begins "User has approved your plan", answering
+   a call to `ExitPlanMode` (or a call not in this transcript). Rejecting a
+   plan is a rejection (rule 1) with `tool_name` `ExitPlanMode`.
 4. **Prepended context** (`strip_prepended_context`). Leading
    `<system-reminder>...</system-reminder>` blocks are removed; what is left is
    what the person typed.

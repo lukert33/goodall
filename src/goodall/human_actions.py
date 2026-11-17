@@ -85,6 +85,10 @@ class ClaudeCodeMarkers:
     approved_always_source: str
     dismissed_source: str
     known_permission_sources: tuple[str, ...]
+    # The tool the agent presents a plan with, and how its result begins when
+    # the person approved the plan.
+    plan_tool_name: str
+    plan_approved_result_prefix: str
     # Block types known to appear in a "user" entry's message content.
     known_content_block_types: tuple[str, ...]
     # Values of a "user" entry's `origin.kind`; only "human" is the person.
@@ -139,6 +143,8 @@ def claude_code_markers() -> ClaudeCodeMarkers:
         approved_always_source="user_permanent",
         dismissed_source="user_abort",
         known_permission_sources=("user_temporary", "user_permanent", "user_abort", "config", "hook"),
+        plan_tool_name="ExitPlanMode",
+        plan_approved_result_prefix="User has approved your plan",
         known_content_block_types=("text", "image", "document", "tool_result"),
         known_origin_kinds=("human", "task-notification", "peer", "coordinator"),
         prepended_context_opening_tag="<system-reminder>",
@@ -350,6 +356,52 @@ class PermissionPromptDismissal:
     duration_seconds: float | None = field(default=None, init=False)
 
 
+@dataclass(frozen=True, kw_only=True)
+class QuestionAnswer:
+    """The person answered questions the agent asked through its question tool.
+
+    `answers` are the person's choices or typed answers, in the order Claude
+    Code recorded them; they are the person's words and are kept like a
+    prompt's text. The questions themselves are the model's words and are
+    not kept; `tool_call_id` points at the call that asked them.
+    """
+
+    line_number: int
+    entry_id: str | None
+    session_id: str | None
+    timestamp: str | None
+    tool_call_id: str | None
+    question_count: int
+    answers: tuple[str, ...]
+    transcript_path: Path | None = field(default=None, compare=False)
+    source: str = field(default=SOURCE, init=False)
+    kind: str = field(default="question_answer", init=False)
+    rule: str = field(default="question_answer_from_tool_result", init=False)
+    duration_seconds: float | None = field(default=None, init=False)
+
+
+@dataclass(frozen=True, kw_only=True)
+class PlanApproval:
+    """The person approved a plan the agent presented before starting work.
+
+    `decision` is always "approve", Inspect's ApprovalEvent value. Rejecting a
+    plan is recorded by Claude Code as a refused tool call, and is found as a
+    `ToolCallRejection` whose `tool_name` is the plan tool.
+    """
+
+    line_number: int
+    entry_id: str | None
+    session_id: str | None
+    timestamp: str | None
+    tool_call_id: str | None
+    transcript_path: Path | None = field(default=None, compare=False)
+    decision: Literal["approve"] = field(default="approve", init=False)
+    source: str = field(default=SOURCE, init=False)
+    kind: str = field(default="plan_approval", init=False)
+    rule: str = field(default="plan_approval_from_tool_result", init=False)
+    duration_seconds: float | None = field(default=None, init=False)
+
+
 TranscriptAction = (
     TypedPrompt
     | Interruption
@@ -358,6 +410,8 @@ TranscriptAction = (
     | SlashCommand
     | ToolCallApproval
     | PermissionPromptDismissal
+    | QuestionAnswer
+    | PlanApproval
 )
 
 
@@ -594,9 +648,18 @@ def actions_from_user_entry(
             interruption = interruption_from_tool_result(place, tool_result, markers)
             if interruption is not None:
                 actions.append(interruption)
+            answer = question_answer_from_tool_result(entry, place, tool_result)
+            if answer is not None:
+                actions.append(answer)
+            plan_approval = plan_approval_from_tool_result(place, tool_result, markers, memory)
+            if plan_approval is not None:
+                actions.append(plan_approval)
         # The permission decision is written on the entry, not on a result,
-        # so it is read only when the entry answers exactly one call.
-        if len(content.tool_results) == 1:
+        # so it is read only when the entry answers exactly one call. When the
+        # person already acted on that call in another way (answering the
+        # question tool writes a one-off approval too), the decision is part
+        # of that action and is not counted again.
+        if len(content.tool_results) == 1 and not actions:
             decision = permission_decision_from_entry(entry, place, content.tool_results[0], markers, memory)
             if decision is not None:
                 actions.append(decision)
@@ -821,6 +884,70 @@ def rejection_from_tool_result(
         tool_call_id=tool_call_id if isinstance(tool_call_id, str) else None,
         tool_name=tool_name_for(tool_result, memory),
         feedback=feedback,
+    )
+
+
+def question_answer_from_tool_result(
+    entry: dict[str, Any], place: EntryPlace, tool_result: dict[str, Any]
+) -> QuestionAnswer | None:
+    """Rule: a successful tool result recording questions and answers is the person answering.
+
+    The agent's question tool (AskUserQuestion) records its result in the
+    entry's `toolUseResult` as `questions` (a list) and `answers` (question
+    text to answer). The structure, not the wording, is matched, because the
+    text reported to the model is not fixed. Declining to answer is a refused
+    tool call, found by `rejection_from_tool_result`.
+    """
+    if tool_result.get("is_error") is True:
+        return None
+    tool_use_result = entry.get("toolUseResult")
+    if not isinstance(tool_use_result, dict):
+        return None
+    questions = tool_use_result.get("questions")
+    answers_by_question = tool_use_result.get("answers")
+    if not isinstance(questions, list) or not isinstance(answers_by_question, dict):
+        return None
+    answers = []
+    for answer in answers_by_question.values():
+        if isinstance(answer, str):
+            answers.append(answer)
+    tool_call_id = tool_result.get("tool_use_id")
+    return QuestionAnswer(
+        line_number=place.line_number,
+        entry_id=place.entry_id,
+        session_id=place.session_id,
+        timestamp=place.timestamp,
+        transcript_path=place.transcript_path,
+        tool_call_id=tool_call_id if isinstance(tool_call_id, str) else None,
+        question_count=len(questions),
+        answers=tuple(answers),
+    )
+
+
+def plan_approval_from_tool_result(
+    place: EntryPlace, tool_result: dict[str, Any], markers: ClaudeCodeMarkers, memory: TranscriptMemory
+) -> PlanApproval | None:
+    """Rule: a successful plan-tool result beginning with the approval text is a plan approval.
+
+    The trap: the approval text alone is not enough, because any command's
+    output could begin with the same words. The result must answer a call to
+    the plan tool; when the call is not in this transcript, the text decides.
+    """
+    if tool_result.get("is_error") is True:
+        return None
+    if not tool_result_text(tool_result).startswith(markers.plan_approved_result_prefix):
+        return None
+    tool_name = tool_name_for(tool_result, memory)
+    if tool_name is not None and tool_name != markers.plan_tool_name:
+        return None
+    tool_call_id = tool_result.get("tool_use_id")
+    return PlanApproval(
+        line_number=place.line_number,
+        entry_id=place.entry_id,
+        session_id=place.session_id,
+        timestamp=place.timestamp,
+        transcript_path=place.transcript_path,
+        tool_call_id=tool_call_id if isinstance(tool_call_id, str) else None,
     )
 
 
