@@ -38,6 +38,7 @@ looking at real results, without re-reading transcripts.
 | `permission_prompt_dismissal` | `dismissal_from_permission_decision` | `tool_call_id`, `tool_name`, `decision` (always `"reject"`) |
 | `question_answer` | `question_answer_from_tool_result` | `tool_call_id`, `question_count`, `answers` (as given) |
 | `plan_approval` | `plan_approval_from_tool_result` | `tool_call_id`, `decision` (always `"approve"`) |
+| `queued_prompt` | `queued_prompt_from_attachment` | `text`, `image_count` |
 
 `tool_name` is read from the assistant entry that made the call, when it is in
 the same transcript; only the name is kept, never the tool's input.
@@ -47,7 +48,9 @@ ApprovalEvent.
 
 ## Rules
 
-Only entries of type `user` can hold a human action. Within one:
+Human actions are found in entries of type `user`, and in two other places
+described at the end of this list (a queued prompt in an `attachment` entry,
+a blocked prompt in a `system` entry). Within a `user` entry:
 
 1. **Rejection** (`rejection_from_tool_result`). A tool result with
    `is_error: true` whose text begins "The user doesn't want to proceed with
@@ -127,6 +130,17 @@ Only entries of type `user` can hold a human action. Within one:
    (`<command-name>`, `<command-message>`, `<local-command-...>`,
    `<task-notification>`, `<bash-...>`), or there is neither text nor an image.
    `userType` is not used: it is `external` on every user entry.
+
+Outside `user` entries:
+
+10. **Queued prompt** (`queued_prompt_from_attachment`). An `attachment` entry
+    whose `attachment` has `type: queued_command`, `commandMode: prompt`,
+    `origin.kind: human` and no `isMeta`: the person typed a prompt while the
+    agent was working, and Claude Code handed it to the model mid-turn. It is
+    not also written as a user entry. Text and images are read as for a typed
+    prompt (rule 4 applies). `timestamp` is the attachment's own
+    `timestamp` (when it was queued) when present. A queued prompt with no
+    origin is not counted; in the scan those were all injected reminders.
 
 ## Unfamiliar entries
 

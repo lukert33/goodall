@@ -62,9 +62,9 @@ class ClaudeCodeMarkers:
     # The words in a rejected tool result that come just before the feedback
     # the person typed with the refusal, if they typed any.
     rejection_feedback_lead_in: str
-    # Entry types Claude Code is known to write. Only "user" entries can hold
-    # a human action; the rest are known not to, and any other type is
-    # reported as unfamiliar.
+    # Entry types Claude Code is known to write. Human actions are found in
+    # "user" entries and in a few "attachment" and "system" entries; the
+    # rest are bookkeeping, and any other type is reported as unfamiliar.
     known_entry_types: tuple[str, ...]
     # The tags around a shell command the person ran with `!`, and the tags
     # that begin the command's output.
@@ -89,6 +89,10 @@ class ClaudeCodeMarkers:
     # the person approved the plan.
     plan_tool_name: str
     plan_approved_result_prefix: str
+    # The attachment type and command mode of a prompt the person typed while
+    # the agent was busy.
+    queued_command_attachment_type: str
+    queued_prompt_command_mode: str
     # Block types known to appear in a "user" entry's message content.
     known_content_block_types: tuple[str, ...]
     # Values of a "user" entry's `origin.kind`; only "human" is the person.
@@ -145,6 +149,8 @@ def claude_code_markers() -> ClaudeCodeMarkers:
         known_permission_sources=("user_temporary", "user_permanent", "user_abort", "config", "hook"),
         plan_tool_name="ExitPlanMode",
         plan_approved_result_prefix="User has approved your plan",
+        queued_command_attachment_type="queued_command",
+        queued_prompt_command_mode="prompt",
         known_content_block_types=("text", "image", "document", "tool_result"),
         known_origin_kinds=("human", "task-notification", "peer", "coordinator"),
         prepended_context_opening_tag="<system-reminder>",
@@ -402,8 +408,33 @@ class PlanApproval:
     duration_seconds: float | None = field(default=None, init=False)
 
 
+@dataclass(frozen=True, kw_only=True)
+class QueuedPrompt:
+    """A prompt the person typed while the agent was still working.
+
+    Claude Code queues it and hands it to the model part-way through the turn,
+    recording it in an attachment entry rather than a user entry, so it is a
+    kind of its own: the person redirected a running agent. `timestamp` is
+    when the person queued it, when Claude Code recorded that, otherwise when
+    it was delivered.
+    """
+
+    line_number: int
+    entry_id: str | None
+    session_id: str | None
+    timestamp: str | None
+    text: str
+    image_count: int
+    transcript_path: Path | None = field(default=None, compare=False)
+    source: str = field(default=SOURCE, init=False)
+    kind: str = field(default="queued_prompt", init=False)
+    rule: str = field(default="queued_prompt_from_attachment", init=False)
+    duration_seconds: float | None = field(default=None, init=False)
+
+
 TranscriptAction = (
     TypedPrompt
+    | QueuedPrompt
     | Interruption
     | ToolCallRejection
     | ShellCommand
@@ -493,6 +524,11 @@ def parse_human_actions(transcript_path: Path) -> ParseResult:
             place = place_of_entry(entry, line_number, transcript_path)
             if entry_type == "assistant":
                 remember_tool_calls(entry, memory)
+                continue
+            if entry_type == "attachment":
+                queued_prompt = queued_prompt_from_attachment(entry, place, markers)
+                if queued_prompt is not None:
+                    result.actions.append(queued_prompt)
                 continue
             if entry_type != "user":
                 continue
@@ -726,6 +762,47 @@ def shell_command_from_bash_input(
         text=command,
         output_line_number=place.line_number if output_in_same_entry else None,
         output_entry_id=place.entry_id if output_in_same_entry else None,
+    )
+
+
+def queued_prompt_from_attachment(
+    entry: dict[str, Any], place: EntryPlace, markers: ClaudeCodeMarkers
+) -> QueuedPrompt | None:
+    """Rule: a queued-command attachment holding a prompt from the person is a queued prompt.
+
+    The attachment has `type: queued_command`, `commandMode: prompt` and an
+    `origin.kind` of "human". The same attachment type also carries task
+    notifications and messages from other sessions, told apart by
+    `commandMode` and `origin`. A queued prompt with no origin is not
+    counted: in the structure scan those were all injected reminders.
+    """
+    attachment = entry.get("attachment")
+    if not isinstance(attachment, dict):
+        return None
+    if attachment.get("type") != markers.queued_command_attachment_type:
+        return None
+    if attachment.get("commandMode") != markers.queued_prompt_command_mode:
+        return None
+    if attachment.get("isMeta") is True:
+        return None
+    origin = attachment.get("origin")
+    if not isinstance(origin, dict) or origin.get("kind") != "human":
+        return None
+    # The prompt is stored like a user entry's message content, so it is read
+    # the same way.
+    prompt_content = read_user_content({"message": {"content": attachment.get("prompt")}}, markers)
+    typed_text = strip_prepended_context(prompt_content.text, markers)
+    if typed_text == "" and prompt_content.image_count == 0:
+        return None
+    queued_at = attachment.get("timestamp")
+    return QueuedPrompt(
+        line_number=place.line_number,
+        entry_id=place.entry_id,
+        session_id=place.session_id,
+        timestamp=queued_at if isinstance(queued_at, str) else place.timestamp,
+        transcript_path=place.transcript_path,
+        text=typed_text,
+        image_count=prompt_content.image_count,
     )
 
 

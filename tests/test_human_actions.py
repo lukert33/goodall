@@ -15,6 +15,7 @@ from goodall.human_actions import (
     PermissionPromptDismissal,
     PlanApproval,
     QuestionAnswer,
+    QueuedPrompt,
     ShellCommand,
     SlashCommand,
     ToolCallApproval,
@@ -447,6 +448,45 @@ def test_answers_to_the_agents_questions_and_plan_approvals_are_found() -> None:
     assert plan_approval.decision == "approve"
     assert plan_approval.rule == "plan_approval_from_tool_result"
     assert result.actions[0].rule == "question_answer_from_tool_result"
+    assert result.unfamiliar_entries == []
+
+
+def test_prompts_typed_while_the_agent_was_busy_are_found_in_queued_attachments() -> None:
+    # A prompt typed while the agent is working is queued and reaches the
+    # model inside an attachment entry, not a user entry.
+    result = parse_human_actions(FIXTURES / "queued_prompts.jsonl")
+
+    assert result.actions == [
+        TypedPrompt(
+            line_number=1,
+            entry_id="u-0001",
+            session_id="session-r",
+            timestamp="2026-03-06T09:00:00.000Z",
+            text="Write the example module.",
+            image_count=0,
+        ),
+        # The time is when the person queued it, not when it was delivered.
+        QueuedPrompt(
+            line_number=3,
+            entry_id="t-0003",
+            session_id="session-r",
+            timestamp="2026-03-06T09:00:20.000Z",
+            text="Also update the example readme.",
+            image_count=0,
+        ),
+        QueuedPrompt(
+            line_number=4,
+            entry_id="t-0004",
+            session_id="session-r",
+            timestamp="2026-03-06T09:00:40.000Z",
+            text="Match this example layout.",
+            image_count=1,
+        ),
+        # Lines 5 to 9: a task notification, a message from another session,
+        # a queued reminder with no origin, a meta prompt and another kind of
+        # attachment. None is the person typing.
+    ]
+    assert result.actions[1].rule == "queued_prompt_from_attachment"
     assert result.unfamiliar_entries == []
 
 
