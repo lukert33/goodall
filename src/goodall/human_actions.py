@@ -4,10 +4,18 @@ A transcript is Claude Code's own JSON Lines file for one Claude session. Its
 "user" entries mix what the person typed with text the harness wrote in the
 person's name: tool results, injected reminders, command wrappers. This module
 separates them, and returns one record per human action, in transcript order.
+A few actions sit outside "user" entries: a prompt queued while the agent was
+busy (an "attachment" entry) and a prompt a hook blocked (a "system" entry).
 
 Who calls it: derivation code that builds derived records from raw records
-(ADR 0003). It reads the file it is given and nothing else, imports only the
-standard library, and never needs Inspect (AGENTS.md invariants 7 and 8).
+(ADR 0003), `goodall.actor_labels`, and `goodall.human_activity`, which puts
+these actions beside those from other sources. It reads the file it is given
+and nothing else, imports only the standard library, and never needs Inspect
+(AGENTS.md invariants 7 and 8).
+
+The kinds are deliberately split finely, to be merged or renamed after real
+results are reviewed. Every record carries `source`, `kind` and `rule` so that
+can be done without re-reading transcripts.
 
 Design decisions a reader would otherwise reverse-engineer:
 
