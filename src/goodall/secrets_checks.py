@@ -18,8 +18,10 @@ decision:
 
 Two further judgements, beyond what ADR 0010 settles:
 
-- The env file holds references, not secrets, so another account being
-  able to read it is a warning, not a failure (`check_env_file_private`).
+- Another account being able to reach the env file is a failure
+  (`check_env_file_private`). The file holds references, not secrets, but
+  it names the vaults and items an eval's secrets are kept in, and an
+  account that could change it could point a program at another secret.
 - In the shared env file, a value that is a secret reference fails, because
   nothing would resolve it; a value shaped like a key or token only warns,
   because that is a guess (goodall.quoting.looks_like_a_random_token).
@@ -95,7 +97,13 @@ REFERENCED_FIELDS_EXIST = "secrets.referenced_fields_exist"
 SECRETS_MANAGER_INSTALLED = "tools.secrets_manager_installed"
 
 # The permission bits that let accounts other than the file's owner read,
-# change or run a file: everything for the group and for everyone else.
+# change or run a file: every bit for the group and for everyone else
+# (octal 077). "Other accounts can read the env file" means exactly that
+# any one of these is set; what `chmod 600` leaves is none of them. ACLs,
+# and the permissions of the folders above, are not looked at: a folder
+# that keeps others out would protect the file anyway, but goodall asks
+# for the file's own permissions to be right rather than reason about
+# every folder above it.
 OTHER_ACCOUNTS_PERMISSION_BITS = stat.S_IRWXG | stat.S_IRWXO
 
 # The env file's name, in the same folder as local settings (ADR 0010).
@@ -214,12 +222,13 @@ def env_file_value_not_a_reference_failure(
 def check_env_file_private(context: CheckContext) -> CheckOutcome:
     """Only this macOS user account can read or change the env file.
 
-    A warning, not a failure: the env file holds references, not secrets,
-    so another account reading it learns no secret. But a reference names
-    the vault and the item, which tells someone what to look for, and an
+    A failure, not a warning, even though the env file holds references
+    rather than secrets: a reference names the vault and the item a secret
+    is kept in, which tells someone exactly what to look for, and an
     account that can change the file could point a program at a different
     secret. On macOS a new file is usually readable by every account
-    (permissions 644), and the folders above it often let them reach it.
+    (permissions 644), so this is a mistake a person makes without meaning
+    to, and the fix is one command.
 
     A missing env file passes: there is nothing to protect.
     """
@@ -231,21 +240,27 @@ def check_env_file_private(context: CheckContext) -> CheckOutcome:
         # reports; saying it twice would not help.
         return passed()
     if env_file_status.st_mode & OTHER_ACCOUNTS_PERMISSION_BITS:
-        return warned([env_file_readable_by_others_failure(env_file)])
+        return failed([env_file_readable_by_others_failure(env_file)])
     return passed()
 
 
 def env_file_readable_by_others_failure(env_file: Path) -> Failure:
-    """The warning for an env file that other accounts on the Mac can read or change."""
+    """The failure for an env file that other accounts on the Mac can read or change.
+
+    The path is shown in full, inside one command a person can paste: it is
+    in goodall's own config folder, so it holds nothing a person wrote.
+    The reason goes in what happened, because the report shows that and
+    the next step, not the why.
+    """
     return Failure(
         kind="env_file_readable_by_others",
         what_happened=(
-            f"Other macOS user accounts on this Mac may be able to read or change the env file at {env_file}."
+            f"Other macOS user accounts on this Mac may be able to read or change the env file at {env_file}. "
+            "Only this account should, because it names the vaults and items this eval's secrets are kept in."
         ),
         why=(
             "The env file holds secret references, not secrets, but a reference names the vault and item a "
-            "secret is kept in, and a changed reference would give a program a different secret. Only this "
-            "account needs to read it."
+            "secret is kept in, and a changed reference would give a program a different secret."
         ),
         what_to_do_next=f"Run chmod 600 {shlex.quote(str(env_file))} in Terminal, then run goodall doctor again.",
     )

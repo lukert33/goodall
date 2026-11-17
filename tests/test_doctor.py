@@ -1045,23 +1045,49 @@ def test_an_unreadable_env_file_fails_saying_why(healthy_account: EvalAccount) -
     assert failure_kinds(document, "secrets.env_file_holds_only_references") == ["env_file_unreadable"]
 
 
-@pytest.mark.parametrize("permissions", [0o644, 0o640, 0o604])
-def test_an_env_file_other_accounts_can_read_is_a_warning_with_the_command_to_fix_it(
+# Any permission for the group or for everyone else counts: read, write or
+# run. 0o644 is what a new file on macOS usually gets.
+@pytest.mark.parametrize("permissions", [0o644, 0o640, 0o604, 0o620, 0o602, 0o610, 0o601, 0o700])
+def test_an_env_file_other_accounts_can_reach_fails_with_the_one_command_that_fixes_it(
     healthy_account: EvalAccount, permissions: int
 ) -> None:
     healthy_account.env_file.chmod(permissions)
 
-    exit_code, standard_output, _ = run_goodall(["doctor", "--json"])
+    exit_code, standard_output, _ = run_goodall(["doctor"])
+    json_exit_code, document = doctor_json()
 
-    # References are not secrets, so goodall still works; but they name
-    # vaults and items, which other accounts on the Mac have no need to see.
-    assert exit_code == exit_codes.SUCCESS
-    document = json.loads(standard_output)
+    if permissions == 0o700:
+        # Only the owner's own bits are set, so no other account can reach it.
+        assert exit_code == json_exit_code == exit_codes.SUCCESS
+        assert check_document(document, "secrets.env_file_private")["status"] == "pass"
+        return
+    assert exit_code == json_exit_code == exit_codes.ERROR
+    assert "  FAIL        Only this macOS user account can read the env file\n" in standard_output
     private_check = check_document(document, "secrets.env_file_private")
-    assert private_check["status"] == "warn"
+    assert private_check["status"] == "fail"
     assert failure_kinds(document, "secrets.env_file_private") == ["env_file_readable_by_others"]
     assert private_check["next_step"] == (
         f"Run chmod 600 {healthy_account.env_file} in Terminal, then run goodall doctor again."
+    )
+    # The one sentence on why is in what the report shows, not only in --json.
+    report_text = " ".join(standard_output.split())
+    assert "it names the vaults and items this eval's secrets are kept in" in report_text
+
+
+def test_the_command_to_fix_the_env_file_s_permissions_quotes_a_path_with_a_space(
+    healthy_account: EvalAccount, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spaced_config_directory = healthy_account.home_folder / "goodall config"
+    healthy_account.config_directory.rename(spaced_config_directory)
+    monkeypatch.setenv("GOODALL_CONFIG_DIR", str(spaced_config_directory))
+    (spaced_config_directory / ".env").chmod(0o644)
+
+    _, document = doctor_json()
+
+    # One complete command a person can paste: the path is quoted, so the
+    # space does not split it in two.
+    assert check_document(document, "secrets.env_file_private")["next_step"] == (
+        f"Run chmod 600 '{spaced_config_directory / '.env'}' in Terminal, then run goodall doctor again."
     )
 
 
