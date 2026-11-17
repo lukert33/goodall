@@ -5,8 +5,9 @@ Called by the `goodall` console script (see pyproject.toml) and by
 directly with a captured terminal and a fake runner, and check the returned
 exit code, so `main` returns a number instead of calling `sys.exit` itself.
 
-`goodall status` (goodall.status), `goodall doctor` (goodall.doctor), and
-`goodall journal` and `goodall intervene` (goodall.entries) are built.
+`goodall status` (goodall.status), `goodall doctor` (goodall.doctor),
+`goodall journal` and `goodall intervene` (goodall.entries), and
+`goodall start` and `goodall stop` (goodall.work_block_commands) are built.
 Every other subcommand is still a stub: it reports that it is not
 built yet and returns `ERROR` (1), not `USAGE_ERROR` (2), because the
 command line was valid and the feature is missing.
@@ -28,6 +29,7 @@ Design decisions a reader might otherwise reverse-engineer:
 """
 
 import argparse
+from datetime import UTC, datetime
 from pathlib import Path
 
 from goodall import exit_codes, records
@@ -36,6 +38,7 @@ from goodall.entries import DECISION_MEANINGS, EntryRequest, InterventionDetails
 from goodall.runner import RealRunner, Runner
 from goodall.status import run_status
 from goodall.terminal import Failure, Terminal
+from goodall.work_block_commands import Clock, run_start, run_stop
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -238,19 +241,28 @@ def run_stub(command_name: str, terminal: Terminal) -> int:
     return exit_codes.ERROR
 
 
-def main(argv: list[str] | None = None, terminal: Terminal | None = None, runner: Runner | None = None) -> int:
+def main(
+    argv: list[str] | None = None,
+    terminal: Terminal | None = None,
+    runner: Runner | None = None,
+    clock: Clock | None = None,
+) -> int:
     """Run goodall with the given arguments and return its exit code.
 
     `argv` defaults to the real command line. `terminal` defaults to one
     writing to the real standard output and standard error. `runner`
-    defaults to the real runner, which starts real programs. Passing all
-    three lets a test run any command without a subprocess, decide what
-    every program it runs does, and read back what it printed.
+    defaults to the real runner, which starts real programs. `clock`
+    defaults to the real time in UTC; the work-block commands ask it what
+    time it is. Passing all four lets a test run any command without a
+    subprocess, decide what every program it runs does, set the time, and
+    read back what was printed.
     """
     if terminal is None:
         terminal = Terminal()
     if runner is None:
         runner = RealRunner()
+    if clock is None:
+        clock = real_clock
     parser = build_parser()
 
     try:
@@ -271,7 +283,11 @@ def main(argv: list[str] | None = None, terminal: Terminal | None = None, runner
         return exit_codes.USAGE_ERROR
 
     if command_name == "status":
-        return run_status(terminal, as_json=arguments.json)
+        return run_status(terminal, runner, clock, as_json=arguments.json)
+    if command_name == "start":
+        return run_start(terminal, runner, clock, workstream=arguments.workstream)
+    if command_name == "stop":
+        return run_stop(terminal, runner, clock)
     if command_name == "doctor":
         return run_doctor(terminal, runner, as_json=arguments.json)
     if command_name == "journal":
@@ -289,3 +305,8 @@ def main(argv: list[str] | None = None, terminal: Terminal | None = None, runner
         return run_intervene(terminal, runner, entry_request, intervention_details)
 
     return run_stub(command_name, terminal)
+
+
+def real_clock() -> datetime:
+    """The time now, in UTC: the clock goodall uses outside tests."""
+    return datetime.now(UTC)

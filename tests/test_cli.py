@@ -110,9 +110,11 @@ def test_old_session_command_is_unknown() -> None:
 
 
 def test_start_accepts_a_workstream() -> None:
+    # The option is accepted, so goodall goes on to look for local settings,
+    # which this test has none of.
     exit_code, output = run_goodall(["start", "--workstream", "research"])
     assert exit_code == exit_codes.ERROR
-    assert "goodall start is not built yet" in output
+    assert "No local settings were found" in output
 
 
 def test_start_workstream_option_needs_a_name() -> None:
@@ -134,7 +136,7 @@ def test_group_without_subcommand_is_usage_error() -> None:
 
 
 # Commands that do something real, so they no longer report "not built yet".
-BUILT_COMMANDS = ["status", "doctor", "journal", "intervene"]
+BUILT_COMMANDS = ["status", "doctor", "journal", "intervene", "start", "stop"]
 
 
 def test_every_stub_returns_error_and_names_itself() -> None:

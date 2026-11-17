@@ -111,6 +111,25 @@ def test_an_unfinished_work_block_has_no_end() -> None:
     assert parsed.record.end_state is None
 
 
+def test_a_work_block_off_macos_has_a_null_macos_version() -> None:
+    # Goodall's tests run on Linux in CI, where there is no macOS version to
+    # observe; the record says so with null rather than an invented value.
+    work_block = records.build_work_block_record(
+        contributor=ADA,
+        workstream="research",
+        started_at=MORNING,
+        machine=records.MachineFacts("ci-runner", None, "0.0.1", None),
+        suffix="0a1b2c3d",
+    )
+
+    text = records.render_record(work_block)
+    parsed = records.parse_work_block_record(text)
+
+    assert '"macos_version": null' in text
+    assert parsed.problems == []
+    assert parsed.record == work_block
+
+
 # ---------------------------------------------------------------------------
 # File names and folders
 # ---------------------------------------------------------------------------

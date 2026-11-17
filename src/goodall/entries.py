@@ -38,7 +38,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from goodall import exit_codes, records
+from goodall import exit_codes, records, work_blocks
 from goodall.eval_config import EvalForThisAccount, read_eval_for_this_account
 from goodall.folders import describe_folder_problem, where_goodall_looked
 from goodall.local_settings import LocalSettings, read_local_settings
@@ -103,11 +103,12 @@ def add_journal_entry(terminal: Terminal, runner: Runner, request: EntryRequest)
     eval_reading = find_eval_for_this_account()
     if isinstance(eval_reading, list):
         return stopped(record_type, exit_codes.ERROR, eval_reading)
+    now = datetime.now(UTC)
     entry = records.build_journal_entry(
         contributor=eval_reading.contributor.id,
-        written_at=datetime.now(UTC),
+        written_at=now,
         body=text,
-        work_block=current_work_block_id(),
+        work_block=current_work_block_id(eval_reading, now),
     )
     return check_and_write(runner, eval_reading, entry, facts=[])
 
@@ -179,7 +180,7 @@ def add_intervention(
         category=details.category,
         decision=details.decision,
         body=text,
-        work_block=current_work_block_id(),
+        work_block=current_work_block_id(eval_reading, occurred_at),
         claude_session=details.claude_session,
         interrupted=details.interrupted,
     )
@@ -387,14 +388,23 @@ def claude_session_invalid_failure() -> Failure:
     )
 
 
-def current_work_block_id() -> str | None:
+def current_work_block_id(eval_for_this_account: EvalForThisAccount, now: datetime) -> str | None:
     """The id of the work block this account is in now, or None when there is none.
 
-    Work blocks are not built yet, so there is never one. This is the one
-    place that will change when they are: both commands stamp their record
-    with whatever this returns.
+    The one place journal entries and interventions learn their work block:
+    both commands stamp their record with whatever this returns. It asks the
+    same question as the prompt gate (goodall.work_blocks), so a forgotten
+    work block that is overdue, or one whose log directory is unplugged,
+    gives None: an entry written the next morning does not join last
+    night's work block. `now` is when the entry is about; an intervention
+    that happened before the active work block began is in no work block
+    goodall can name, so it gets None too.
     """
-    return None
+    log_directory = eval_for_this_account.local_settings.log_directory.path
+    active = work_blocks.active_work_block(log_directory, now)
+    if active is None or now < active.record.started_at:
+        return None
+    return active.id
 
 
 def stopped(record_type: str, exit_code: int, failures: list[Failure]) -> EntryResult:

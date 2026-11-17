@@ -142,11 +142,12 @@ class MachineFacts:
     """What goodall observed about the machine a work block ran on.
 
     Observed when the work block starts, never configured (ADR 0009).
-    `claude_code_version` is None when Claude Code was not found.
+    `macos_version` is None on any other system (goodall's own tests run on
+    Linux); `claude_code_version` is None when Claude Code was not found.
     """
 
     hostname: str
-    macos_version: str
+    macos_version: str | None
     goodall_version: str
     claude_code_version: str | None
 
@@ -589,11 +590,11 @@ def _read_machine_facts(reader: "_FieldReader") -> MachineFacts | None:
     # Problems inside `machine` are reported as `machine.hostname` and so on.
     machine_reader = _FieldReader(machine_values, reader.problems, prefix="machine.")
     hostname = machine_reader.text("hostname")
-    macos_version = machine_reader.text("macos_version")
+    macos_version = machine_reader.optional_text("macos_version")
     goodall_version = machine_reader.text("goodall_version")
     claude_code_version = machine_reader.optional_text("claude_code_version")
     machine_reader.report_unknown_keys()
-    if hostname is None or macos_version is None or goodall_version is None:
+    if hostname is None or goodall_version is None:
         return None
     return MachineFacts(hostname, macos_version, goodall_version, claude_code_version)
 
@@ -853,7 +854,8 @@ def _validate_work_block_record(
 
     machine = record.machine
     checker.required_text("machine.hostname", machine.hostname)
-    checker.required_text("machine.macos_version", machine.macos_version)
+    if machine.macos_version is not None:
+        checker.required_text("machine.macos_version", machine.macos_version)
     checker.required_text("machine.goodall_version", machine.goodall_version)
     if machine.claude_code_version is not None:
         checker.required_text("machine.claude_code_version", machine.claude_code_version)
