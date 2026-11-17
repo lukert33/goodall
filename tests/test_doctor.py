@@ -22,7 +22,7 @@ import pytest
 from goodall import cli, exit_codes
 from goodall.doctor import closing_line
 from goodall.fake_runner import FakeRunner
-from goodall.runner import OutputMode
+from goodall.runner import OutputMode, environment_for
 from goodall.terminal import CheckResult, CheckStatus, Terminal
 
 # The command the account check runs, by its full path (see goodall.program_checks).
@@ -1595,6 +1595,185 @@ def test_an_answer_from_op_that_goodall_cannot_read_leaves_every_reference_unver
     detail = check_document(document, "secrets.referenced_items_exist")["detail"]
     assert isinstance(detail, str)
     assert "goodall could not read the answer `op vault list` gave" in detail
+
+
+# A synthetic 1Password service account token. A real one starts ops_ and
+# runs to hundreds of characters; this one is built from pieces so a secret
+# scanner does not mistake it for a leak. If any part of it shows up in
+# goodall's output, a real token would have too.
+SYNTHETIC_SERVICE_ACCOUNT_TOKEN = "ops_" + "SYNTHETICserviceACCOUNT" * 4
+
+
+@pytest.fixture
+def service_account_token(monkeypatch: pytest.MonkeyPatch) -> str:
+    """Sign op in the unattended way: with a service account token in the environment."""
+    monkeypatch.setenv("OP_SERVICE_ACCOUNT_TOKEN", SYNTHETIC_SERVICE_ACCOUNT_TOKEN)
+    return SYNTHETIC_SERVICE_ACCOUNT_TOKEN
+
+
+def test_a_service_account_token_in_the_environment_reaches_every_op_command(
+    healthy_account: EvalAccount, service_account_token: str
+) -> None:
+    runner = healthy_runner()
+
+    exit_code, _, _ = run_goodall(["doctor"], runner)
+
+    assert exit_code == exit_codes.SUCCESS
+    op_commands = []
+    for command in runner.calls:
+        if command.arguments[0] == "op":
+            op_commands.append(command)
+    assert len(op_commands) == 3
+    for command in op_commands:
+        # The environment the real runner would give the command: nothing
+        # strips the token, and nothing sets an OP_ variable over it.
+        assert environment_for(command)["OP_SERVICE_ACCOUNT_TOKEN"] == service_account_token
+        for name in command.extra_environment:
+            assert not name.startswith("OP_")
+
+
+def test_a_passing_sign_in_with_a_service_account_carries_a_note_about_the_token(
+    healthy_account: EvalAccount, service_account_token: str
+) -> None:
+    exit_code, standard_output, _ = run_goodall(["doctor"])
+    json_exit_code, document = doctor_json()
+
+    assert exit_code == json_exit_code == exit_codes.SUCCESS
+    signed_in_check = check_document(document, "secrets.secrets_manager_signed_in")
+    assert signed_in_check["status"] == "pass"
+    assert signed_in_check["note"] == (
+        "Signed in with a 1Password service account, using the token in OP_SERVICE_ACCOUNT_TOKEN. That token is "
+        "itself a secret, kept in the environment rather than in 1Password, so set it only for this eval account "
+        "and never write it into a file."
+    )
+    assert "pass        The secrets manager is signed in\n              Signed in with a 1Password" in standard_output
+
+
+def test_a_passing_sign_in_through_the_app_has_no_note(healthy_account: EvalAccount) -> None:
+    _, document = doctor_json()
+
+    assert check_document(document, "secrets.secrets_manager_signed_in")["note"] is None
+
+
+def test_a_refused_service_account_token_says_so_and_does_not_send_the_person_to_the_app(
+    healthy_account: EvalAccount, service_account_token: str
+) -> None:
+    runner = healthy_runner()
+    runner.answer(OP_WHOAMI, exit_code=1)
+
+    exit_code, standard_output, _ = run_goodall(["doctor"], runner)
+    _, document = doctor_json(runner)
+
+    assert exit_code == exit_codes.ERROR
+    assert failure_kinds(document, "secrets.secrets_manager_signed_in") == ["secrets_manager_service_account_refused"]
+    signed_in_check = check_document(document, "secrets.secrets_manager_signed_in")
+    assert signed_in_check["detail"] == (
+        "Goodall found a 1Password service account token in OP_SERVICE_ACCOUNT_TOKEN, and 1Password refused it: "
+        "`op whoami` exited with code 1."
+    )
+    next_step = signed_in_check["next_step"]
+    assert isinstance(next_step, str)
+    assert next_step.startswith("The token may be wrong, expired, or without access to this eval's vault.")
+    assert "1Password app" not in next_step
+    assert "op signin" not in next_step
+    assert "Next: The token may be wrong" in standard_output
+
+
+def test_a_service_account_sign_in_that_never_answers_does_not_send_the_person_to_the_app(
+    healthy_account: EvalAccount, service_account_token: str
+) -> None:
+    runner = healthy_runner()
+    runner.answer_timed_out(OP_WHOAMI)
+
+    _, document = doctor_json(runner)
+
+    assert failure_kinds(document, "secrets.secrets_manager_signed_in") == ["secrets_manager_did_not_answer"]
+    signed_in_check = check_document(document, "secrets.secrets_manager_signed_in")
+    for text in [signed_in_check["detail"], signed_in_check["next_step"]]:
+        assert isinstance(text, str)
+        assert "1Password app" not in text
+        assert "approve" not in text
+    assert "service account token in OP_SERVICE_ACCOUNT_TOKEN" in str(signed_in_check["next_step"])
+
+
+def test_signing_in_through_the_app_mentions_a_service_account_for_an_unattended_mac(
+    healthy_account: EvalAccount,
+) -> None:
+    runner = healthy_runner()
+    runner.answer(OP_WHOAMI, exit_code=1)
+
+    _, document = doctor_json(runner)
+
+    assert failure_kinds(document, "secrets.secrets_manager_signed_in") == ["secrets_manager_signed_out"]
+    next_step = check_document(document, "secrets.secrets_manager_signed_in")["next_step"]
+    assert isinstance(next_step, str)
+    assert next_step.startswith("Open the 1Password app and unlock it.")
+    assert (
+        "On a Mac that runs unattended, a 1Password service account can sign op in instead: set its token in "
+        "OP_SERVICE_ACCOUNT_TOKEN for this eval account only, never in a file."
+    ) in next_step
+
+
+@pytest.mark.parametrize(
+    "scenario",
+    ["healthy", "refused", "refused, echoing the token", "no answer", "listing fails, echoing the token", "op missing"],
+)
+def test_a_service_account_token_never_appears_in_anything_doctor_says(
+    healthy_account: EvalAccount, service_account_token: str, scenario: str
+) -> None:
+    runner = healthy_runner()
+    echo = f"[ERROR] invalid token {service_account_token}\n"
+    if scenario == "refused":
+        runner.answer(OP_WHOAMI, exit_code=1)
+    elif scenario == "refused, echoing the token":
+        runner.answer(OP_WHOAMI, exit_code=1, standard_output=echo, standard_error=echo)
+    elif scenario == "no answer":
+        runner.answer_timed_out(OP_WHOAMI)
+    elif scenario == "listing fails, echoing the token":
+        runner.answer(OP_VAULT_LIST, exit_code=1, standard_output=echo, standard_error=echo)
+    elif scenario == "op missing":
+        runner.installed_programs.remove("op")
+
+    _, text_output, text_error = run_goodall(["doctor"], runner)
+    _, json_output, json_error = run_goodall(["doctor", "--json"], runner)
+
+    for printed in [text_output, text_error, json_output, json_error]:
+        assert "SYNTHETICservice" not in printed
+
+
+@pytest.mark.parametrize(
+    ("file_name", "check_id", "kind"),
+    [
+        ("env_file", "secrets.env_file_holds_only_references", "env_file_sets_service_account_token"),
+        ("shared_env_file", "secrets.shared_env_file_holds_no_secrets", "shared_env_file_sets_service_account_token"),
+    ],
+)
+@pytest.mark.parametrize(
+    "value", [SYNTHETIC_SERVICE_ACCOUNT_TOKEN, "op://Eval/service-account/credential"], ids=["token", "reference"]
+)
+def test_an_env_file_line_setting_the_service_account_token_fails_with_its_own_message(
+    healthy_account: EvalAccount, file_name: str, check_id: str, kind: str, value: str
+) -> None:
+    env_file = getattr(healthy_account, file_name)
+    env_file.write_text(env_file.read_text() + f"OP_SERVICE_ACCOUNT_TOKEN={value}\n")
+
+    exit_code, standard_output, standard_error = run_goodall(["doctor"])
+    json_exit_code, json_output, json_error = run_goodall(["doctor", "--json"])
+
+    assert exit_code == json_exit_code == exit_codes.ERROR
+    for printed in [standard_output, standard_error, json_output, json_error]:
+        assert "SYNTHETICservice" not in printed
+        assert "service-account/credential" not in printed
+    document = json.loads(json_output)
+    # Even a reference fails: op needs this token before it can resolve any.
+    assert failure_kinds(document, check_id) == [kind]
+    check = check_document(document, check_id)
+    assert isinstance(check["detail"], str)
+    assert "sets OP_SERVICE_ACCOUNT_TOKEN" in check["detail"]
+    assert "can never be a secret reference" in check["detail"]
+    assert isinstance(check["next_step"], str)
+    assert "treat it as exposed" in check["next_step"]
+    assert "never in a file" in check["next_step"]
 
 
 # The only secrets manager commands whose output goodall may read, by the

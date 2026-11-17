@@ -15,6 +15,11 @@ decision:
   holds a secret is refused there.
 - A name in both files is an error, so a contributor always knows which
   value a program receives.
+- A line setting a secrets manager's service account token (1Password's
+  OP_SERVICE_ACCOUNT_TOKEN) is refused in either file, even as a reference:
+  op needs the token before it can resolve any reference, so the token is
+  the one secret that can never be one, and in a file it is a secret any
+  reader of the file can take (goodall.secrets_manager).
 
 Two further judgements, beyond what ADR 0010 settles:
 
@@ -69,6 +74,8 @@ from goodall.secrets_manager import (
     DISPLAY_NAMES,
     REFERENCE_FORMS,
     SECRETS_MANAGER_PROGRAMS,
+    SERVICE_ACCOUNT_ALTERNATIVES,
+    SERVICE_ACCOUNT_TOKEN_VARIABLES,
     SIGN_IN_STEPS,
     WHERE_TO_FIND_A_REFERENCE,
     WHY_FIELDS_CANNOT_BE_CHECKED,
@@ -77,6 +84,7 @@ from goodall.secrets_manager import (
     SignInAnswer,
     SignInState,
     check_signed_in,
+    is_service_account_token_variable,
     is_well_formed_secret_reference,
     look_up_referenced_items,
     looks_like_a_secret_reference,
@@ -152,7 +160,9 @@ def check_env_file_holds_only_references(context: CheckContext) -> CheckOutcome:
     for line_problem in reading.problems:
         problems.append(env_file_line_failure(env_file, line_problem))
     for entry in reading.entries:
-        if not is_well_formed_secret_reference(local_settings.secrets_manager, entry.value):
+        if is_service_account_token_variable(entry.name):
+            problems.append(service_account_token_in_a_file_failure(env_file, entry, in_shared_env_file=False))
+        elif not is_well_formed_secret_reference(local_settings.secrets_manager, entry.value):
             problems.append(
                 env_file_value_not_a_reference_failure(env_file, entry.name, entry.line_number, local_settings)
             )
@@ -227,6 +237,45 @@ def env_file_value_not_a_reference_failure(
     )
 
 
+def service_account_token_in_a_file_failure(env_file: Path, entry: EnvEntry, in_shared_env_file: bool) -> Failure:
+    """The failure for a line setting a service account token in the env file or the shared env file.
+
+    Its own failure, rather than "not a reference" or "a secret name",
+    because the usual advice (make it a reference in the env file) is
+    wrong for this one secret. The value is never shown, reference or not.
+    """
+    if in_shared_env_file:
+        kind = "shared_env_file_sets_service_account_token"
+        file_described = "the shared env file"
+        exposed = (
+            "If it held a real token, treat it as exposed, all the more if the shared env file was ever committed "
+            "or pushed: in 1Password, revoke the token and create a new one. "
+        )
+        commit = " Commit the change to the record repo."
+    else:
+        kind = "env_file_sets_service_account_token"
+        file_described = "the env file"
+        exposed = "If it held a real token, treat it as exposed: in 1Password, revoke the token and create a new one. "
+        commit = ""
+    variable = entry.name
+    return Failure(
+        kind=kind,
+        what_happened=(
+            f"Line {entry.line_number} of {file_described} at {env_file} sets {variable}, the token op signs in "
+            "to 1Password with, which can never be a secret reference: op needs it before it can resolve any. "
+            "Goodall does not show its value."
+        ),
+        why=(
+            "A token written in a file is a secret that any program able to read the file can take, and it "
+            "gives access to every vault the service account can open."
+        ),
+        what_to_do_next=(
+            f"Delete line {entry.line_number} of {env_file}. {exposed}Set {variable} in this eval account's "
+            f"environment instead, never in a file.{commit}"
+        ),
+    )
+
+
 def check_env_file_private(context: CheckContext) -> CheckOutcome:
     """Only this macOS user account can read or change the env file.
 
@@ -294,7 +343,9 @@ def check_shared_env_file_holds_no_secrets(context: CheckContext) -> CheckOutcom
     for entry in reading.entries:
         value_key_format = key_format_in(entry.value)
         name_key_format = key_format_in(entry.name)
-        if value_key_format is not None:
+        if is_service_account_token_variable(entry.name):
+            problems.append(service_account_token_in_a_file_failure(shared_env_file, entry, in_shared_env_file=True))
+        elif value_key_format is not None:
             problems.append(
                 shared_env_file_key_failure(shared_env_file, entry, value_key_format, local_settings, in_name=False)
             )
@@ -631,15 +682,75 @@ def check_secrets_manager_signed_in(context: CheckContext) -> CheckOutcome:
             )
         )
     answer = check_signed_in(secrets_manager, context.runner)
+    if answer.state == SignInState.SIGNED_IN and answer.service_account:
+        return passed(note=service_account_note(local_settings))
     if answer.state == SignInState.SIGNED_IN:
         return passed()
+    if answer.service_account:
+        return failed([service_account_not_signed_in_failure(local_settings, answer)])
     return failed([secrets_manager_not_signed_in_failure(local_settings, answer)])
 
 
+def service_account_note(local_settings: LocalSettings) -> str:
+    """The note on a sign-in that used a service account token: that token is a secret outside the secrets manager."""
+    display_name = DISPLAY_NAMES[local_settings.secrets_manager]
+    variable = SERVICE_ACCOUNT_TOKEN_VARIABLES[local_settings.secrets_manager]
+    return (
+        f"Signed in with a {display_name} service account, using the token in {variable}. That token is itself a "
+        f"secret, kept in the environment rather than in {display_name}, so set it only for this eval account and "
+        "never write it into a file."
+    )
+
+
+def service_account_not_signed_in_failure(local_settings: LocalSettings, answer: SignInAnswer) -> Failure:
+    """The failure for a sign-in with a service account token that was refused, or not answered.
+
+    Never tells the person to unlock the app: with a token set, op does not
+    use the app at all, so that advice would send them the wrong way.
+    """
+    display_name = DISPLAY_NAMES[local_settings.secrets_manager]
+    variable = SERVICE_ACCOUNT_TOKEN_VARIABLES[local_settings.secrets_manager]
+    if answer.state == SignInState.NO_ANSWER:
+        return Failure(
+            kind="secrets_manager_did_not_answer",
+            what_happened=(
+                f"Goodall could not tell whether {display_name} is signed in, because it did not answer: "
+                f"{answer.problem}."
+            ),
+            why=f"Programs goodall launches get their secrets from {display_name}, so it must answer promptly.",
+            what_to_do_next=(
+                f"Goodall found a {display_name} service account token in {variable}, so op signs in with that "
+                f"token, not through the app. Check that this Mac can reach {display_name}, and that the token is "
+                "current and can open this eval's vault. Then run goodall doctor again."
+            ),
+        )
+    return Failure(
+        kind="secrets_manager_service_account_refused",
+        what_happened=(
+            f"Goodall found a {display_name} service account token in {variable}, and {display_name} refused it: "
+            f"{answer.problem}."
+        ),
+        why=(
+            f"Programs goodall launches get their secrets from {display_name}, and goodall checks that each "
+            f"secret reference points at a real item, so {display_name} must accept the token."
+        ),
+        what_to_do_next=(
+            f"The token may be wrong, expired, or without access to this eval's vault. In {display_name}, check "
+            f"the service account and the vaults it can open, set {variable} to a current token for this eval "
+            "account only, never in a file, and run goodall doctor again."
+        ),
+    )
+
+
 def secrets_manager_not_signed_in_failure(local_settings: LocalSettings, answer: SignInAnswer) -> Failure:
-    """The failure for a secrets manager that is signed out, or did not answer."""
+    """The failure for a secrets manager, signed in through its app, that is signed out or did not answer.
+
+    A signed-out manager's next step also offers a service account, the way
+    to sign in on a Mac with no person to unlock the app.
+    """
     display_name = DISPLAY_NAMES[local_settings.secrets_manager]
     sign_in_step = SIGN_IN_STEPS[local_settings.secrets_manager]
+    alternative = SERVICE_ACCOUNT_ALTERNATIVES[local_settings.secrets_manager]
     if answer.state == SignInState.NO_ANSWER:
         return Failure(
             kind="secrets_manager_did_not_answer",
@@ -658,7 +769,7 @@ def secrets_manager_not_signed_in_failure(local_settings: LocalSettings, answer:
             f"Programs goodall launches get their secrets from {display_name}, and goodall checks that each "
             f"secret reference points at a real item, so {display_name} must be signed in."
         ),
-        what_to_do_next=f"{sign_in_step}. Then run goodall doctor again.",
+        what_to_do_next=f"{sign_in_step}. Then run goodall doctor again. {alternative}.",
     )
 
 

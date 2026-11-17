@@ -9,7 +9,11 @@ its id.
 
 import pytest
 
-from goodall.secrets_manager import is_well_formed_secret_reference
+from goodall.secrets_manager import (
+    is_service_account_token_variable,
+    is_well_formed_secret_reference,
+    service_account_token_is_set,
+)
 
 
 @pytest.mark.parametrize(
@@ -60,3 +64,27 @@ def test_a_secrets_manager_goodall_does_not_know_accepts_nothing() -> None:
     # Local settings refuse any other manager, so this never happens in use;
     # if it did, nothing must pass by default.
     assert not is_well_formed_secret_reference("another-manager", "op://Eval/item/credential")
+
+
+@pytest.mark.parametrize(("value", "is_set"), [("ops_" + "SYNTHETIC" * 6, True), ("", False)])
+def test_a_service_account_token_counts_as_set_only_when_it_is_not_empty(
+    monkeypatch: pytest.MonkeyPatch, value: str, is_set: bool
+) -> None:
+    # An empty variable leaves op signing in through the app.
+    monkeypatch.setenv("OP_SERVICE_ACCOUNT_TOKEN", value)
+
+    assert service_account_token_is_set("1password") is is_set
+
+
+def test_no_service_account_token_when_the_variable_is_absent() -> None:
+    # tests/conftest.py removes the variable before every test.
+    assert not service_account_token_is_set("1password")
+    assert not service_account_token_is_set("another-manager")
+
+
+@pytest.mark.parametrize(
+    ("name", "is_the_variable"),
+    [("OP_SERVICE_ACCOUNT_TOKEN", True), ("OP_CONNECT_TOKEN", False), ("ANTHROPIC_API_KEY", False)],
+)
+def test_the_service_account_token_variable_is_recognised_by_its_exact_name(name: str, is_the_variable: bool) -> None:
+    assert is_service_account_token_variable(name) is is_the_variable
