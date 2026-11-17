@@ -198,3 +198,72 @@ def test_a_prompt_is_refused_when_claude_codes_input_cannot_be_read(tmp_path: Pa
         assert completed.returncode == 2, unreadable_input
         assert completed.stderr == expected_refusal
     assert heartbeat_sessions(eval_account.log_directory, work_block) == []
+
+
+# Every hook event other than the prompt gate, each with the fields Claude
+# Code adds for it.
+RECORDING_EVENTS = {
+    "SessionStart": hook_input("SessionStart", source="startup"),
+    "PostToolUse": hook_input(
+        "PostToolUse",
+        tool_name="Bash",
+        tool_input={"command": "uv run pytest"},
+        tool_response={"stdout": "3 passed", "stderr": ""},
+        tool_use_id="toolu_01",
+        duration_ms=812,
+    ),
+    "Stop": hook_input("Stop", stop_hook_active=False, last_assistant_message="All tests pass now."),
+    "SessionEnd": hook_input("SessionEnd", reason="other"),
+}
+
+
+def test_every_other_event_leaves_a_heartbeat_silently(tmp_path: Path) -> None:
+    eval_account = make_eval_account(tmp_path)
+    work_block = start_work_block(eval_account.log_directory)
+
+    for event_name, event_input in RECORDING_EVENTS.items():
+        completed = run_hook(eval_account.config_directory, [event_name], event_input)
+
+        assert completed.returncode == 0, event_name
+        assert completed.stdout == ""
+        assert completed.stderr == ""
+    assert heartbeat_sessions(eval_account.log_directory, work_block) == [CLAUDE_SESSION] * len(RECORDING_EVENTS)
+
+
+def test_other_events_exit_0_silently_whatever_is_wrong(tmp_path: Path) -> None:
+    # Exit 2 from a Stop hook would keep Claude from finishing its reply, so
+    # nothing goodall finds wrong may reach Claude Code from these events.
+    not_set_up = tmp_path / "not-set-up"
+    not_set_up.mkdir()
+    no_work_block = make_eval_account(tmp_path)
+
+    for config_directory in [not_set_up, no_work_block.config_directory]:
+        for event_name in RECORDING_EVENTS:
+            for event_input in [RECORDING_EVENTS[event_name], "", "{cut short"]:
+                completed = run_hook(config_directory, [event_name], event_input)
+
+                assert completed.returncode == 0, (config_directory, event_name, event_input)
+                assert completed.stdout == ""
+                assert completed.stderr == ""
+
+
+def test_an_event_with_unreadable_input_still_leaves_a_heartbeat(tmp_path: Path) -> None:
+    eval_account = make_eval_account(tmp_path)
+    work_block = start_work_block(eval_account.log_directory)
+
+    completed = run_hook(eval_account.config_directory, ["PostToolUse"], "{cut short")
+
+    assert completed.returncode == 0
+    assert heartbeat_sessions(eval_account.log_directory, work_block) == [None]
+
+
+def test_a_hook_command_missing_its_event_name_says_how_to_fix_it_without_blocking(tmp_path: Path) -> None:
+    eval_account = make_eval_account(tmp_path)
+
+    completed = run_hook(eval_account.config_directory, [], prompt_input())
+
+    # 1, not 2: Claude Code shows the message but neither refuses a prompt
+    # nor keeps Claude from stopping, since which event fired is unknown.
+    assert completed.returncode == 1
+    assert completed.stdout == ""
+    assert "goodall hook UserPromptSubmit" in completed.stderr
