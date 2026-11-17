@@ -136,7 +136,7 @@ def test_group_without_subcommand_is_usage_error() -> None:
 
 
 # Commands that do something real, so they no longer report "not built yet".
-BUILT_COMMANDS = ["status", "doctor", "journal", "intervene", "start", "stop"]
+BUILT_COMMANDS = ["status", "doctor", "journal", "intervene", "start", "stop", "hook"]
 
 
 def test_every_stub_returns_error_and_names_itself() -> None:
@@ -170,10 +170,13 @@ def test_onboard_stub_says_how_to_set_up_an_eval_account_by_hand() -> None:
     assert "~/.config/goodall/" in one_line
 
 
-def test_hook_without_event_name_is_usage_error() -> None:
+def test_hook_without_event_name_is_an_error_not_a_usage_error() -> None:
+    # Claude Code reads exit 2 as "refuse the prompt" or "do not stop", so a
+    # hook command missing its event name must exit 1, which Claude Code
+    # shows as a hook error and otherwise ignores.
     exit_code, output = run_goodall(["hook"])
-    assert exit_code == exit_codes.USAGE_ERROR
-    assert "event_name" in output
+    assert exit_code == exit_codes.ERROR
+    assert "goodall hook UserPromptSubmit" in output
 
 
 def test_unknown_command_is_usage_error() -> None:

@@ -434,6 +434,15 @@ class Terminal:
                 lines.append(" " * LABEL_COLUMN_WIDTH + command)
         return "\n".join(lines)
 
+    def show_hook_message(self, message: str) -> None:
+        """Write a message for Claude Code to show the person, as one unwrapped line on standard error.
+
+        Used by `goodall hook` (goodall.hook). Claude Code shows a hook's
+        standard error inside its own window, which wraps text itself, so
+        this adds no labels, line breaks or colour.
+        """
+        self.standard_error.write(message + "\n")
+
     def show_failures(self, failures: list[Failure]) -> None:
         """Write several failures to standard error, one after another, with a blank line between them."""
         for position, failure in enumerate(failures):
