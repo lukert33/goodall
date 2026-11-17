@@ -256,13 +256,21 @@ def record_activity(event_name: str, hook_input_text: str | None, now: datetime)
         # Silent, as every event but the prompt gate is; see the module docstring.
         pass
     if event_name in TRANSCRIPT_COPY_EVENTS and hook_input is not None and hook_input.transcript_path is not None:
-        transcripts.copy_from_hook(
-            transcripts.claude_projects_folder(),
-            log_directory,
-            hook_input.claude_session,
-            hook_input.transcript_path,
-            now,
-        )
+        try:
+            transcripts.copy_from_hook(
+                transcripts.claude_projects_folder(),
+                log_directory,
+                hook_input.claude_session,
+                hook_input.transcript_path,
+                now,
+            )
+        except Exception as error:
+            # Silent towards Claude Code, but kept in the log directory, so
+            # `goodall status` can say so (goodall.transcripts). A bug in
+            # goodall lands here too, which is how it gets noticed.
+            transcripts.record_failed_copy(
+                log_directory, now, event_name, hook_input.claude_session, f"{type(error).__name__}: {error}"
+            )
 
 
 def real_clock() -> datetime:

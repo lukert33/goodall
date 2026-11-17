@@ -20,6 +20,7 @@ import json
 import os
 import subprocess
 import sys
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -277,6 +278,13 @@ def test_a_transcript_path_that_leads_outside_the_claude_projects_folder_is_refu
         assert completed.stdout == ""
         assert completed.stderr == ""
     assert not eval_account.copied_transcripts.exists()
+    # Each refusal is noted for goodall status, without the path's contents.
+    failed_copies = eval_account.log_directory / "transcript-sync" / "failed-copies.jsonl"
+    problems = [json.loads(line)["problem"] for line in failed_copies.read_text().splitlines()]
+    assert len(problems) == len(refused_paths)
+    for problem in problems:
+        assert problem.startswith("TranscriptPathRefused: ")
+        assert "not a transcript" not in problem
 
 
 def test_a_transcript_that_grew_between_two_hooks_is_copied_again_in_full(tmp_path: Path) -> None:
@@ -379,3 +387,74 @@ def test_goodall_status_copies_every_claude_session_in_every_project_folder_and_
         first_status.everything_printed
     )
     assert "transcript" not in second_status.everything_printed
+
+
+def test_a_hook_with_the_log_directory_unplugged_stays_silent_and_status_copies_once_it_is_back(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    eval_account = make_eval_account(tmp_path)
+    eval_account.transcript.write_bytes(FIRST_LINES)
+    unplugged = tmp_path / "unplugged"
+    eval_account.log_directory.rename(unplugged)
+
+    completed = run_hook(eval_account, "Stop", hook_input(eval_account, "Stop"))
+
+    assert (completed.returncode, completed.stdout, completed.stderr) == (0, "", "")
+    # No stray folder was made where the log directory should be.
+    assert not eval_account.log_directory.exists()
+
+    unplugged.rename(eval_account.log_directory)
+    status = run_goodall(eval_account, monkeypatch, ["status"])
+
+    assert files_and_bytes(eval_account.copied_transcripts) == {
+        f"{PROJECT_FOLDER_NAME}/{CLAUDE_SESSION}.jsonl": FIRST_LINES,
+    }
+    assert "Brought the copy of 1 Claude session's transcript up to date" in status.everything_printed
+
+
+@pytest.fixture
+def locked_folders() -> Iterator[list[Path]]:
+    """Folders a test makes read-only; their permissions are given back afterwards so pytest can delete them."""
+    if os.geteuid() == 0:
+        pytest.skip("root can write anywhere, so a folder cannot be made read-only to it")
+    folders: list[Path] = []
+    yield folders
+    for folder in folders:
+        folder.chmod(0o700)
+
+
+def test_a_copy_that_fails_in_a_hook_is_silent_but_kept_for_status_to_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, locked_folders: list[Path]
+) -> None:
+    eval_account = make_eval_account(tmp_path)
+    eval_account.transcript.write_bytes(FIRST_LINES)
+    eval_account.copied_transcripts.mkdir()
+    eval_account.copied_transcripts.chmod(0o500)
+    locked_folders.append(eval_account.copied_transcripts)
+
+    completed = run_hook(eval_account, "Stop", hook_input(eval_account, "Stop"))
+
+    assert (completed.returncode, completed.stdout, completed.stderr) == (0, "", "")
+    failed_copies = eval_account.log_directory / "transcript-sync" / "failed-copies.jsonl"
+    failure = json.loads(failed_copies.read_text())
+    assert failure["event"] == "Stop"
+    assert failure["claude_session"] == CLAUDE_SESSION
+    assert "Permission denied" in failure["problem"]
+
+    # While the folder is still read-only, status warns, and keeps the hook's record.
+    status = run_goodall(eval_account, monkeypatch, ["status", "--json"])
+    warning_kinds = [warning["kind"] for warning in json.loads(status.standard_output)["warnings"]]
+    assert warning_kinds == ["transcripts_not_copied"]
+    assert failed_copies.exists()
+
+    # Once it can be written, status copies, says the hooks had failed, and says it only once.
+    eval_account.copied_transcripts.chmod(0o700)
+    fixed_status = run_goodall(eval_account, monkeypatch, ["status"])
+    later_status = run_goodall(eval_account, monkeypatch, ["status"])
+
+    assert files_and_bytes(eval_account.copied_transcripts) == {
+        f"{PROJECT_FOLDER_NAME}/{CLAUDE_SESSION}.jsonl": FIRST_LINES,
+    }
+    assert "could not copy a transcript 1 time when a Claude Code hook fired" in fixed_status.everything_printed
+    assert "transcript" not in later_status.everything_printed
+    assert not failed_copies.exists()

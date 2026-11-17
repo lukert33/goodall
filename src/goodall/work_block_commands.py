@@ -328,7 +328,7 @@ class Settling:
             else:
                 warnings.append(record_waiting_failure(write.record, write.waiting_file, write.failures))
         if self.transcript_sweep.problems:
-            warnings.append(transcripts_not_copied_failure(self.transcript_sweep.problems))
+            warnings.append(transcripts_not_copied_failure(self.transcript_sweep))
         return warnings
 
     @property
@@ -480,22 +480,41 @@ def recover_machine_facts(runner: Runner, machine_values: object) -> records.Mac
 
 
 def describe_transcript_sweep(sweep_result: transcripts.SweepResult) -> str | None:
-    """What a person reads about the transcripts the sweep copied, or None when it copied none."""
-    if sweep_result.claude_sessions_copied == 0:
-        return None
+    """What a person reads about the transcripts the sweep copied, or None when there is nothing to say.
+
+    Something is said when the sweep copied a Claude session, or when it
+    succeeded after hooks had failed to copy: the person learns once that
+    copies had fallen behind, and that they are now complete.
+    """
+    sentences = []
     if sweep_result.claude_sessions_copied == 1:
-        paragraph = "Brought the copy of 1 Claude session's transcript up to date in the log directory."
-    else:
-        paragraph = (
+        sentences.append("Brought the copy of 1 Claude session's transcript up to date in the log directory.")
+    elif sweep_result.claude_sessions_copied > 1:
+        sentences.append(
             f"Brought the copies of {sweep_result.claude_sessions_copied} Claude sessions' transcripts up to date "
             "in the log directory."
         )
     if sweep_result.earlier_copies_kept > 0:
-        paragraph += (
-            f" {sweep_result.earlier_copies_kept} earlier copies no longer matched the start of their transcripts, "
+        sentences.append(
+            f"{sweep_result.earlier_copies_kept} earlier copies no longer matched the start of their transcripts, "
             f"so they were kept, unchanged, in {transcripts.SUPERSEDED_FOLDER_NAME} in the log directory."
         )
-    return paragraph
+    if sweep_result.failed_hook_copies > 0 and not sweep_result.problems:
+        sentences.append(
+            f"Before this, goodall could not copy a transcript {describe_times(sweep_result.failed_hook_copies)} "
+            f"when a Claude Code hook fired; the reasons are kept in {sweep_result.failed_hook_copies_file}. "
+            "Every transcript has now been copied."
+        )
+    if not sentences:
+        return None
+    return " ".join(sentences)
+
+
+def describe_times(count: int) -> str:
+    """`1 time`, `3 times`."""
+    if count == 1:
+        return "1 time"
+    return f"{count} times"
 
 
 def show_settling(terminal: Terminal, settling: Settling) -> None:
@@ -599,14 +618,20 @@ def record_waiting_failure(
     )
 
 
-def transcripts_not_copied_failure(problems: list[str]) -> Failure:
+def transcripts_not_copied_failure(sweep_result: transcripts.SweepResult) -> Failure:
     """The warning for Claude sessions whose transcripts the sweep could not copy into the log directory."""
+    what_happened = (
+        f"Goodall could not copy the transcripts of {len(sweep_result.problems)} Claude session(s) into the log "
+        "directory. " + " ".join(sweep_result.problems)
+    )
+    if sweep_result.failed_hook_copies > 0:
+        what_happened += (
+            f" Claude Code hooks could not copy a transcript {describe_times(sweep_result.failed_hook_copies)} "
+            f"either; the reasons are kept in {sweep_result.failed_hook_copies_file}."
+        )
     return Failure(
         kind="transcripts_not_copied",
-        what_happened=(
-            f"Goodall could not copy the transcripts of {len(problems)} Claude session(s) into the log directory. "
-            + " ".join(problems)
-        ),
+        what_happened=what_happened,
         why=(
             "Transcripts are the record of what the agents did. Claude Code still holds them, so nothing is lost "
             "yet, and goodall tries again each time a hook fires and each time you run goodall start, stop or status."

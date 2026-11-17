@@ -54,6 +54,7 @@ Decisions a reader would otherwise reverse-engineer (PROVISIONAL):
 """
 
 import enum
+import json
 import os
 import secrets
 import stat
@@ -69,6 +70,13 @@ TRANSCRIPTS_FOLDER_NAME = "transcripts"
 # The folder in the log directory where an earlier copy is kept when the
 # source no longer starts with it.
 SUPERSEDED_FOLDER_NAME = "superseded-transcripts"
+
+# The folder in the log directory for goodall's own notes about copying:
+# `failed-copies.jsonl`, one line per copy a hook could not make, and
+# `reported/`, where those lines go once `goodall status` has said so.
+SYNC_FOLDER_NAME = "transcript-sync"
+FAILED_COPIES_FILE_NAME = "failed-copies.jsonl"
+REPORTED_FOLDER_NAME = "reported"
 
 # Where Claude Code keeps a Claude session's subagent transcripts, inside a
 # folder named after the session.
@@ -149,6 +157,63 @@ class SweepResult:
     claude_sessions_copied: int = 0
     earlier_copies_kept: int = 0
     problems: list[str] = field(default_factory=list)
+    # How many copies hooks failed to make since the last sweep that
+    # succeeded, and where the reasons are kept.
+    failed_hook_copies: int = 0
+    failed_hook_copies_file: Path | None = None
+
+
+def record_failed_copy(log_directory: Path, now: datetime, event_name: str, claude_session: str, problem: str) -> None:
+    """Note, in the log directory, that a hook could not copy a transcript, so `goodall status` can say so later.
+
+    The hook must stay silent (anything it printed or any non-zero exit
+    would reach Claude Code), so this file is how a failure stays visible.
+    One JSON line per failure, appended in a single write. Never raises:
+    when even this cannot be written (the log directory is unplugged, say),
+    the failure goes unrecorded, and the next sweep's own attempt shows it.
+    """
+    line = json.dumps(
+        {"at": format_moment(now), "event": event_name, "claude_session": claude_session, "problem": problem}
+    )
+    try:
+        sync_folder = make_folders(log_directory, [SYNC_FOLDER_NAME])
+        descriptor = os.open(
+            sync_folder / FAILED_COPIES_FILE_NAME, os.O_WRONLY | os.O_APPEND | os.O_CREAT, FILE_PERMISSIONS
+        )
+        try:
+            os.write(descriptor, (line + "\n").encode("utf-8"))
+        finally:
+            os.close(descriptor)
+    except OSError:
+        pass
+
+
+def take_failed_hook_copies(log_directory: Path, now: datetime, result: SweepResult) -> None:
+    """Count the copies hooks failed to make, and once a sweep has copied everything, file their record away.
+
+    While the sweep itself still fails, the record stays where it is, to be
+    reported again. Once a sweep succeeds, every transcript is copied, so
+    the record is moved to `transcript-sync/reported/` (kept, not deleted)
+    and is reported only this once.
+    """
+    failed_copies_file = log_directory / SYNC_FOLDER_NAME / FAILED_COPIES_FILE_NAME
+    try:
+        failed_copies_text = failed_copies_file.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return
+    result.failed_hook_copies = len(failed_copies_text.splitlines())
+    result.failed_hook_copies_file = failed_copies_file
+    if result.problems:
+        return
+    reported_folder = make_folders(log_directory, [SYNC_FOLDER_NAME, REPORTED_FOLDER_NAME])
+    reported_file = reported_folder / f"failed-copies-{format_moment(now)}-{secrets.token_hex(2)}.jsonl"
+    os.rename(failed_copies_file, reported_file)
+    result.failed_hook_copies_file = reported_file
+
+
+def format_moment(moment: datetime) -> str:
+    """A moment in UTC to the microsecond, fit for a file or folder name: `20261117T101500.123456Z`."""
+    return moment.astimezone(UTC).strftime("%Y%m%dT%H%M%S.%fZ")
 
 
 def sweep(projects_folder: Path, log_directory: Path, now: datetime) -> SweepResult:
@@ -176,6 +241,7 @@ def sweep(projects_folder: Path, log_directory: Path, now: datetime) -> SweepRes
             if FileOutcome.COPIED in outcomes or FileOutcome.COPIED_AND_EARLIER_COPY_KEPT in outcomes:
                 result.claude_sessions_copied += 1
             result.earlier_copies_kept += outcomes.count(FileOutcome.COPIED_AND_EARLIER_COPY_KEPT)
+    take_failed_hook_copies(log_directory, now, result)
     return result
 
 
@@ -342,8 +408,7 @@ def keep_earlier_copy(log_directory: Path, relative_path: Path, now: datetime) -
     Claude projects folder never sees two versions of one Claude session.
     Raises FileExistsError rather than overwrite anything already kept there.
     """
-    moment = now.astimezone(UTC).strftime("%Y%m%dT%H%M%S.%fZ")
-    kept_folder = make_folders(log_directory, [SUPERSEDED_FOLDER_NAME, moment, *relative_path.parent.parts])
+    kept_folder = make_folders(log_directory, [SUPERSEDED_FOLDER_NAME, format_moment(now), *relative_path.parent.parts])
     kept_copy = kept_folder / relative_path.name
     if kept_copy.exists():
         raise FileExistsError(f"{kept_copy} is already there")
