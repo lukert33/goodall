@@ -1005,20 +1005,33 @@ def test_a_line_in_the_env_file_that_is_not_name_equals_value_is_reported_with_i
     assert "is not in the form NAME=value" in detail
 
 
-@pytest.mark.parametrize("file_name", ["env_file", "shared_env_file"])
-def test_an_empty_value_in_either_env_file_is_refused_with_the_placeholder_advice(
-    healthy_account: EvalAccount, file_name: str
-) -> None:
-    env_file = getattr(healthy_account, file_name)
+def empty_value_report(account: EvalAccount, file_name: str) -> str:
+    """Append a line with an empty value (a synthetic token name) to a file; return the doctor report, flattened."""
+    env_file = getattr(account, file_name)
     env_file.write_text(env_file.read_text() + "SYNTHETICsyntheticSYNTHETIC0123456789x9=\n")
-
     exit_code, standard_output, standard_error = run_goodall(["doctor", "--json"])
-
     assert exit_code == exit_codes.ERROR
     assert "SYNTHETICsynthetic" not in standard_output + standard_error
-    message = " ".join(standard_output.split())
-    assert "give the variable a value" in message
-    assert "any short word will do" in message
+    return " ".join(standard_output.replace("\\n", " ").split())
+
+
+def test_an_empty_value_in_the_env_file_says_to_give_a_secret_reference_or_delete_the_line(
+    healthy_account: EvalAccount,
+) -> None:
+    report = empty_value_report(healthy_account, "env_file")
+
+    assert "give the variable a secret reference, or delete the line" in report
+    assert "placeholder" not in report
+    assert "short word" not in report
+
+
+def test_an_empty_value_in_the_shared_env_file_says_any_short_word_will_do_for_a_placeholder(
+    healthy_account: EvalAccount,
+) -> None:
+    report = empty_value_report(healthy_account, "shared_env_file")
+
+    assert "give the variable a value" in report
+    assert "if it is only a placeholder, any short word will do, such as foo" in report
 
 
 def test_an_unreadable_env_file_fails_saying_why(healthy_account: EvalAccount) -> None:

@@ -160,6 +160,10 @@ def env_file_unreadable_failure(not_read: EnvFileNotRead) -> Failure:
 
 def env_file_line_failure(env_file: Path, line_problem: EnvLineProblem) -> Failure:
     """The failure for a line of the env file that is not NAME=value."""
+    empty_value_advice = ""
+    if line_problem.empty_value:
+        # The env file holds only secret references, so no placeholder word is offered.
+        empty_value_advice = " To fix an empty value, give the variable a secret reference, or delete the line."
     return Failure(
         kind="env_file_line_unreadable",
         what_happened=f"Line {line_problem.line_number} of the env file at {env_file} {line_problem.problem}.",
@@ -171,6 +175,7 @@ def env_file_line_failure(env_file: Path, line_problem: EnvLineProblem) -> Failu
         what_to_do_next=(
             f"Open {env_file} in a text editor and correct line {line_problem.line_number}, or delete it. If it "
             "holds a real key, change the key with whoever issued it, because it may have been exposed."
+            + empty_value_advice
         ),
     )
 
@@ -325,6 +330,12 @@ def shared_env_file_unreadable_failure(not_read: EnvFileNotRead) -> Failure:
 
 def shared_env_file_line_failure(shared_env_file: Path, line_problem: EnvLineProblem) -> Failure:
     """The failure for a line of the shared env file that is not NAME=value."""
+    empty_value_advice = ""
+    if line_problem.empty_value:
+        empty_value_advice = (
+            " To fix an empty value, give the variable a value; if it is only a placeholder, "
+            "any short word will do, such as foo."
+        )
     return Failure(
         kind="shared_env_file_line_unreadable",
         what_happened=(
@@ -336,7 +347,7 @@ def shared_env_file_line_failure(shared_env_file: Path, line_problem: EnvLinePro
         ),
         what_to_do_next=(
             f"Correct line {line_problem.line_number} of {shared_env_file}, or delete it, and commit the change "
-            "to the record repo."
+            "to the record repo." + empty_value_advice
         ),
     )
 

@@ -46,14 +46,11 @@ def test_an_empty_value_is_a_problem_because_a_pasted_base64_token_reads_that_wa
         assert "SYNTHETICsynthetic" not in problem.problem
 
 
-def test_the_empty_value_problem_says_to_give_a_value_and_that_any_short_word_will_do_for_a_placeholder() -> None:
-    reading = read_env_text("EMPTY=\nSYNTHETICsyntheticSYNTHETIC0123456789x9=\n")
+def test_the_empty_value_problem_is_marked_so_each_file_can_give_its_own_advice() -> None:
+    reading = read_env_text("EMPTY=\nNOT_EMPTY_BUT_BAD\n")
 
-    for problem in reading.problems:
-        assert "give the variable a value" in problem.problem
-        assert "placeholder" in problem.problem
-        assert "any short word will do" in problem.problem
-        assert "SYNTHETICsynthetic" not in problem.problem
+    assert [problem.empty_value for problem in reading.problems] == [True, False]
+    assert "placeholder" not in reading.problems[0].problem
 
 
 def problem_lines(text: str) -> list[int]:
