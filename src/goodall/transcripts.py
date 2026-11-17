@@ -96,12 +96,16 @@ def make_folders(log_directory: Path, folder_names: list[str]) -> Path:
 class FileOutcome(enum.Enum):
     """What copying one file did."""
 
+    UNCHANGED = "unchanged"
     COPIED = "copied"
 
 
 def copy_file(source: Path, destination: Path, superseded_destination: Path) -> FileOutcome:
     """Copy `source` to `destination` byte for byte, atomically, keeping the source's modification time.
 
+    A copy whose size and modification time (to the nanosecond) match the
+    source's is taken to be identical and left alone, without reading
+    either file: that is what keeps a hook fast when nothing changed.
     `superseded_destination` is where an existing copy would be kept if it
     had to be replaced. The destination folder must exist.
     """
@@ -110,6 +114,13 @@ def copy_file(source: Path, destination: Path, superseded_destination: Path) -> 
         source_status = os.fstat(source_descriptor)
         if not stat.S_ISREG(source_status.st_mode):
             raise OSError(f"{source} is not a regular file")
+        copy_status = status_or_none(destination)
+        if (
+            copy_status is not None
+            and copy_status.st_size == source_status.st_size
+            and copy_status.st_mtime_ns == source_status.st_mtime_ns
+        ):
+            return FileOutcome.UNCHANGED
         temporary_file = destination.parent / f".{destination.name}.{secrets.token_hex(4)}{TEMPORARY_SUFFIX}"
         try:
             write_copy(source_descriptor, source_status.st_size, temporary_file)
@@ -120,6 +131,14 @@ def copy_file(source: Path, destination: Path, superseded_destination: Path) -> 
     finally:
         os.close(source_descriptor)
     return FileOutcome.COPIED
+
+
+def status_or_none(path: Path) -> os.stat_result | None:
+    """The file's own status (a symlink is not followed), or None when nothing is there."""
+    try:
+        return os.stat(path, follow_symlinks=False)
+    except FileNotFoundError:
+        return None
 
 
 def write_copy(source_descriptor: int, size: int, temporary_file: Path) -> None:

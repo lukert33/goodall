@@ -29,6 +29,19 @@ def test_copy_file_makes_a_byte_identical_owner_only_copy_with_the_sources_modif
     assert stat.S_IMODE(destination.stat().st_mode) == 0o600
 
 
+def test_copy_file_leaves_a_copy_alone_when_size_and_modification_time_still_match(tmp_path: Path) -> None:
+    source = tmp_path / "source.jsonl"
+    source.write_bytes(b"line\n")
+    destination = tmp_path / "copy.jsonl"
+    transcripts.copy_file(source, destination, tmp_path / "superseded.jsonl")
+    inode_before = destination.stat().st_ino
+
+    outcome = transcripts.copy_file(source, destination, tmp_path / "superseded.jsonl")
+
+    assert outcome == transcripts.FileOutcome.UNCHANGED
+    assert destination.stat().st_ino == inode_before
+
+
 def make_projects_folder(tmp_path: Path) -> Path:
     """A synthetic Claude projects folder holding one project folder, and the transcript path inside it."""
     projects_folder = tmp_path / "claude-config" / "projects"

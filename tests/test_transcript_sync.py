@@ -131,3 +131,18 @@ def test_a_stop_hook_copies_the_transcript_byte_for_byte_in_claude_codes_layout(
     assert files_and_bytes(eval_account.copied_transcripts) == {
         f"{PROJECT_FOLDER_NAME}/{CLAUDE_SESSION}.jsonl": FIRST_LINES,
     }
+
+
+def test_a_transcript_that_grew_between_two_hooks_is_copied_again_in_full(tmp_path: Path) -> None:
+    eval_account = make_eval_account(tmp_path)
+    eval_account.transcript.write_bytes(FIRST_LINES)
+    run_hook(eval_account, "PostToolUse", hook_input(eval_account, "PostToolUse", tool_name="Bash"))
+    with eval_account.transcript.open("ab") as transcript:
+        transcript.write(MORE_LINES)
+
+    completed = run_hook(eval_account, "Stop", hook_input(eval_account, "Stop"))
+
+    assert completed.returncode == 0
+    assert files_and_bytes(eval_account.copied_transcripts) == {
+        f"{PROJECT_FOLDER_NAME}/{CLAUDE_SESSION}.jsonl": FIRST_LINES + MORE_LINES,
+    }
