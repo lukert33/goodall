@@ -309,7 +309,7 @@ def test_journal_with_a_pending_push_is_saved_on_this_mac_with_a_warning_and_exi
 
     assert run.exit_code == exit_codes.SUCCESS
     assert "saved on this Mac and will be sent to the shared record repo" in " ".join(run.standard_output.split())
-    assert run.standard_error.startswith("WARN  The record is saved and committed")
+    assert run.standard_error.startswith("WARN  The record is saved on this Mac")
     assert "\nNext  " in run.standard_error
     assert "FAIL" not in run.standard_error
     [entry_file] = eval_account.journal_files()

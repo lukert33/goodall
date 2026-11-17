@@ -15,6 +15,7 @@ tests nor the developer's own git settings can change what they see.
 """
 
 import os
+import re
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
@@ -24,6 +25,7 @@ import pytest
 from goodall import records
 from goodall.fake_runner import FakeRunner
 from goodall.record_repo import PushState, write_record
+from goodall.terminal import Failure
 
 ADA = "ada-lovelace"
 GRACE = "grace-hopper"
@@ -410,3 +412,52 @@ def test_a_push_the_remote_refuses_for_another_reason_is_not_retried_and_stays_p
     pushes = [command for command in runner.calls if "push" in command.arguments]
     assert len(pushes) == 1
     assert git(record_repo, "rev-list", "--count", "--merges", "HEAD") == "0\n"
+
+
+# Words from git's own vocabulary that a researcher does not know. They may
+# appear only in the marked detail at the end of a message.
+GIT_JARGON = ["remote", "origin", "upstream", "branch", "fetch", "merge", "rebase", "HEAD", "ref"]
+DETAIL_MARKER = "Detail for whoever looks after the record repo:"
+
+
+def pending_push_failures(tmp_path: Path) -> list[Failure]:
+    """Every failure that leaves a committed record waiting to be sent to the shared record repo."""
+    failures = []
+
+    remote, unreachable = make_remote_and_clone(tmp_path / "unreachable")
+    remote.rename(tmp_path / "unreachable" / "gone.git")
+    failures.extend(write_record(FakeRunner(), unreachable, journal_entry()).failures)
+
+    remote, adas = make_remote_and_clone(tmp_path / "blocked", "adas-records")
+    graces = clone(tmp_path / "blocked", remote, "graces-records", "Grace Hopper")
+    write_record(FakeRunner(), adas, journal_entry(contributor=ADA))
+    (graces / "eval.toml").write_text("an edit not committed\n")
+    failures.extend(write_record(FakeRunner(), graces, journal_entry(contributor=GRACE)).failures)
+
+    remote, adas = make_remote_and_clone(tmp_path / "conflict", "adas-records")
+    graces = clone(tmp_path / "conflict", remote, "graces-records", "Grace Hopper")
+    for folder, name in [(adas, "Ada's name"), (graces, "Grace's name")]:
+        (folder / "eval.toml").write_text(f'name = "{name}"\n')
+        git(folder, "commit", "--quiet", "-am", "Rename the eval")
+    write_record(FakeRunner(), adas, journal_entry(contributor=ADA))
+    failures.extend(write_record(FakeRunner(), graces, journal_entry(contributor=GRACE)).failures)
+
+    _, detached = make_remote_and_clone(tmp_path / "detached")
+    git(detached, "switch", "--quiet", "--detach")
+    failures.extend(write_record(FakeRunner(), detached, journal_entry()).failures)
+
+    nowhere = make_record_repo(tmp_path / "nowhere")
+    git(nowhere, "remote", "add", "elsewhere", str(tmp_path / "elsewhere.git"))
+    failures.extend(write_record(FakeRunner(), nowhere, journal_entry()).failures)
+    return failures
+
+
+def test_no_pending_push_message_uses_git_jargon_outside_the_marked_detail(tmp_path: Path) -> None:
+    failures = pending_push_failures(tmp_path)
+
+    assert len(failures) == 5
+    for failure in failures:
+        for part in [failure.what_happened, failure.why, failure.what_to_do_next]:
+            plain_words = part.split(DETAIL_MARKER)[0]
+            for word in GIT_JARGON:
+                assert not re.search(rf"\b{word}\b", plain_words, re.IGNORECASE), (failure.kind, word, plain_words)
