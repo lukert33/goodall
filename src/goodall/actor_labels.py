@@ -48,7 +48,7 @@ from goodall.human_actions import (
 # Raise this whenever a rule below changes, or when the human-action rules it
 # relies on change, so labels made by different rules can be told apart and
 # regenerated (ADR 0004).
-ACTOR_LABEL_RULES_VERSION = "1"
+ACTOR_LABEL_RULES_VERSION = "2"
 
 ActorLabel = Literal["human", "ai", "harness"]
 
@@ -63,8 +63,8 @@ class EntryFacts:
     """
 
     entry_type: str
-    # Kinds of human action `goodall.human_actions` found on this line:
-    # "typed_prompt", "interruption", "tool_call_rejection".
+    # Kinds of human action `goodall.human_actions` found on this line, such
+    # as "typed_prompt", "interruption" or "shell_command".
     human_action_kinds: frozenset[str]
     # The entry's text began with reminder blocks the harness put in front.
     has_prepended_context: bool
@@ -167,6 +167,62 @@ ACTOR_LABEL_RULES: tuple[Rule, ...] = (
         label="human",
         mixed=True,
         test=lambda entry: "interruption" in entry.human_action_kinds,
+    ),
+    Rule(
+        name="person_ran_shell_command",
+        description="The person ran a shell command with !; the harness wrapped it in tags, often with its output.",
+        label="human",
+        mixed=True,
+        test=lambda entry: "shell_command" in entry.human_action_kinds,
+    ),
+    Rule(
+        name="person_typed_slash_command",
+        description="The person typed a slash command; the harness recorded its name and arguments in tags.",
+        label="human",
+        mixed=True,
+        test=lambda entry: "slash_command" in entry.human_action_kinds,
+    ),
+    Rule(
+        name="person_approved_tool_call",
+        description="The person allowed a tool call, once or always; the entry also holds the tool's result.",
+        label="human",
+        mixed=True,
+        test=lambda entry: bool(entry.human_action_kinds & {"tool_call_approval_once", "tool_call_approval_always"}),
+    ),
+    Rule(
+        name="person_dismissed_permission_prompt",
+        description="The person dismissed a permission prompt; the harness wrote the refusal up as a tool result.",
+        label="human",
+        mixed=True,
+        test=lambda entry: "permission_prompt_dismissal" in entry.human_action_kinds,
+    ),
+    Rule(
+        name="person_answered_question",
+        description="The person answered the agent's questions; the entry also holds the questions and a report.",
+        label="human",
+        mixed=True,
+        test=lambda entry: "question_answer" in entry.human_action_kinds,
+    ),
+    Rule(
+        name="person_approved_plan",
+        description="The person approved the agent's plan; the harness wrote the approval up as a tool result.",
+        label="human",
+        mixed=True,
+        test=lambda entry: "plan_approval" in entry.human_action_kinds,
+    ),
+    Rule(
+        name="person_queued_prompt",
+        description="The person typed this prompt while the agent was busy, and the harness queued it.",
+        label="human",
+        mixed=False,
+        test=lambda entry: "queued_prompt" in entry.human_action_kinds,
+    ),
+    Rule(
+        name="person_prompt_blocked_by_hook",
+        description="The person sent a prompt that a hook blocked; the harness wrote the hook's warning.",
+        label="human",
+        mixed=True,
+        test=lambda entry: "blocked_prompt" in entry.human_action_kinds,
     ),
     Rule(
         name="harness_wrote_assistant_entry",
@@ -300,6 +356,12 @@ def label_transcript(transcript_path: Path) -> LabelledTranscript:
                 continue
 
             human_action_kinds = frozenset(human_action_kinds_by_line.get(line_number, set()))
+            # Whether a program sending a prompt counts as the person is
+            # undecided, so no rule may label it, and it is reported instead.
+            if "sdk_prompt" in human_action_kinds:
+                reason = "prompt sent through the SDK: whether that is the person is undecided"
+                result.unmatched.append(UnmatchedEntry(line_number, entry_id, entry_type, reason))
+                continue
             facts = facts_from_entry(entry, entry_type, human_action_kinds)
             rule = first_matching_rule(facts)
             if rule is None:

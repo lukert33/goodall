@@ -1,4 +1,4 @@
-# Actor labelling rules, version 1
+# Actor labelling rules, version 2
 
 These are the rules `goodall.actor_labels` uses to give every entry of one
 Claude Code transcript an actor label: `human` (the person), `ai` (a model) or
@@ -6,7 +6,7 @@ Claude Code transcript an actor label: `human` (the person), `ai` (a model) or
 `ACTOR_LABEL_RULES` in `src/goodall/actor_labels.py`. Change a rule there and
 here in the same commit, and raise `ACTOR_LABEL_RULES_VERSION` (ADR 0004).
 
-The person's actions are not detected here: rules 1 to 4 ask
+The person's actions are not detected here: rules 1 to 4a ask
 `goodall.human_actions` (see [human-action-rules.md](human-action-rules.md))
 which lines hold one, so the two derived records always agree. Raise this
 version too when those rules change.
@@ -39,10 +39,10 @@ listed, zero when unused), mixed entries and unmatched entries.
 One entry gets one label: the actor who produced what the entry is for, its
 **primary producer**. When the entry also holds words from another actor, it
 is marked `mixed`. Whether a rule's entries are mixed is fixed by the rule, so
-the list below says it for each. In version 1 the mixed entries are all
+the list below says it for each. In version 2 the mixed entries are all
 `human`: a typed prompt with harness reminders in front, and the person's
-refusals and interruptions, which the harness writes up in its own fixed
-words.
+commands, decisions, refusals and interruptions, which the harness writes up
+in its own tags and fixed words.
 
 ## Rules
 
@@ -70,6 +70,25 @@ synthetic and trimmed to the keys the rule looks at.
    The harness recorded it as a fixed marker or a cancelled tool result.
 
    `{"type":"user","message":{"content":[{"type":"text","text":"[Request interrupted by user]"}]}}`
+
+4a. **The person's other actions** → `human`. One rule per kind of human
+   action, each decided by `goodall.human_actions`, each named for what the
+   person did so labels can be regrouped with the actions:
+
+   | rule | human action kind | mixed | why mixed |
+   |---|---|---|---|
+   | `person_ran_shell_command` | `shell_command` | yes | wrapped in harness tags, often with the output |
+   | `person_typed_slash_command` | `slash_command` | yes | name and arguments wrapped in harness tags |
+   | `person_approved_tool_call` | `tool_call_approval_once`, `tool_call_approval_always` | yes | the entry also holds the tool's result |
+   | `person_dismissed_permission_prompt` | `permission_prompt_dismissal` | yes | the harness wrote the refusal |
+   | `person_answered_question` | `question_answer` | yes | also holds the model's questions |
+   | `person_approved_plan` | `plan_approval` | yes | the harness wrote the approval up |
+   | `person_queued_prompt` | `queued_prompt` (an `attachment` entry) | no | |
+   | `person_prompt_blocked_by_hook` | `blocked_prompt` (a `system` entry) | yes | the hook's warning |
+
+   A tool result carrying an approval is labelled `human`, not `harness`,
+   because the entry exists only because the person let the call run; most of
+   its words are the tool's output, which is why it is mixed.
 
 5. **`harness_wrote_assistant_entry`** → `harness`. An assistant entry Claude
    Code wrote without calling a model: `message.model` is `<synthetic>` or
@@ -122,11 +141,13 @@ A `user` or `assistant` entry no rule matches (a user entry from an
 `origin.kind` of `peer` or `coordinator`, or one with no message content) is
 reported as unmatched, not guessed.
 
-## Known to be wrong or unknowable in version 1
+A prompt a program sent through the SDK (human action kind `sdk_prompt`) is
+reported as unmatched before any rule is tried, with the reason "prompt sent
+through the SDK: whether that is the person is undecided". See "Undecided,
+waiting for evidence" in [human-action-rules.md](human-action-rules.md).
 
-- **Slash commands and shell commands the person typed** (`/command`,
-  `!command`) are labelled `harness` by rule 9, because Claude Code records
-  them in wrapper tags and `goodall.human_actions` does not count them yet.
+## Known to be wrong or unknowable in version 2
+
 - **`custom-title`** entries may record a name the person chose, and
   **`ai-title`** a title a model wrote; both are labelled `harness` as
   bookkeeping.

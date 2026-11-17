@@ -42,7 +42,8 @@ def test_every_entry_gets_one_label_and_the_rule_that_decided_it() -> None:
         EntryLabel(9, "u-0009", "user", "harness", "interruption_marker_closing_a_rejection", mixed=False),
         EntryLabel(10, "u-0010", "user", "human", "person_interrupted", mixed=True),
         EntryLabel(11, "u-0011", "user", "harness", "harness_injected_user_entry", mixed=False),
-        EntryLabel(12, "u-0012", "user", "harness", "harness_injected_user_entry", mixed=False),
+        # A slash command the person typed, recorded in harness tags.
+        EntryLabel(12, "u-0012", "user", "human", "person_typed_slash_command", mixed=True),
         EntryLabel(13, "u-0013", "user", "harness", "harness_injected_user_entry", mixed=False),
         EntryLabel(14, "a-0014", "assistant", "harness", "harness_wrote_assistant_entry", mixed=False),
         EntryLabel(15, "u-0015", "user", "ai", "agent_instructed_subagent", mixed=False),
@@ -65,7 +66,7 @@ def test_the_result_says_which_rules_version_produced_it() -> None:
     result = label_transcript(FIXTURES / "actor_labels.jsonl")
 
     assert result.rules_version == ACTOR_LABEL_RULES_VERSION
-    assert result.rules_version == "1"
+    assert result.rules_version == "2"
 
 
 def test_the_module_loads_nothing_outside_the_standard_library() -> None:
@@ -99,33 +100,86 @@ def test_every_rule_has_a_unique_name_and_a_one_sentence_description() -> None:
 def test_human_labels_fall_on_exactly_the_lines_holding_a_human_action() -> None:
     # The person is decided by goodall.human_actions, so on its own fixtures
     # the human labels and the human actions must sit on the same lines.
-    for fixture_name in ("typed_prompts.jsonl", "interruptions.jsonl", "rejections.jsonl"):
+    fixture_names = (
+        "typed_prompts.jsonl",
+        "interruptions.jsonl",
+        "rejections.jsonl",
+        "shell_commands.jsonl",
+        "slash_commands.jsonl",
+        "permission_decisions.jsonl",
+        "questions_and_plans.jsonl",
+        "queued_prompts.jsonl",
+        "blocked_prompts.jsonl",
+        "permission_modes.jsonl",
+    )
+    for fixture_name in fixture_names:
         labels = label_transcript(FIXTURES / fixture_name).labels
         human_lines = [label.line_number for label in labels if label.actor_label == "human"]
-        action_lines = sorted({action.line_number for action in parse_human_actions(FIXTURES / fixture_name).actions})
-        assert human_lines == action_lines, fixture_name
+        action_lines = set()
+        for action in parse_human_actions(FIXTURES / fixture_name).actions:
+            if action.kind != "sdk_prompt":
+                action_lines.add(action.line_number)
+        assert human_lines == sorted(action_lines), fixture_name
+
+
+def test_each_new_kind_of_human_action_has_its_own_rule() -> None:
+    # The rule name says which kind of action made the entry the person's,
+    # so labels can be regrouped along with the actions.
+    rule_names_by_fixture = {
+        "shell_commands.jsonl": {"person_ran_shell_command", "person_typed_prompt"},
+        "slash_commands.jsonl": {"person_typed_slash_command", "person_typed_prompt"},
+        "permission_decisions.jsonl": {"person_approved_tool_call", "person_dismissed_permission_prompt"},
+        "questions_and_plans.jsonl": {"person_answered_question", "person_rejected_tool_call", "person_approved_plan"},
+        "queued_prompts.jsonl": {"person_typed_prompt", "person_queued_prompt"},
+        "blocked_prompts.jsonl": {"person_typed_prompt", "person_prompt_blocked_by_hook"},
+    }
+    for fixture_name, expected_rule_names in rule_names_by_fixture.items():
+        labels = label_transcript(FIXTURES / fixture_name).labels
+        rule_names = set()
+        for label in labels:
+            if label.actor_label == "human":
+                rule_names.add(label.rule_name)
+        assert rule_names == expected_rule_names, fixture_name
+
+
+def test_a_prompt_a_program_sent_is_left_unmatched_while_that_is_undecided() -> None:
+    result = label_transcript(FIXTURES / "sdk_prompts.jsonl")
+
+    undecided_lines = []
+    for unmatched in result.unmatched:
+        if unmatched.reason == "prompt sent through the SDK: whether that is the person is undecided":
+            undecided_lines.append(unmatched.line_number)
+    assert undecided_lines == [2, 9]
 
 
 def test_the_summary_shows_how_a_transcript_divides() -> None:
     summary = summarise_labels(label_transcript(FIXTURES / "actor_labels.jsonl"))
 
     assert summary == LabelSummary(
-        rules_version="1",
-        entries_by_label={"human": 4, "ai": 5, "harness": 10},
+        rules_version="2",
+        entries_by_label={"human": 5, "ai": 5, "harness": 9},
         entries_by_rule={
             "person_typed_prompt": 1,
             "person_typed_prompt_behind_harness_context": 1,
             "person_rejected_tool_call": 1,
             "person_interrupted": 1,
+            "person_ran_shell_command": 0,
+            "person_typed_slash_command": 1,
+            "person_approved_tool_call": 0,
+            "person_dismissed_permission_prompt": 0,
+            "person_answered_question": 0,
+            "person_approved_plan": 0,
+            "person_queued_prompt": 0,
+            "person_prompt_blocked_by_hook": 0,
             "harness_wrote_assistant_entry": 1,
             "model_wrote_assistant_entry": 4,
             "harness_returned_tool_results": 1,
             "interruption_marker_closing_a_rejection": 1,
-            "harness_injected_user_entry": 4,
+            "harness_injected_user_entry": 3,
             "agent_instructed_subagent": 1,
             "bookkeeping_entry": 3,
         },
-        mixed_entries=3,
+        mixed_entries=4,
         unmatched_entries=4,
     )
 
