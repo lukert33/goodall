@@ -178,7 +178,7 @@ SETTINGS_CHECKS = [
     Check(
         id=CONTRIBUTOR_IN_ROSTER,
         group=GROUP,
-        summary="This account's contributor is in the roster",
+        summary="This eval account's contributor is in the roster",
         prerequisites=[EVAL_CONFIG_VALID],
         run=check_contributor_in_roster,
     ),
