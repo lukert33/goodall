@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from goodall.runner import Command, CommandOutcome, OutputMode, RealRunner
+from goodall.runner import Command, CommandOutcome, OutputMode, RealRunner, environment_for
 
 PYTHON = sys.executable
 
@@ -160,3 +160,53 @@ def test_an_extra_environment_variable_that_looks_like_a_secret_is_refused(name:
     # the machine's, so it is an exception rather than a result.
     with pytest.raises(ValueError, match=name):
         Command(["true"], extra_environment={name: "op://Eval/item/credential"})
+
+
+# A synthetic 1Password service account token, built from pieces so a secret
+# scanner does not mistake it for a leak.
+SYNTHETIC_SERVICE_ACCOUNT_TOKEN = "ops_" + "SYNTHETICserviceACCOUNT" * 4
+
+
+def test_a_program_gets_goodalls_whole_environment_with_the_service_account_token_untouched(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # op signs in with a service account through this variable alone, so
+    # nothing may strip it, or any other OP_ variable, on the way.
+    monkeypatch.setenv("OP_SERVICE_ACCOUNT_TOKEN", SYNTHETIC_SERVICE_ACCOUNT_TOKEN)
+    command = Command(["op", "whoami"], extra_environment={"GOODALL_TEST_SETTING": "on"})
+
+    environment = environment_for(command)
+
+    assert environment["OP_SERVICE_ACCOUNT_TOKEN"] == SYNTHETIC_SERVICE_ACCOUNT_TOKEN
+    assert environment["GOODALL_TEST_SETTING"] == "on"
+    assert environment["PATH"] == os.environ["PATH"]
+
+
+def test_the_service_account_token_reaches_a_real_program(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OP_SERVICE_ACCOUNT_TOKEN", SYNTHETIC_SERVICE_ACCOUNT_TOKEN)
+    # The program says only whether it got the same token, never the token.
+    script = f'import os; print(os.environ.get("OP_SERVICE_ACCOUNT_TOKEN") == "{SYNTHETIC_SERVICE_ACCOUNT_TOKEN}")'
+
+    result = RealRunner().run(Command([PYTHON, "-c", script]))
+
+    assert result.standard_output == "True\n"
+
+
+@pytest.mark.parametrize("ending", ["fails", "times out"])
+def test_the_service_account_token_is_in_no_command_or_result_goodall_keeps(
+    monkeypatch: pytest.MonkeyPatch, ending: str
+) -> None:
+    # The environment is built only as the program starts, so a command, a
+    # result, its problem, and anything an exception would print from them
+    # (their repr) hold no copy of the token.
+    monkeypatch.setenv("OP_SERVICE_ACCOUNT_TOKEN", SYNTHETIC_SERVICE_ACCOUNT_TOKEN)
+    if ending == "fails":
+        command = Command([PYTHON, "-c", "import sys; sys.exit(1)"])
+    else:
+        command = Command([PYTHON, "-c", "import time; time.sleep(60)"], timeout_seconds=0.5)
+
+    result = RealRunner().run(command)
+
+    assert not result.succeeded
+    for kept in [repr(command), repr(result), str(result.problem)]:
+        assert "SYNTHETICservice" not in kept
