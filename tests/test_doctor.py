@@ -20,9 +20,10 @@ from pathlib import Path
 import pytest
 
 from goodall import cli, exit_codes
+from goodall.doctor import closing_line
 from goodall.fake_runner import FakeRunner
 from goodall.runner import OutputMode
-from goodall.terminal import Terminal
+from goodall.terminal import CheckResult, CheckStatus, Terminal
 
 # The command the account check runs, by its full path (see goodall.program_checks).
 ACCOUNT_GROUPS_COMMAND = ["/usr/bin/id", "-Gn"]
@@ -239,12 +240,15 @@ Secrets
               field exists without also handing over the field's value, the
               secret itself, so goodall does not ask. Not checked:
               ANTHROPIC_API_KEY_ENGINEERING (line 3), ANTHROPIC_API_KEY_RESEARCH
-              (line 4), ANTHROPIC_ADMIN_KEY (line 5).
+              (line 4), ANTHROPIC_ADMIN_KEY (line 5). If a field name is wrong,
+              it will show up the first time a program is launched with that
+              secret.
               Next: Nothing, if you copied each reference with Copy Secret
               Reference in 1Password and have not renamed the field since.
               Otherwise, copy each one that way and paste it over its value in
               the env file.
 
+All checks passed. One thing goodall cannot check without reading a secret.
 18 passed, 0 warned, 0 failed, 0 skipped, 1 unverified
 """
 
@@ -1485,6 +1489,51 @@ def test_the_field_a_reference_names_is_reported_unverified_because_checking_it_
     assert check_document(document, "secrets.referenced_items_exist")["status"] == "pass"
 
 
+def test_a_report_whose_only_unverified_check_needs_a_secret_reads_as_healthy(healthy_account: EvalAccount) -> None:
+    exit_code, standard_output, _ = run_goodall(["doctor"])
+    json_exit_code, document = doctor_json()
+
+    assert exit_code == json_exit_code == exit_codes.SUCCESS
+    last_lines = standard_output.splitlines()[-2:]
+    assert last_lines == [
+        "All checks passed. One thing goodall cannot check without reading a secret.",
+        "18 passed, 0 warned, 0 failed, 0 skipped, 1 unverified",
+    ]
+    # The check itself keeps its status and says when a wrong field shows up.
+    assert "  unverified  Each secret reference names a field that exists\n" in standard_output
+    report_text = " ".join(standard_output.split())
+    assert "If a field name is wrong, it will show up the first time a program is launched with that secret." in (
+        report_text
+    )
+    # --json is unchanged: the count is still there, and nothing calls it a pass.
+    assert document["summary"] == {"passed": 18, "warned": 0, "failed": 0, "skipped": 0, "unverified": 1}
+    assert check_document(document, "secrets.referenced_fields_exist")["status"] == "unverified"
+
+
+def test_a_report_with_something_unverified_for_another_reason_says_so_without_blaming_a_secret(
+    healthy_account: EvalAccount,
+) -> None:
+    runner = healthy_runner()
+    runner.answer_timed_out(OP_ITEM_LIST_EVAL)
+
+    exit_code, standard_output, _ = run_goodall(["doctor"], runner)
+
+    assert exit_code == exit_codes.SUCCESS
+    assert standard_output.splitlines()[-2] == (
+        "All checks passed. 2 things goodall could not check are marked unverified."
+    )
+
+
+def test_a_report_with_a_warning_has_no_all_passed_line(healthy_account: EvalAccount) -> None:
+    healthy_account.shared_env_file.unlink()
+
+    exit_code, standard_output, _ = run_goodall(["doctor"])
+
+    assert exit_code == exit_codes.SUCCESS
+    assert "All checks passed" not in standard_output
+    assert standard_output.splitlines()[-1] == "17 passed, 1 warned, 0 failed, 0 skipped, 1 unverified"
+
+
 def test_an_env_file_with_no_references_has_no_field_to_leave_unverified(healthy_account: EvalAccount) -> None:
     healthy_account.env_file.write_text("# No secrets in this eval.\n")
 
@@ -1717,3 +1766,37 @@ def test_a_secret_pasted_anywhere_doctor_reads_is_never_shown(healthy_account: E
     # field check that lists every variable.
     summary = json.loads(json_output)["summary"]
     assert summary["failed"] + summary["warned"] + summary["unverified"] > 0
+
+
+# Unit tests for the line above the counts (goodall.doctor.closing_line).
+
+
+def result_with_status(check_id: str, status: CheckStatus) -> CheckResult:
+    """A check result with only the parts the closing line looks at."""
+    return CheckResult(id=check_id, group="Secrets", status=status, summary="A check")
+
+
+FIELDS_UNVERIFIED = result_with_status("secrets.referenced_fields_exist", CheckStatus.UNVERIFIED)
+ITEMS_UNVERIFIED = result_with_status("secrets.referenced_items_exist", CheckStatus.UNVERIFIED)
+PASSED = result_with_status("tools.git_installed", CheckStatus.PASS)
+
+
+@pytest.mark.parametrize(
+    ("results", "expected_line"),
+    [
+        ([PASSED, FIELDS_UNVERIFIED], "All checks passed. One thing goodall cannot check without reading a secret."),
+        ([PASSED, ITEMS_UNVERIFIED], "All checks passed. One thing goodall could not check is marked unverified."),
+        (
+            [PASSED, ITEMS_UNVERIFIED, FIELDS_UNVERIFIED],
+            "All checks passed. 2 things goodall could not check are marked unverified.",
+        ),
+        # Every check passed, or something needs attention: the counts say it all.
+        ([PASSED], None),
+        ([PASSED, FIELDS_UNVERIFIED, result_with_status("tools.gh_installed", CheckStatus.WARN)], None),
+        ([FIELDS_UNVERIFIED, result_with_status("tools.gh_installed", CheckStatus.FAIL)], None),
+    ],
+)
+def test_the_closing_line_reads_as_healthy_only_when_nothing_but_unverified_checks_remain(
+    results: list[CheckResult], expected_line: str | None
+) -> None:
+    assert closing_line(results) == expected_line

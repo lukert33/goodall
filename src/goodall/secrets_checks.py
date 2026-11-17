@@ -94,6 +94,12 @@ SECRETS_MANAGER_SIGNED_IN = "secrets.secrets_manager_signed_in"
 REFERENCED_ITEMS_EXIST = "secrets.referenced_items_exist"
 REFERENCED_FIELDS_EXIST = "secrets.referenced_fields_exist"
 
+# The checks whose only way to be anything but unverified would be to read
+# a secret. When nothing but these is left unchecked, the report reads as
+# healthy (goodall.doctor.closing_line), because there is nothing a person
+# could do to let goodall check more.
+CHECKS_UNVERIFIABLE_WITHOUT_A_SECRET = [REFERENCED_FIELDS_EXIST]
+
 # Shown under "Tools" with git and gh, and named like them, but run here,
 # after the env file is read; see `check_secrets_manager_installed`.
 SECRETS_MANAGER_INSTALLED = "tools.secrets_manager_installed"
@@ -717,7 +723,12 @@ def check_referenced_fields_exist(context: CheckContext) -> CheckOutcome:
 
 
 def referenced_fields_not_verified_failure(local_settings: LocalSettings, entries: list[EnvEntry]) -> Failure:
-    """What to say about the fields goodall cannot check: which variables, why, and how to check by hand."""
+    """What to say about the fields goodall cannot check: which, why, when a mistake shows, and how to check by hand.
+
+    "The first time a program is launched with that secret" is a promise
+    the launching code must keep: it must fail then with a plain message
+    naming the variable, never the reference (bd goodall-fs9.3).
+    """
     display_name = DISPLAY_NAMES[local_settings.secrets_manager]
     variables = []
     for entry in entries:
@@ -727,7 +738,8 @@ def referenced_fields_not_verified_failure(local_settings: LocalSettings, entrie
         what_happened=(
             f"Goodall checked that each item exists, but not the field each reference names, because "
             f"{WHY_FIELDS_CANNOT_BE_CHECKED[local_settings.secrets_manager]}. Not checked: "
-            f"{', '.join(variables)}."
+            f"{', '.join(variables)}. If a field name is wrong, it will show up the first time a program is "
+            "launched with that secret."
         ),
         why=(
             "No secret may enter goodall, so goodall reports what it could not check rather than "

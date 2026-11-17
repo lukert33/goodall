@@ -11,6 +11,15 @@ Exit code: 1 when any check failed, otherwise 0. Warnings do not fail it: a
 warning means goodall works, in a reduced way. Nor does a check goodall
 could not verify: it is reported as unverified, which is neither a pass nor
 a failure, and the report says what the contributor can check by hand.
+
+A healthy eval with secrets always has one unverified check, because the
+field a secret reference names cannot be checked without reading the
+secret. So when nothing failed or warned and only unverified checks
+remain, the text report says "All checks passed." above the counts, and
+why the rest were not checked (`closing_line`). The check keeps its
+unverified status, in the report and in `--json`, so "not checked" is
+never mistaken for "fine"; `--json` gets no closing line, because an agent
+reads the counts.
 Skips are not counted either, because a check is only ever skipped when
 another check in the same report failed (goodall.checks), so a report with
 a skip already exits 1.
@@ -37,9 +46,9 @@ from goodall import exit_codes
 from goodall.checks import Check, CheckContext, run_checks
 from goodall.program_checks import PROGRAM_CHECKS
 from goodall.runner import Runner
-from goodall.secrets_checks import SECRETS_CHECKS
+from goodall.secrets_checks import CHECKS_UNVERIFIABLE_WITHOUT_A_SECRET, SECRETS_CHECKS
 from goodall.settings_checks import SETTINGS_CHECKS
-from goodall.terminal import CheckResult, Terminal, count_checks
+from goodall.terminal import CheckResult, CheckStatus, Terminal, count_checks
 
 # The layout of `goodall doctor --json`.
 DOCTOR_JSON_SCHEMA_VERSION = 1
@@ -62,11 +71,40 @@ def run_doctor(terminal: Terminal, runner: Runner, as_json: bool) -> int:
     if as_json:
         terminal.write_json(doctor_document(results))
     else:
-        terminal.show_check_report(results)
+        terminal.show_check_report(results, closing_line(results))
 
     if count_checks(results).failed > 0:
         return exit_codes.ERROR
     return exit_codes.SUCCESS
+
+
+def closing_line(results: list[CheckResult]) -> str | None:
+    """The sentence above the counts when nothing failed or warned but some checks are unverified, else None.
+
+    It says the report is healthy, then why the rest were not checked:
+    because checking would mean reading a secret, when that is the only
+    reason, and otherwise only that they could not be checked (a secrets
+    manager that did not answer is worth a second look). When every check
+    passed, or anything failed or warned, the counts say it all.
+    """
+    counts = count_checks(results)
+    if counts.failed > 0 or counts.warned > 0 or counts.unverified == 0:
+        return None
+
+    all_need_a_secret = True
+    for result in results:
+        if result.status == CheckStatus.UNVERIFIED and result.id not in CHECKS_UNVERIFIABLE_WITHOUT_A_SECRET:
+            all_need_a_secret = False
+
+    if counts.unverified == 1:
+        things = "One thing goodall"
+        verb = "is"
+    else:
+        things = f"{counts.unverified} things goodall"
+        verb = "are"
+    if all_need_a_secret:
+        return f"All checks passed. {things} cannot check without reading a secret."
+    return f"All checks passed. {things} could not check {verb} marked unverified."
 
 
 def doctor_document(results: list[CheckResult]) -> dict[str, object]:
