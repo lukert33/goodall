@@ -8,7 +8,7 @@ the file. This module asks the machine. `goodall status` and
 wherever it is reported.
 
 Everything here only looks: nothing is created or changed, because
-`goodall doctor` promises to change nothing on the machine (ADR 0012).
+diagnostics are read-only (AGENTS.md invariant 5).
 """
 
 import os
@@ -25,6 +25,9 @@ def describe_folder_problem(folder: Path, needs_writing: bool) -> str | None:
     Only looks; nothing is created or changed. Trap: Path.exists() and
     Path.is_dir() raise PermissionError when a folder above cannot be
     searched, so this asks with stat() and turns every error into words.
+    A path holding a null character makes stat() raise ValueError, not
+    OSError; local settings refuse such a path first, and this catches it
+    too so no caller can crash on one.
     """
     try:
         folder_status = folder.stat()
@@ -32,6 +35,8 @@ def describe_folder_problem(folder: Path, needs_writing: bool) -> str | None:
         return "does not exist"
     except OSError as stat_error:
         return f"cannot be reached: {stat_error.strerror}"
+    except ValueError:
+        return "cannot be reached: its path contains a character no path can contain"
 
     if not stat.S_ISDIR(folder_status.st_mode):
         return "is a file, not a folder"
@@ -66,7 +71,8 @@ def record_repo_missing_failure(settings: LocalSettings, problem: str) -> Failur
         ),
         what_to_do_next=(
             f"If the record repo is somewhere else on this Mac, correct record_repo in {settings.settings_file}. "
-            f"If it is not on this Mac yet, clone it to {settings.record_repo.path}. Then run goodall status again."
+            f"If it is not on this Mac yet, clone it to {settings.record_repo.path}. "
+            "Then run the same goodall command again."
         ),
     )
 
@@ -90,6 +96,6 @@ def log_directory_unreachable_failure(settings: LocalSettings, problem: str) -> 
         what_to_do_next=(
             "If the log directory is on an external drive, connect it. Otherwise create the folder, make sure "
             f"this macOS user account can write to it, or correct log_directory in {settings.settings_file}. "
-            "Then run goodall status again."
+            "Then run the same goodall command again."
         ),
     )

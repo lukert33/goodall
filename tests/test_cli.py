@@ -148,6 +148,28 @@ def test_every_stub_returns_error_and_names_itself() -> None:
         assert f"goodall {command_name} is not built yet" in output
 
 
+def test_no_stub_points_a_researcher_at_goodall_s_own_tooling() -> None:
+    # A researcher reads these; goodall's issue tracker means nothing to them.
+    for command_name in PLANNED_COMMANDS:
+        if command_name in BUILT_COMMANDS:
+            continue
+        _, output = run_goodall(arguments_for(command_name))
+        assert "bd " not in output, f"goodall {command_name} mentions bd"
+        assert "goodall repo" not in output, f"goodall {command_name} mentions the goodall repo"
+
+
+def test_onboard_stub_says_how_to_set_up_an_eval_account_by_hand() -> None:
+    # "Run goodall onboard" is the first next step a new contributor sees,
+    # so the stub must not be a dead end.
+    exit_code, output = run_goodall(["onboard"])
+
+    assert exit_code == exit_codes.ERROR
+    one_line = " ".join(output.split())
+    assert "ask whoever runs the eval" in one_line.lower()
+    assert "local-settings.toml" in one_line
+    assert "~/.config/goodall/" in one_line
+
+
 def test_hook_without_event_name_is_an_error_not_a_usage_error() -> None:
     # Claude Code reads exit 2 as "refuse the prompt" or "do not stop", so a
     # hook command missing its event name must exit 1, which Claude Code
