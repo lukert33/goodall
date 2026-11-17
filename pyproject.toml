@@ -31,6 +31,10 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Heavy tests carry the "stress" marker and are skipped by a plain `uv run pytest`;
+# run them with `uv run pytest -m stress`. --strict-markers makes a misspelt marker an error.
+addopts = "-m 'not stress' --strict-markers"
+markers = ["stress: heavy repeated load tests, skipped unless selected with -m stress"]
 
 [tool.ruff]
 line-length = 120

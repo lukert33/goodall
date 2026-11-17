@@ -389,8 +389,14 @@ class LoopbackTelemetryServer(ThreadingHTTPServer):
     block_on_close = True
     allow_reuse_port = False
     # How many connections may wait to be accepted. The standard library's
-    # default of 5 can drop or reset connections when a burst arrives at
-    # once, as seen on Linux in CI; 64 is ample for one Claude Code.
+    # default of 5 leaves connections beyond it unanswered until the client
+    # retries or times out (measured on macOS by
+    # test_server_not_yet_accepting_still_takes_a_burst_of_connections). That
+    # was a suspected, never confirmed, cause of one request missing in a
+    # Linux CI run; 64 is ample for one Claude Code. No backlog makes a burst
+    # lossless: a connection that never gets in is the sender's to retry, and
+    # test_telemetry_receiver_accounting.py checks that every request is
+    # accounted for either way.
     request_queue_size = 64
 
 
