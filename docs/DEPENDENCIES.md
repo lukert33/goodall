@@ -84,8 +84,9 @@ security advisories, the PyPI JSON API, OSV.dev and 1Password's release notes.
 
 The owner approved the git, Claude Code and `op` rows on 2026-11-17 as well.
 
-Versions on the machine goodall is developed on, 2026-11-17: git 2.55.0, `gh`
-2.101.0, `op` 2.34.1. All three are behind the newest release.
+Versions on the machine goodall is developed on, after the owner upgraded
+them on 2026-11-17: git 2.56.1, `gh` 2.104.0, `op` 2.42.0, each the newest
+release that day.
 
 ### Approved, not yet used
 
