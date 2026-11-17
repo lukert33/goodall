@@ -28,16 +28,19 @@ FIXTURES = Path(__file__).parent / "fixtures" / "claude_code_transcripts"
 def test_every_entry_gets_one_label_and_the_rule_that_decided_it() -> None:
     result = label_transcript(FIXTURES / "actor_labels.jsonl")
 
+    model = ("model:example-model",)
     assert result.labels == [
         EntryLabel(1, None, "file-history-snapshot", "harness", "bookkeeping_entry", mixed=False),
+        # The label says a person; which person is not in a transcript, so
+        # no identity is claimed.
         EntryLabel(2, "u-0002", "user", "human", "person_typed_prompt", mixed=False),
         # The harness put a reminder in front of what the person typed: the
         # person is the primary producer, and the entry is marked mixed.
         EntryLabel(3, "u-0003", "user", "human", "person_typed_prompt_behind_harness_context", mixed=True),
-        EntryLabel(4, "a-0004", "assistant", "ai", "model_wrote_assistant_entry", mixed=False),
-        EntryLabel(5, "a-0005", "assistant", "ai", "model_wrote_assistant_entry", mixed=False),
+        EntryLabel(4, "a-0004", "assistant", "ai", "model_wrote_assistant_entry", mixed=False, identity=model),
+        EntryLabel(5, "a-0005", "assistant", "ai", "model_wrote_assistant_entry", mixed=False, identity=model),
         EntryLabel(6, "u-0006", "user", "harness", "harness_returned_tool_results", mixed=False),
-        EntryLabel(7, "a-0007", "assistant", "ai", "model_wrote_assistant_entry", mixed=False),
+        EntryLabel(7, "a-0007", "assistant", "ai", "model_wrote_assistant_entry", mixed=False, identity=model),
         EntryLabel(8, "u-0008", "user", "human", "person_rejected_tool_call", mixed=True),
         EntryLabel(9, "u-0009", "user", "harness", "interruption_marker_closing_a_rejection", mixed=False),
         EntryLabel(10, "u-0010", "user", "human", "person_interrupted", mixed=True),
@@ -47,17 +50,32 @@ def test_every_entry_gets_one_label_and_the_rule_that_decided_it() -> None:
         EntryLabel(13, "u-0013", "user", "harness", "harness_injected_user_entry", mixed=False),
         EntryLabel(14, "a-0014", "assistant", "harness", "harness_wrote_assistant_entry", mixed=False),
         EntryLabel(15, "u-0015", "user", "ai", "agent_instructed_subagent", mixed=False),
-        EntryLabel(16, "a-0016", "assistant", "ai", "model_wrote_assistant_entry", mixed=False),
+        # A subagent's reply names both the subagent and its model.
+        EntryLabel(
+            16,
+            "a-0016",
+            "assistant",
+            "ai",
+            "model_wrote_assistant_entry",
+            mixed=False,
+            identity=("model:example-model", "subagent:agent-example"),
+        ),
         EntryLabel(17, "t-0017", "attachment", "harness", "bookkeeping_entry", mixed=False),
         EntryLabel(18, "s-0018", "system", "harness", "bookkeeping_entry", mixed=False),
+        # Another agent's message: an agent is an agent, whichever one it
+        # was. The entry names it, so the identity says which.
+        EntryLabel(
+            22, "u-0022", "user", "ai", "another_agent_sent_message", mixed=False, identity=("peer:example-peer",)
+        ),
         EntryLabel(23, "u-0023", "user", "harness", "harness_injected_user_entry", mixed=False),
+        # A coordinating agent's message names no agent, so no identity.
+        EntryLabel(25, "u-0025", "user", "ai", "another_agent_sent_message", mixed=False),
     ]
     # Line 21 is blank: it holds no entry, so it is neither labelled nor
     # reported. Everything else that no rule decided is reported, not guessed.
     assert result.unmatched == [
         UnmatchedEntry(19, None, None, "line is not valid JSON"),
         UnmatchedEntry(20, "x-0020", "example-future-entry", "unknown entry type 'example-future-entry'"),
-        UnmatchedEntry(22, "u-0022", "user", "no rule matched this user entry (origin kind 'peer')"),
         UnmatchedEntry(24, None, None, "line is JSON but not an object"),
     ]
 
@@ -157,7 +175,7 @@ def test_the_summary_shows_how_a_transcript_divides() -> None:
 
     assert summary == LabelSummary(
         rules_version="2",
-        entries_by_label={"human": 5, "ai": 5, "harness": 9},
+        entries_by_label={"human": 5, "ai": 7, "harness": 9},
         entries_by_rule={
             "person_typed_prompt": 1,
             "person_typed_prompt_behind_harness_context": 1,
@@ -171,6 +189,7 @@ def test_the_summary_shows_how_a_transcript_divides() -> None:
             "person_approved_plan": 0,
             "person_queued_prompt": 0,
             "person_prompt_blocked_by_hook": 0,
+            "another_agent_sent_message": 2,
             "harness_wrote_assistant_entry": 1,
             "model_wrote_assistant_entry": 4,
             "harness_returned_tool_results": 1,
@@ -180,7 +199,7 @@ def test_the_summary_shows_how_a_transcript_divides() -> None:
             "bookkeeping_entry": 3,
         },
         mixed_entries=4,
-        unmatched_entries=4,
+        unmatched_entries=3,
     )
 
 

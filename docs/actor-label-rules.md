@@ -20,7 +20,7 @@ transcripts in November 2026.
 
 - `labels`: one `EntryLabel` per entry, in transcript order, with
   `line_number`, `entry_id` (the entry's `uuid`, or none), `entry_type` (the
-  entry's `type`), `actor_label`, `rule_name` and `mixed`.
+  entry's `type`), `actor_label`, `rule_name`, `mixed` and `identity`.
 - `unmatched`: one `UnmatchedEntry` per line no rule decided, with
   `line_number`, `entry_id`, `entry_type` and a `reason` that names no
   content: a line that is not JSON or not an object, an entry with no type or
@@ -33,6 +33,22 @@ entry and are skipped. Labelling always carries on past a bad line.
 
 `summarise_labels(result)` counts entries per label, per rule (every rule
 listed, zero when unused), mixed entries and unmatched entries.
+
+## Three actors, with identity kept apart
+
+There are three actor labels and only three: humans are humans, the harness
+is the harness and agents are agents, whichever person, program or agent it
+was inside each. Which one, when the raw entry says so, goes in `identity`
+beside the label, as a tuple of `what:value` parts (`identity_of`):
+
+- `model:<message.model>` on an `ai` assistant entry;
+- `subagent:<agentId>` on an `ai` assistant entry on a sidechain;
+- `peer:<name>` or `coordinator:<name>` on another agent's message, from
+  `origin.name` or else `origin.from`.
+
+Nothing is inferred: when the entry does not say, `identity` is empty. A
+`human` entry never has one, because a transcript does not say which person
+typed.
 
 ## Mixed entries
 
@@ -90,6 +106,13 @@ synthetic and trimmed to the keys the rule looks at.
    because the entry exists only because the person let the call run; most of
    its words are the tool's output, which is why it is mixed.
 
+4b. **`another_agent_sent_message`** → `ai`. A user entry whose `origin.kind`
+   is `peer` (an agent in another Claude session) or `coordinator` (an agent
+   coordinating this one). Such entries are usually `isMeta`, so this rule
+   comes before rule 9. `identity` names the sender when the origin does.
+
+   `{"type":"user","isMeta":true,"origin":{"kind":"peer","name":"example-peer"},"message":{"content":"..."}}`
+
 5. **`harness_wrote_assistant_entry`** → `harness`. An assistant entry Claude
    Code wrote without calling a model: `message.model` is `<synthetic>` or
    `isApiErrorMessage` is true (API errors, for example). Must come before
@@ -137,9 +160,8 @@ synthetic and trimmed to the keys the rule looks at.
 
     `{"type":"file-history-snapshot","messageId":"...","snapshot":{}}`
 
-A `user` or `assistant` entry no rule matches (a user entry from an
-`origin.kind` of `peer` or `coordinator`, or one with no message content) is
-reported as unmatched, not guessed.
+A `user` or `assistant` entry no rule matches (one with no message content,
+for example) is reported as unmatched, not guessed.
 
 A prompt a program sent through the SDK (human action kind `sdk_prompt`) is
 reported as unmatched before any rule is tried, with the reason "prompt sent
@@ -154,10 +176,12 @@ waiting for evidence" in [human-action-rules.md](human-action-rules.md).
 - **Compaction summaries** (`isCompactSummary`) are written by a model but
   injected by the harness; labelled `harness`.
 - **Messages from other sessions or a coordinator** (`origin.kind` `peer` or
-  `coordinator`) are left unmatched: whether a person or an agent sent them is
-  not in the entry.
+  `coordinator`) are labelled `ai` (rule 4b). The entry does not prove that
+  no person typed the message in the other session; the owner's direction is
+  that what arrives from another agent is an agent's.
 - **Unfamiliar parts of a labelled entry** (an unknown content block beside a
   tool result, for example) do not change its label; `goodall.human_actions`
   reports them in its own `unfamiliar_entries`.
-- **Which person, which model.** A label says `human` or `ai`, not which
-  contributor or which model; that is for other derived records.
+- **Which person.** A `human` label never names a person: a transcript does
+  not say who typed. It is the person at this eval account, with no claim
+  that it is the contributor who usually uses it.

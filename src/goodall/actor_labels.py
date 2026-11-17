@@ -52,6 +52,12 @@ ACTOR_LABEL_RULES_VERSION = "2"
 
 ActorLabel = Literal["human", "ai", "harness"]
 
+# Values of a user entry's `origin.kind` naming another agent as the sender:
+# an agent in another Claude session ("peer") or one coordinating this session
+# ("coordinator"). Humans are humans and agents are agents, whichever one; the
+# sender's name, when given, goes in the label's identity.
+OTHER_AGENT_ORIGIN_KINDS = ("peer", "coordinator")
+
 
 @dataclass(frozen=True)
 class EntryFacts:
@@ -81,6 +87,11 @@ class EntryFacts:
     origin_kind: str | None
     # The model named on an assistant message; None when absent.
     model: str | None
+    # The entry's `agentId`, written on a subagent's entries; None when absent.
+    agent_id: str | None
+    # The name another agent's message gives for its sender (`origin.name`,
+    # or `origin.from`); None when absent.
+    origin_sender_name: str | None
 
 
 @dataclass(frozen=True)
@@ -225,6 +236,13 @@ ACTOR_LABEL_RULES: tuple[Rule, ...] = (
         test=lambda entry: "blocked_prompt" in entry.human_action_kinds,
     ),
     Rule(
+        name="another_agent_sent_message",
+        description="Another agent sent this message: an agent in another session, or a coordinating agent.",
+        label="ai",
+        mixed=False,
+        test=lambda entry: entry.entry_type == "user" and entry.origin_kind in OTHER_AGENT_ORIGIN_KINDS,
+    ),
+    Rule(
         name="harness_wrote_assistant_entry",
         description="Claude Code wrote this assistant entry itself, such as an API error, without calling a model.",
         label="harness",
@@ -284,7 +302,8 @@ class EntryLabel:
 
     `entry_id` is the entry's `uuid`, or None for entries that have none.
     `mixed` is true when the entry also holds words from an actor other than
-    `actor_label`.
+    `actor_label`. `identity` says which agent within the label, when the
+    entry says so (see `identity_of`), and is empty otherwise.
     """
 
     line_number: int
@@ -293,6 +312,7 @@ class EntryLabel:
     actor_label: ActorLabel
     rule_name: str
     mixed: bool
+    identity: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -370,7 +390,8 @@ def label_transcript(transcript_path: Path) -> LabelledTranscript:
                     reason += f" (origin kind {facts.origin_kind[:60]!r})"
                 result.unmatched.append(UnmatchedEntry(line_number, entry_id, entry_type, reason))
                 continue
-            label = EntryLabel(line_number, entry_id, entry_type, rule.label, rule.name, rule.mixed)
+            identity = identity_of(facts, rule.label)
+            label = EntryLabel(line_number, entry_id, entry_type, rule.label, rule.name, rule.mixed, identity)
             result.labels.append(label)
     return result
 
@@ -445,8 +466,15 @@ def facts_from_entry(entry: dict[str, Any], entry_type: str, human_action_kinds:
         has_tool_results = len(user_content.tool_results) > 0
 
     origin = entry.get("origin")
-    origin_kind = origin.get("kind") if isinstance(origin, dict) else None
+    origin_kind = None
+    origin_sender_name = None
+    if isinstance(origin, dict):
+        origin_kind = origin.get("kind")
+        for sender_field in ("name", "from"):
+            if isinstance(origin.get(sender_field), str) and origin_sender_name is None:
+                origin_sender_name = origin[sender_field]
     model = message.get("model") if isinstance(message, dict) else None
+    agent_id = entry.get("agentId")
     return EntryFacts(
         entry_type=entry_type,
         human_action_kinds=human_action_kinds,
@@ -461,4 +489,27 @@ def facts_from_entry(entry: dict[str, Any], entry_type: str, human_action_kinds:
         is_api_error_message=entry.get("isApiErrorMessage") is True,
         origin_kind=origin_kind if isinstance(origin_kind, str) else None,
         model=model if isinstance(model, str) else None,
+        agent_id=agent_id if isinstance(agent_id, str) else None,
+        origin_sender_name=origin_sender_name,
     )
+
+
+def identity_of(facts: EntryFacts, actor_label: ActorLabel) -> tuple[str, ...]:
+    """Say which agent produced an `ai` entry, when the entry itself says so.
+
+    The actor label stays one of three kinds; this says which one inside the
+    kind, as "what:value" parts: `model:<model>`, `subagent:<agentId>`,
+    `peer:<name>` or `coordinator:<name>`. Nothing is inferred. A `human`
+    entry gets no identity, because a transcript does not say which person
+    typed; a `harness` entry gets none either.
+    """
+    if actor_label != "ai":
+        return ()
+    parts = []
+    if facts.entry_type == "assistant" and facts.model is not None:
+        parts.append(f"model:{facts.model}")
+    if facts.entry_type == "assistant" and facts.is_sidechain and facts.agent_id is not None:
+        parts.append(f"subagent:{facts.agent_id}")
+    if facts.origin_kind in OTHER_AGENT_ORIGIN_KINDS and facts.origin_sender_name is not None:
+        parts.append(f"{facts.origin_kind}:{facts.origin_sender_name}")
+    return tuple(parts)
