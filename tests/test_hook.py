@@ -136,3 +136,65 @@ def test_a_prompt_with_no_work_block_is_refused_with_the_command_to_run(tmp_path
         "Goodall is not recording, so this prompt was not sent. "
         "Open a terminal, run goodall start, then send your prompt again.\n"
     )
+
+
+def test_a_prompt_is_refused_when_goodall_is_not_set_up(tmp_path: Path) -> None:
+    empty_config_directory = tmp_path / "goodall-config"
+    empty_config_directory.mkdir()
+
+    completed = run_hook(empty_config_directory, ["UserPromptSubmit"], prompt_input())
+
+    assert completed.returncode == 2
+    assert completed.stderr == (
+        "Goodall is not set up in this macOS user account, so this prompt was not sent. "
+        "Run goodall onboard in a terminal to set it up, then send your prompt again.\n"
+    )
+
+
+def test_a_prompt_is_refused_when_local_settings_are_broken_without_quoting_them(tmp_path: Path) -> None:
+    eval_account = make_eval_account(tmp_path)
+    # A secret pasted by mistake, unquoted, so the file is not valid TOML.
+    settings_file = eval_account.config_directory / "local-settings.toml"
+    settings_file.write_text(settings_file.read_text() + "contributor_token = sk-ant-api03-pastedbymistake\n")
+
+    completed = run_hook(eval_account.config_directory, ["UserPromptSubmit"], prompt_input())
+
+    assert completed.returncode == 2
+    assert completed.stderr == (
+        "Goodall cannot read its local settings, so this prompt was not sent. "
+        "Run goodall doctor in a terminal to see what to fix, then send your prompt again.\n"
+    )
+    assert "pastedbymistake" not in completed.stderr
+
+
+def test_a_prompt_is_refused_when_the_log_directory_cannot_be_reached_without_naming_it(tmp_path: Path) -> None:
+    eval_account = make_eval_account(tmp_path)
+    start_work_block(eval_account.log_directory)
+    # As when the external drive holding the log directory is unplugged.
+    eval_account.log_directory.rename(tmp_path / "unplugged")
+
+    completed = run_hook(eval_account.config_directory, ["UserPromptSubmit"], prompt_input())
+
+    assert completed.returncode == 2
+    assert completed.stderr == (
+        "Goodall cannot reach its log directory, so nothing can be recorded and this prompt was not sent. "
+        "If the log directory is on an external drive, connect it; then run goodall status in a terminal "
+        "and send your prompt again.\n"
+    )
+    assert str(eval_account.log_directory) not in completed.stderr
+
+
+def test_a_prompt_is_refused_when_claude_codes_input_cannot_be_read(tmp_path: Path) -> None:
+    eval_account = make_eval_account(tmp_path)
+    work_block = start_work_block(eval_account.log_directory)
+    expected_refusal = (
+        "Goodall could not read the details Claude Code sent with this prompt, so it was not sent. "
+        "Tell your eval's researcher, who may need to update goodall.\n"
+    )
+
+    for unreadable_input in ["", "{cut short", json.dumps({"prompt": "no session id"})]:
+        completed = run_hook(eval_account.config_directory, ["UserPromptSubmit"], unreadable_input)
+
+        assert completed.returncode == 2, unreadable_input
+        assert completed.stderr == expected_refusal
+    assert heartbeat_sessions(eval_account.log_directory, work_block) == []
