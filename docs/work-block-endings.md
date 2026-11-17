@@ -78,6 +78,12 @@ the log directory on this Mac. The command says so plainly, and the next
 `goodall start`, `goodall stop` or `goodall status` writes it. Nothing is
 lost.
 
+`goodall stop` exits `0` in this case and shows a warning rather than a
+failure, because what you asked for (ending the work block) is done and the
+record is safe. You do not need to run it again; running it again would only
+say that no work block is active. Goodall exits `1` only when the thing you
+asked for did not happen.
+
 ## The idle limit
 
 The idle limit is three hours for everyone. It is one constant,
