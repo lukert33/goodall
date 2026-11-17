@@ -202,6 +202,43 @@ def test_a_transcript_that_was_rewritten_is_copied_and_the_earlier_copy_is_kept_
     assert superseded_copies(eval_account) == {transcript_name: FIRST_LINES}
 
 
+def test_a_transcript_path_that_leads_outside_the_claude_projects_folder_is_refused_quietly(tmp_path: Path) -> None:
+    eval_account = make_eval_account(tmp_path)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    private_file = elsewhere / f"{CLAUDE_SESSION}.jsonl"
+    private_file.write_bytes(b"not a transcript\n")
+    other_project_folder = eval_account.project_folder.parent / "-Users-ada-other"
+    other_project_folder.mkdir()
+    (other_project_folder / f"{CLAUDE_SESSION}.jsonl").symlink_to(private_file)
+    (eval_account.project_folder.parent / "-Users-ada-linked").symlink_to(elsewhere)
+    nested_folder = eval_account.project_folder / "nested"
+    nested_folder.mkdir()
+    (nested_folder / f"{CLAUDE_SESSION}.jsonl").write_bytes(FIRST_LINES)
+    eval_account.transcript.write_bytes(FIRST_LINES)
+    refused_paths = [
+        # Outside the projects folder altogether, directly or by `..`.
+        private_file,
+        eval_account.project_folder / ".." / ".." / ".." / "elsewhere" / f"{CLAUDE_SESSION}.jsonl",
+        # A transcript that is a symbolic link out, or in a project folder that is one.
+        other_project_folder / f"{CLAUDE_SESSION}.jsonl",
+        eval_account.project_folder.parent / "-Users-ada-linked" / f"{CLAUDE_SESSION}.jsonl",
+        # Not where Claude Code keeps a transcript: too deep, or named for another Claude session.
+        nested_folder / f"{CLAUDE_SESSION}.jsonl",
+        eval_account.project_folder / "5b8e2a71-9c04-4d3f-b6a2-17e0c9d4f8a3.jsonl",
+        # The projects folder itself.
+        eval_account.project_folder.parent,
+    ]
+
+    for refused_path in refused_paths:
+        completed = run_hook(eval_account, "Stop", hook_input(eval_account, "Stop", transcript_path=str(refused_path)))
+
+        assert completed.returncode == 0, refused_path
+        assert completed.stdout == ""
+        assert completed.stderr == ""
+    assert not eval_account.copied_transcripts.exists()
+
+
 def test_a_transcript_that_grew_between_two_hooks_is_copied_again_in_full(tmp_path: Path) -> None:
     eval_account = make_eval_account(tmp_path)
     eval_account.transcript.write_bytes(FIRST_LINES)

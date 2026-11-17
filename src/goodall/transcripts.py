@@ -26,6 +26,11 @@ a person's private prompts, stays out of reach.
 
 Decisions a reader would otherwise reverse-engineer (PROVISIONAL):
 
+- Goodall copies only from inside the Claude projects folder. The path a
+  hook names comes from outside goodall, so a path that resolves anywhere
+  else, through `..` or a symbolic link, is refused; so are symbolic links
+  among a Claude session's subagent files.
+
 - Files are copied to a temporary file in the destination folder, which is
   then renamed over the copy. A rename is atomic, so a copy interrupted at
   any moment, even by SIGKILL, leaves the old copy or the new one, never a
@@ -92,9 +97,33 @@ def claude_projects_folder() -> Path:
 def copy_from_hook(
     projects_folder: Path, log_directory: Path, claude_session: str, transcript_path: Path, now: datetime
 ) -> None:
-    """Copy the Claude session a hook named, from `transcript_path`, into the log directory."""
-    project_folder_name = transcript_path.parent.name
-    copy_claude_session(projects_folder, log_directory, project_folder_name, claude_session, now)
+    """Copy the Claude session a hook named, from `transcript_path`, into the log directory.
+
+    `transcript_path` comes from the hook's input, so it is checked before
+    anything is read: it must be `<projects folder>/<project folder>/<claude
+    session>.jsonl` once every symbolic link and `..` is resolved. Anything
+    else raises TranscriptPathRefused, and nothing is copied: goodall copies
+    only from inside the Claude projects folder. A transcript that does not
+    exist yet (Claude Code creates it after the first prompt) is not an
+    error; there is simply nothing to copy.
+    """
+    if not transcript_path.is_absolute() or transcript_path.name != f"{claude_session}.jsonl":
+        raise TranscriptPathRefused("the transcript path is not a Claude session's transcript")
+    try:
+        real_projects_folder = projects_folder.resolve(strict=True)
+        real_transcript_path = transcript_path.resolve(strict=True)
+    except FileNotFoundError:
+        return
+    if not real_transcript_path.is_relative_to(real_projects_folder):
+        raise TranscriptPathRefused("the transcript path leads outside the Claude projects folder")
+    relative_parts = real_transcript_path.relative_to(real_projects_folder).parts
+    if len(relative_parts) != 2 or relative_parts[1] != transcript_path.name:
+        raise TranscriptPathRefused("the transcript path is not directly inside a project folder")
+    copy_claude_session(real_projects_folder, log_directory, relative_parts[0], claude_session, now)
+
+
+class TranscriptPathRefused(ValueError):
+    """A hook named a transcript path goodall will not copy from; the message says why, without the path."""
 
 
 def copy_claude_session(
