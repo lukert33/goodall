@@ -26,3 +26,13 @@ def isolated_local_settings(tmp_path_factory: pytest.TempPathFactory, monkeypatc
 def isolated_claude_projects_folder(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> None:
     claude_config_directory = tmp_path_factory.mktemp("isolated-claude-config")
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(Path(claude_config_directory)))
+
+
+@pytest.fixture(autouse=True)
+def not_inside_claude_code(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Start every test as a person at a terminal, even when Claude Code is running the tests.
+
+    `goodall journal` and `goodall intervene` refuse when CLAUDECODE=1
+    (goodall.caller); tests of that refusal set the variable themselves.
+    """
+    monkeypatch.delenv("CLAUDECODE", raising=False)

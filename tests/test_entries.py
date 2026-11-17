@@ -26,6 +26,7 @@ from pathlib import Path
 import pytest
 
 from goodall import cli, exit_codes
+from goodall.caller import was_started_by_claude_code
 from goodall.fake_runner import FakeRunner
 from goodall.terminal import Terminal
 
@@ -684,3 +685,96 @@ def test_intervene_json_prints_one_document_with_the_id_the_path_and_whether_it_
         "warnings": [],
         "failures": [],
     }
+
+
+# ---------------------------------------------------------------------------
+# Both commands decline when Claude Code started them
+# ---------------------------------------------------------------------------
+
+INTERVENE_ARGUMENTS = ["intervene", "--category", "infrastructure", "--decision", "escalate"]
+
+
+class PipedInputThatMustNotBeRead(io.StringIO):
+    """Piped-in text that fails the test if read: a refused command reads nothing."""
+
+    def isatty(self) -> bool:
+        return False
+
+    def read(self, size: int | None = -1) -> str:
+        raise AssertionError("goodall read standard input before refusing")
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [["journal", "SECRET-WORDS"], [*INTERVENE_ARGUMENTS, "SECRET-WORDS"]],
+    ids=["journal", "intervene"],
+)
+def test_inside_claude_code_the_command_refuses_and_records_nothing(
+    eval_account: EvalAccount, monkeypatch: pytest.MonkeyPatch, arguments: list[str]
+) -> None:
+    monkeypatch.setenv("CLAUDECODE", "1")
+    commits_before = eval_account.commit_subjects()
+
+    run = run_goodall(arguments)
+
+    assert run.exit_code == exit_codes.ERROR
+    assert run.standard_output == ""
+    assert "was not recorded" in run.standard_error
+    assert "Terminal app" in run.standard_error
+    assert "do not try again" in run.standard_error
+    assert "SECRET-WORDS" not in run.standard_error
+    assert eval_account.journal_files() == []
+    assert eval_account.intervention_files() == []
+    assert eval_account.commit_subjects() == commits_before
+    assert git(eval_account.record_repo, "status", "--porcelain") == ""
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [["journal", "SECRET-WORDS", "--json"], [*INTERVENE_ARGUMENTS, "SECRET-WORDS", "--json"]],
+    ids=["journal", "intervene"],
+)
+def test_inside_claude_code_json_failure_has_a_kind_an_agent_can_stop_on(
+    eval_account: EvalAccount, monkeypatch: pytest.MonkeyPatch, arguments: list[str]
+) -> None:
+    monkeypatch.setenv("CLAUDECODE", "1")
+
+    run = run_goodall(arguments)
+
+    assert run.exit_code == exit_codes.ERROR
+    document = json.loads(run.standard_output)
+    [failure] = document["failures"]
+    assert failure["kind"] == "must_be_run_by_a_person"
+    assert document["committed"] is False
+    assert document["id"] is None
+    assert "SECRET-WORDS" not in run.standard_output
+
+
+def test_inside_claude_code_the_refusal_comes_before_reading_text_or_settings(
+    eval_account: EvalAccount, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CLAUDECODE", "1")
+    (eval_account.config_directory / "local-settings.toml").unlink()
+
+    run = run_goodall(["journal"], standard_input=PipedInputThatMustNotBeRead())
+
+    assert run.exit_code == exit_codes.ERROR
+    assert "was not recorded" in run.standard_error
+    assert "local-settings" not in run.standard_error
+
+
+def test_outside_claude_code_the_commands_still_record(eval_account: EvalAccount) -> None:
+    assert run_goodall(["journal", "A note."]).exit_code == exit_codes.SUCCESS
+    assert run_goodall([*INTERVENE_ARGUMENTS, "I stepped in."]).exit_code == exit_codes.SUCCESS
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [("1", True), ("0", False), ("", False), ("true", False), (None, False)],
+)
+def test_was_started_by_claude_code_only_for_the_value_claude_code_sets(value: str | None, expected: bool) -> None:
+    environment = {}
+    if value is not None:
+        environment["CLAUDECODE"] = value
+
+    assert was_started_by_claude_code(environment) is expected
