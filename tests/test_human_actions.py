@@ -17,6 +17,7 @@ from goodall.human_actions import (
     PlanApproval,
     QuestionAnswer,
     QueuedPrompt,
+    SdkPrompt,
     ShellCommand,
     SlashCommand,
     ToolCallApproval,
@@ -526,6 +527,56 @@ def test_prompts_a_hook_blocked_are_found_with_the_text_that_was_queued() -> Non
     ]
     assert result.actions[0].rule == "blocked_prompt_from_hook_warning"
     assert result.unfamiliar_entries == []
+
+
+def test_prompts_sent_through_the_sdk_are_kept_apart_from_typed_prompts() -> None:
+    # Whether a prompt a program sent counts as the person is undecided, so
+    # it is its own kind rather than a typed prompt or nothing.
+    result = parse_human_actions(FIXTURES / "sdk_prompts.jsonl")
+
+    assert result.actions == [
+        # An app that drives Claude Code through the SDK sets promptSource to
+        # "sdk" on prompts the person typed; the origin says it was a person.
+        TypedPrompt(
+            line_number=1,
+            entry_id="u-0001",
+            session_id="session-t",
+            timestamp="2026-03-08T09:00:00.000Z",
+            text="An example prompt typed in an app that drives Claude Code.",
+            image_count=0,
+        ),
+        SdkPrompt(
+            line_number=2,
+            entry_id="u-0002",
+            session_id="session-t",
+            timestamp="2026-03-08T09:01:00.000Z",
+            text="An example prompt a program sent.",
+            image_count=0,
+        ),
+        # Lines 3 to 7 name another sender in turnOrigin and have no origin:
+        # none is the person, and line 7's sender is reported below.
+        # An older entry with neither field is still judged by its text.
+        TypedPrompt(
+            line_number=8,
+            entry_id="u-0008",
+            session_id="session-t",
+            timestamp="2026-03-08T09:07:00.000Z",
+            text="An example prompt from an older Claude Code.",
+            image_count=0,
+        ),
+        SdkPrompt(
+            line_number=9,
+            entry_id="u-0009",
+            session_id="session-t",
+            timestamp="2026-03-08T09:08:00.000Z",
+            text="A second example prompt a program sent.",
+            image_count=0,
+        ),
+    ]
+    assert result.actions[1].rule == "sdk_prompt_from_turn_origin"
+    assert result.unfamiliar_entries == [
+        UnfamiliarEntry(line_number=7, entry_id="u-0007", reason="unknown turn origin 'example-future-turn-origin'"),
+    ]
 
 
 def test_text_the_harness_wrote_is_not_a_human_action() -> None:

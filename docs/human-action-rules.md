@@ -39,6 +39,7 @@ looking at real results, without re-reading transcripts.
 | `question_answer` | `question_answer_from_tool_result` | `tool_call_id`, `question_count`, `answers` (as given) |
 | `plan_approval` | `plan_approval_from_tool_result` | `tool_call_id`, `decision` (always `"approve"`) |
 | `queued_prompt` | `queued_prompt_from_attachment` | `text`, `image_count` |
+| `sdk_prompt` | `sdk_prompt_from_turn_origin` | `text`, `image_count` |
 | `blocked_prompt` | `blocked_prompt_from_hook_warning` | `text` (the queued prompt, if found) |
 
 `tool_name` is read from the assistant entry that made the call, when it is in
@@ -104,7 +105,10 @@ a blocked prompt in a `system` entry). Within a `user` entry:
 5. **From the person** (`is_from_the_person`). Shared by every rule that reads
    what the person typed: an entry is ruled out when it has `isMeta`,
    `isCompactSummary` or `isSidechain` true, or its `origin.kind` is present
-   and not `human`.
+   and not `human`, or it has no `origin` and a `turnOrigin` other than
+   `human` (seen: `sdk`, `peer`, `task_notification`, `host_synthetic`,
+   `scheduled`). `promptSource` is not used: an app that drives Claude Code
+   through the SDK writes `promptSource: sdk` on prompts the person typed.
 6. **Shell command** (`shell_command_from_bash_input`). An entry from the
    person whose text (after rule 4) begins with `<bash-input>`: the person ran
    `!command`. `text` is what is inside the tags. If `<bash-stdout>` or
@@ -131,6 +135,11 @@ a blocked prompt in a `system` entry). Within a `user` entry:
    (`<command-name>`, `<command-message>`, `<local-command-...>`,
    `<task-notification>`, `<bash-...>`), or there is neither text nor an image.
    `userType` is not used: it is `external` on every user entry.
+9a. **Prompt sent through the SDK** (`is_sdk_prompt`, recorded as rule
+   `sdk_prompt_from_turn_origin`). An entry with no `origin`, a `turnOrigin`
+   of `sdk`, not meta, not a compaction summary, not on a sidechain, and with
+   prompt text as in rule 9: a program sent it. Whether that is the person is
+   undecided (see below), so it is never a `typed_prompt`.
 
 Outside `user` entries:
 
@@ -156,7 +165,8 @@ Outside `user` entries:
 Reported, with line number and a reason that names no content: a line that is
 not JSON or not an object, an entry with no type or an unknown type, a user
 entry with no message content, an unknown content block type, an unknown
-`origin.kind`, an unknown `permissionDecision.source`. Blank lines are skipped.
+`origin.kind` or `turnOrigin`, an unknown `permissionDecision.source`. Blank
+lines are skipped.
 Parsing always carries on.
 
 ## Not detected in version 2
@@ -164,3 +174,11 @@ Parsing always carries on.
 - **Permission approvals before Claude Code 2.1.289**, which wrote no
   `permissionDecision`.
 - **Interruptions between turns**, which leave nothing in a transcript.
+
+## Undecided, waiting for evidence
+
+- **Prompts a program sent** (`sdk_prompt`). A script may send a prompt on
+  the person's behalf, or an automation may send one on its own. Whether that
+  is the person is undecided until real results show how often it happens; it
+  is kept apart, counted separately, and the actor labeller leaves its
+  entries unmatched.

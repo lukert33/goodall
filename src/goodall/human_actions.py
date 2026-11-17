@@ -96,6 +96,11 @@ class ClaudeCodeMarkers:
     # How the warning begins that Claude Code writes when a UserPromptSubmit
     # hook (goodall's prompt gate, for one) blocks a prompt.
     prompt_blocked_by_hook_prefix: str
+    # Values of a "user" entry's `turnOrigin`, which newer versions write
+    # beside or instead of `origin`. "human" is the person and "sdk" a
+    # program; the rest are other senders.
+    sdk_turn_origin: str
+    known_turn_origins: tuple[str, ...]
     # Block types known to appear in a "user" entry's message content.
     known_content_block_types: tuple[str, ...]
     # Values of a "user" entry's `origin.kind`; only "human" is the person.
@@ -155,6 +160,8 @@ def claude_code_markers() -> ClaudeCodeMarkers:
         queued_command_attachment_type="queued_command",
         queued_prompt_command_mode="prompt",
         prompt_blocked_by_hook_prefix="UserPromptSubmit operation blocked by hook",
+        sdk_turn_origin="sdk",
+        known_turn_origins=("human", "sdk", "peer", "task_notification", "host_synthetic", "scheduled"),
         known_content_block_types=("text", "image", "document", "tool_result"),
         known_origin_kinds=("human", "task-notification", "peer", "coordinator"),
         prepended_context_opening_tag="<system-reminder>",
@@ -461,8 +468,32 @@ class BlockedPrompt:
     duration_seconds: float | None = field(default=None, init=False)
 
 
+@dataclass(frozen=True, kw_only=True)
+class SdkPrompt:
+    """A prompt a program sent through Claude Code's SDK, not marked as typed by a person.
+
+    The program may be acting for the person (a script they run) or on its
+    own (an automation). Whether this counts as the person is undecided, so it
+    is a kind of its own, never a `TypedPrompt`, until real results show how
+    often it happens and what it holds.
+    """
+
+    line_number: int
+    entry_id: str | None
+    session_id: str | None
+    timestamp: str | None
+    text: str
+    image_count: int
+    transcript_path: Path | None = field(default=None, compare=False)
+    source: str = field(default=SOURCE, init=False)
+    kind: str = field(default="sdk_prompt", init=False)
+    rule: str = field(default="sdk_prompt_from_turn_origin", init=False)
+    duration_seconds: float | None = field(default=None, init=False)
+
+
 TranscriptAction = (
     TypedPrompt
+    | SdkPrompt
     | QueuedPrompt
     | BlockedPrompt
     | Interruption
@@ -723,6 +754,10 @@ def read_user_content(entry: dict[str, Any], markers: ClaudeCodeMarkers) -> User
         if not isinstance(origin_kind, str) or origin_kind not in markers.known_origin_kinds:
             user_content.unfamiliar_reasons.append(f"unknown origin kind {str(origin_kind)[:60]!r}")
 
+    turn_origin = entry.get("turnOrigin")
+    if turn_origin is not None and (not isinstance(turn_origin, str) or turn_origin not in markers.known_turn_origins):
+        user_content.unfamiliar_reasons.append(f"unknown turn origin {str(turn_origin)[:60]!r}")
+
     permission_decision = entry.get("permissionDecision")
     if isinstance(permission_decision, dict):
         permission_source = permission_decision.get("source")
@@ -811,6 +846,18 @@ def actions_from_user_entry(
             image_count=content.image_count,
         )
         return [prompt]
+
+    if is_sdk_prompt(entry, typed_text, content.image_count, markers):
+        sdk_prompt = SdkPrompt(
+            line_number=place.line_number,
+            entry_id=place.entry_id,
+            session_id=place.session_id,
+            timestamp=place.timestamp,
+            transcript_path=place.transcript_path,
+            text=typed_text,
+            image_count=content.image_count,
+        )
+        return [sdk_prompt]
     return []
 
 
@@ -1207,9 +1254,43 @@ def is_from_the_person(entry: dict[str, Any]) -> bool:
     # Newer Claude Code versions say where a user entry came from. Older ones
     # do not, so a missing origin falls through to the text checks.
     origin = entry.get("origin")
-    if isinstance(origin, dict) and origin.get("kind") != "human":
+    if isinstance(origin, dict):
+        return origin.get("kind") == "human"
+    # Some entries carry `turnOrigin` and no origin. Any sender other than
+    # "human" there is not the person; "sdk" is found by its own rule. The
+    # trap: `promptSource: "sdk"` is not this field. An app that drives Claude
+    # Code through the SDK writes it on prompts the person typed.
+    turn_origin = entry.get("turnOrigin")
+    if turn_origin is not None and turn_origin != "human":
         return False
     return True
+
+
+def has_prompt_text(typed_text: str, image_count: int, markers: ClaudeCodeMarkers) -> bool:
+    """True when the text left after prepended context is a prompt, not a harness wrapper or nothing."""
+    # Wrappers the harness writes: slash-command records, shell commands and
+    # their output, task notifications. These are checked even when origin
+    # says "human", because what the person typed inside a wrapper is a
+    # different kind of action, found by its own rule.
+    for prefix in markers.harness_text_prefixes:
+        if typed_text.startswith(prefix):
+            return False
+    # A prompt has something in it. An entry with neither text nor an image is
+    # either all harness context or a shape the parser did not understand.
+    return not (typed_text == "" and image_count == 0)
+
+
+def is_sdk_prompt(entry: dict[str, Any], typed_text: str, image_count: int, markers: ClaudeCodeMarkers) -> bool:
+    """Rule: a prompt with no origin and a `turnOrigin` of "sdk" was sent by a program.
+
+    Apart from who sent it, it is judged as a typed prompt is: not meta, not
+    a compaction summary, not on a sidechain, and holding prompt text.
+    """
+    if entry.get("isMeta") is True or entry.get("isCompactSummary") is True or entry.get("isSidechain") is True:
+        return False
+    if isinstance(entry.get("origin"), dict) or entry.get("turnOrigin") != markers.sdk_turn_origin:
+        return False
+    return has_prompt_text(typed_text, image_count, markers)
 
 
 def is_typed_prompt(entry: dict[str, Any], typed_text: str, image_count: int, markers: ClaudeCodeMarkers) -> bool:
@@ -1222,15 +1303,4 @@ def is_typed_prompt(entry: dict[str, Any], typed_text: str, image_count: int, ma
     """
     if not is_from_the_person(entry):
         return False
-    # Wrappers the harness writes: slash-command records, shell commands and
-    # their output, task notifications. These are checked even when origin
-    # says "human", because what the person typed inside a wrapper is a
-    # different kind of action, found by its own rule.
-    for prefix in markers.harness_text_prefixes:
-        if typed_text.startswith(prefix):
-            return False
-    # A prompt has something in it. An entry with neither text nor an image is
-    # either all harness context or a shape the parser did not understand.
-    if typed_text == "" and image_count == 0:
-        return False
-    return True
+    return has_prompt_text(typed_text, image_count, markers)
