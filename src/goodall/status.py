@@ -12,14 +12,21 @@ What is built so far, in the order goodall checks:
    An unreachable log directory is reported as "not recording" (ADR 0008):
    when goodall cannot write raw records, no work block can be active, so
    "cannot write records" and "not recording" are the same observable state.
-3. The eval config is not read yet (the next ticket). Until it is, valid
-   settings still end in a failure, so that "the settings are fine" is never
-   mistaken for "a work block is active".
+3. The eval config is read from the record repo and checked, and local
+   settings are checked against it: this account's contributor must be in
+   the roster, and its main workstream one of the eval's workstreams
+   (goodall.eval_config).
+4. With everything in order, goodall reports the eval, the contributor and
+   that no work block is active. Work blocks are not built yet, so that is
+   the only answer possible, and the exit code is 1: 0 is reserved for an
+   active work block.
 
-Each failure is built once as a `Failure` record and then shown either as
-text on standard error or as one JSON document on standard output, so the two
-renderings cannot drift apart. The JSON document always has the keys
-`work_block_active` and `failures`.
+Each result is built once as records and then shown either as text (results
+on standard output, failures on standard error) or as one JSON document on
+standard output, so the two renderings cannot drift apart. The JSON document
+always has the keys `work_block_active`, `eval`, `contributor` and
+`failures`; `eval` and `contributor` are null whenever `failures` is not
+empty.
 
 The folder checks live here, not in goodall.local_settings, because they ask
 about the machine rather than the file; move them when a second command
@@ -31,6 +38,7 @@ import stat
 from pathlib import Path
 
 from goodall import exit_codes
+from goodall.eval_config import EvalForThisAccount, read_eval_for_this_account
 from goodall.local_settings import FolderSetting, LocalSettings, read_local_settings
 from goodall.terminal import Failure, Terminal
 
@@ -54,20 +62,61 @@ def run_status(terminal: Terminal, as_json: bool) -> int:
     if folder_failures:
         return report_failures(terminal, folder_failures, as_json)
 
-    return report_failures(terminal, [eval_config_not_read_yet_failure(settings)], as_json)
+    eval_reading = read_eval_for_this_account(settings)
+    if isinstance(eval_reading, list):
+        return report_failures(terminal, eval_reading, as_json)
+    return report_no_work_block(terminal, eval_reading, as_json)
+
+
+def report_no_work_block(terminal: Terminal, eval_for_this_account: EvalForThisAccount, as_json: bool) -> int:
+    """Report that everything is in order and no work block is active.
+
+    Returns 1, not 0: `goodall status` exits 0 only while a work block is
+    active, so an agent can branch on the exit code alone. No work block can
+    exist yet, so this is the best answer goodall can give today.
+    """
+    contributor = eval_for_this_account.contributor
+    main_workstream = eval_for_this_account.local_settings.main_workstream
+    if as_json:
+        terminal.write_json(
+            {
+                "work_block_active": False,
+                "eval": {"name": eval_for_this_account.eval_config.name},
+                "contributor": {
+                    "id": contributor.id,
+                    "display_name": contributor.display_name,
+                    "main_workstream": main_workstream,
+                },
+                "failures": [],
+            }
+        )
+    else:
+        terminal.show_facts(
+            [
+                ("Eval", eval_for_this_account.eval_config.name),
+                ("Contributor", f"{contributor.display_name} ({contributor.id})"),
+                ("Workstream", f"{main_workstream}, your main workstream"),
+            ]
+        )
+        terminal.show_paragraph("No work block is active, so nothing is being recorded.")
+    return exit_codes.ERROR
 
 
 def report_failures(terminal: Terminal, failures: list[Failure], as_json: bool) -> int:
     """Show `failures` as text or as JSON, and return the error exit code.
 
     The JSON document has the same keys whatever went wrong. No work block
-    can be active while goodall is failing, so `work_block_active` is false.
+    can be active while goodall is failing, so `work_block_active` is false,
+    and `eval` and `contributor` are null because goodall has not confirmed
+    them.
     """
     if as_json:
         failure_documents = []
         for failure in failures:
             failure_documents.append(failure.as_json())
-        terminal.write_json({"work_block_active": False, "failures": failure_documents})
+        terminal.write_json(
+            {"work_block_active": False, "eval": None, "contributor": None, "failures": failure_documents}
+        )
     else:
         terminal.show_failures(failures)
     return exit_codes.ERROR
@@ -145,29 +194,5 @@ def log_directory_unreachable_failure(settings: LocalSettings, problem: str) -> 
             "If the log directory is on an external drive, connect it. Otherwise create the folder, make sure "
             f"this macOS user account can write to it, or correct log_directory in {settings.settings_file}. "
             "Then run goodall status again."
-        ),
-    )
-
-
-def eval_config_not_read_yet_failure(settings: LocalSettings) -> Failure:
-    """The failure for valid local settings, until goodall can read the eval config.
-
-    Temporary: replaced when goodall learns to read the eval config
-    (goodall-yjt.9.3). It is a failure, not a success, because without the
-    eval config goodall cannot tell whether a work block is active, and must
-    not suggest the setup is complete.
-    """
-    return Failure(
-        kind="eval_config_not_read_yet",
-        what_happened=(
-            "Local settings are valid, but this version of goodall cannot read the eval config yet, "
-            "so it cannot tell whether a work block is active."
-        ),
-        why=(
-            f"The eval config, in the record repo at {settings.record_repo.path}, names the eval's contributors "
-            "and workstreams. Goodall must read it before it can record anything, and reading it is not built yet."
-        ),
-        what_to_do_next=(
-            "Nothing in your local settings needs fixing. Check bd ready in the goodall repo for progress."
         ),
     )

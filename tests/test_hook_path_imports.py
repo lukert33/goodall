@@ -15,6 +15,7 @@ from pathlib import Path
 
 HOOK_PATH_MODULES = [
     "goodall.local_settings",
+    "goodall.eval_config",
     # Imported by goodall.local_settings for its Failure record.
     "goodall.terminal",
 ]
@@ -54,19 +55,24 @@ def test_hook_path_modules_import_only_the_standard_library() -> None:
     assert completed.stdout == ""
 
 
-# Runs inside the fresh interpreter: read real local settings, then print
-# every module loaded along the way that is neither the standard library nor
-# goodall. Reading, not just importing, is checked, because a module can
-# import more inside a function the first time it runs.
+# Runs inside the fresh interpreter: read real local settings and the eval
+# config they lead to, then print every module loaded along the way that is
+# neither the standard library nor goodall. Reading, not just importing, is
+# checked, because a module can import more inside a function the first time
+# it runs.
 READ_SETTINGS_AND_LIST_THIRD_PARTY_MODULES = """
 import sys
 
 already_loaded = set(sys.modules)
+from goodall.eval_config import EvalForThisAccount, read_eval_for_this_account
 from goodall.local_settings import LocalSettings, read_local_settings
 
 reading = read_local_settings()
 if not isinstance(reading, LocalSettings):
     raise SystemExit(f"expected valid local settings, got {reading!r}")
+eval_reading = read_eval_for_this_account(reading)
+if not isinstance(eval_reading, EvalForThisAccount):
+    raise SystemExit(f"expected a valid eval config, got {eval_reading!r}")
 
 for loaded_name in sorted(set(sys.modules) - already_loaded):
     top_level_name = loaded_name.split(".")[0]
@@ -76,9 +82,19 @@ for loaded_name in sorted(set(sys.modules) - already_loaded):
 """
 
 
-def test_reading_local_settings_loads_only_the_standard_library(tmp_path: Path) -> None:
+def test_reading_local_settings_and_eval_config_loads_only_the_standard_library(tmp_path: Path) -> None:
     config_directory = tmp_path / "goodall-config"
     config_directory.mkdir()
+    (tmp_path / "records").mkdir()
+    (tmp_path / "records" / "eval.toml").write_text(
+        "schema_version = 1\n"
+        'name = "goodall-pilot"\n'
+        'description = "A test eval."\n'
+        'workstreams = ["research"]\n'
+        'intervention_categories = ["infrastructure"]\n'
+        '[[contributors]]\nid = "ada-lovelace"\ndisplay_name = "Ada Lovelace"\n'
+        '[[scope]]\nrepository = "github.com/your-org/goodall-pilot-app"\npaths = ["**"]\n'
+    )
     (config_directory / "local-settings.toml").write_text(
         "schema_version = 1\n"
         'contributor = "ada-lovelace"\n'
