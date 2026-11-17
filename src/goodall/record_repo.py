@@ -118,6 +118,7 @@ RECORD_TYPE_NAMES = {
     records.WorkBlockRecord: "work block record",
     records.JournalEntry: "journal entry",
     records.Intervention: "intervention",
+    records.WorkBlockFix: "work block fix",
 }
 
 

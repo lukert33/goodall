@@ -1,10 +1,11 @@
-"""Goodall's own records: work block records, journal entries and interventions.
+"""Goodall's own records: work block records, journal entries, interventions and work block fixes.
 
-This module defines the three kinds of record that goodall and contributors
+This module defines the four kinds of record that goodall and contributors
 write into an eval's record repo, and turns each between a Python value and
 the text of its file. The commands that write records (`goodall journal`,
-`goodall intervene`, and the work-block commands `goodall start` and
-`goodall stop`) and the export to Inspect will call it. It reads and writes no
+`goodall intervene`, the work-block commands `goodall start` and
+`goodall stop`, and `goodall fixblock`) and the export to Inspect will call
+it. It reads and writes no
 files and runs no programs: every function here takes values or text and
 returns values or text, so it is easy to test and safe to call anywhere.
 
@@ -17,7 +18,13 @@ Design decisions a reader would otherwise have to reverse-engineer:
 - One file per record, so two contributors never edit the same file. A
   file's name is its record id: a UTC timestamp, the contributor id and a
   random suffix (see `make_record_id`).
-- Work block records are data, so they are JSON. Journal entries and
+- Records are never rewritten (ADR 0003). A work block record that needs
+  a value corrected, such as the workstream `unknown` that goodall records
+  when it cannot tell, gets a work block fix: a new small record that names
+  the work block and gives the corrected value (ADR 0014). Analysis asks
+  `effective_workstreams` which workstream each work block counts towards.
+- Work block records and work block fixes are data, so they are JSON.
+  Journal entries and
   interventions are prose written by people, so they are Markdown with a
   metadata header. The header is TOML between two `+++` lines: the standard
   library can read TOML (`tomllib`), the project already uses TOML for its
@@ -42,7 +49,7 @@ import json
 import re
 import secrets
 import tomllib
-from collections.abc import Collection
+from collections.abc import Collection, Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import PurePosixPath
@@ -57,11 +64,13 @@ SCHEMA_VERSION = 1
 WORK_BLOCK_RECORD_TYPE = "work_block"
 JOURNAL_ENTRY_RECORD_TYPE = "journal_entry"
 INTERVENTION_RECORD_TYPE = "intervention"
+WORK_BLOCK_FIX_RECORD_TYPE = "work_block_fix"
 
 # The folder, inside the record repo, that holds each kind of record.
 WORK_BLOCKS_FOLDER = "work-blocks"
 JOURNAL_FOLDER = "journal"
 INTERVENTIONS_FOLDER = "interventions"
+WORK_BLOCK_FIXES_FOLDER = "work-block-fixes"
 
 # The line that opens and closes the metadata header of a Markdown record.
 # `+++` is the usual marker for a TOML header (`---` usually means YAML).
@@ -70,6 +79,14 @@ HEADER_FENCE = "+++"
 # How a work block ended. "inferred" means nobody closed it and its end was
 # taken from its last heartbeat (the glossary's "inferred end").
 END_STATES = ("clean", "abnormal", "inferred")
+
+# The workstream recorded when goodall cannot tell which workstream a work
+# block was for: its marker was damaged and named none it could use. Never a
+# real workstream (the eval config reader refuses it as a name), and allowed
+# only on a work block that ended `abnormal`, since only that path writes it.
+# A person says which workstream it was with `goodall fixblock`, which
+# writes a work block fix beside the record (see `effective_workstreams`).
+UNKNOWN_WORKSTREAM = "unknown"
 
 # What the person decided, in Inspect's ApprovalEvent `decision` values.
 DECISIONS = ("approve", "modify", "reject", "escalate", "terminate")
@@ -173,8 +190,28 @@ class WorkBlockRecord:
     claude_sessions: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class WorkBlockFix:
+    """A corrected value for one work block, recorded beside its record, which is never changed.
+
+    `work_block` is the id of the work block it fixes. Each value it can
+    correct is an optional field named as in the work block record, None
+    when this fix leaves that value alone; at least one is set. Today the
+    only one is `workstream`; another value would be another optional field,
+    so the shape never changes. When a work block has several fixes, the one
+    written last wins (`effective_workstreams`).
+    """
+
+    schema_version: int
+    id: str
+    contributor: str
+    written_at: datetime
+    work_block: str
+    workstream: str | None
+
+
 # Any one of goodall's own records.
-Record = WorkBlockRecord | JournalEntry | Intervention
+Record = WorkBlockRecord | JournalEntry | Intervention | WorkBlockFix
 
 
 @dataclass(frozen=True)
@@ -309,6 +346,29 @@ def build_work_block_record(
     )
 
 
+def build_work_block_fix(
+    contributor: str,
+    written_at: datetime,
+    work_block: str,
+    workstream: str | None = None,
+    suffix: str | None = None,
+) -> WorkBlockFix:
+    """Build a new work block fix, giving it an id from the time it was written.
+
+    The id uses `written_at`, not the work block's start, so fixes sort in
+    the order they were made, which is the order in which they take effect.
+    """
+    written_at = _as_utc(written_at)
+    return WorkBlockFix(
+        schema_version=SCHEMA_VERSION,
+        id=make_record_id(written_at, contributor, suffix),
+        contributor=contributor,
+        written_at=written_at,
+        work_block=work_block,
+        workstream=workstream,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Rendering records to the text of their files
 # ---------------------------------------------------------------------------
@@ -325,6 +385,8 @@ def relative_path_for(record: Record) -> PurePosixPath:
         return PurePosixPath(WORK_BLOCKS_FOLDER) / f"{record.id}.json"
     if isinstance(record, JournalEntry):
         return PurePosixPath(JOURNAL_FOLDER) / f"{record.id}.md"
+    if isinstance(record, WorkBlockFix):
+        return PurePosixPath(WORK_BLOCK_FIXES_FOLDER) / f"{record.id}.json"
     return PurePosixPath(INTERVENTIONS_FOLDER) / f"{record.id}.md"
 
 
@@ -352,6 +414,8 @@ def _render_without_checks(record: Record) -> str:
     """Render a record that has already been validated."""
     if isinstance(record, WorkBlockRecord):
         return _render_work_block_record(record)
+    if isinstance(record, WorkBlockFix):
+        return _render_work_block_fix(record)
     if isinstance(record, JournalEntry):
         header_values: list[tuple[str, object]] = [
             ("schema_version", record.schema_version),
@@ -404,6 +468,20 @@ def _render_work_block_record(record: WorkBlockRecord) -> str:
             "claude_code_version": record.machine.claude_code_version,
         },
         "claude_sessions": list(record.claude_sessions),
+    }
+    return json.dumps(values, indent=2, ensure_ascii=False) + "\n"
+
+
+def _render_work_block_fix(record: WorkBlockFix) -> str:
+    """Write a work block fix as indented JSON; a value the fix leaves alone is null."""
+    values = {
+        "schema_version": record.schema_version,
+        "record_type": WORK_BLOCK_FIX_RECORD_TYPE,
+        "id": record.id,
+        "contributor": record.contributor,
+        "written_at": _format_timestamp(record.written_at),
+        "work_block": record.work_block,
+        "workstream": record.workstream,
     }
     return json.dumps(values, indent=2, ensure_ascii=False) + "\n"
 
@@ -523,9 +601,42 @@ def parse_intervention(text: str) -> ParseResult[Intervention]:
     return ParseResult(record=intervention, problems=problems)
 
 
-def parse_work_block_record(text: str) -> ParseResult[WorkBlockRecord]:
-    """Read the text of a work block record file."""
+def parse_work_block_fix(text: str) -> ParseResult[WorkBlockFix]:
+    """Read the text of a work block fix file."""
     problems: list[RecordProblem] = []
+    values = _load_json_object(text, problems)
+    if values is None:
+        return ParseResult(record=None, problems=problems)
+
+    reader = _FieldReader(values, problems)
+    _check_record_type(reader, WORK_BLOCK_FIX_RECORD_TYPE)
+    schema_version = reader.schema_version()
+    record_id = reader.text("id")
+    contributor = reader.text("contributor")
+    written_at = reader.timestamp("written_at")
+    work_block = reader.text("work_block")
+    workstream = reader.optional_text("workstream")
+    reader.report_unknown_keys()
+
+    required_values = [schema_version, record_id, contributor, written_at, work_block]
+    if None in required_values:
+        return ParseResult(record=None, problems=problems)
+    # The checks above guarantee these; the asserts tell the type checker.
+    assert schema_version is not None and record_id is not None and contributor is not None
+    assert written_at is not None and work_block is not None
+    fix = WorkBlockFix(
+        schema_version=schema_version,
+        id=record_id,
+        contributor=contributor,
+        written_at=written_at,
+        work_block=work_block,
+        workstream=workstream,
+    )
+    return ParseResult(record=fix, problems=problems)
+
+
+def _load_json_object(text: str, problems: list[RecordProblem]) -> dict[str, Any] | None:
+    """Read a JSON record's text as one object; None, with a problem added, when it is not one."""
     try:
         values = json.loads(text)
     except json.JSONDecodeError as error:
@@ -536,9 +647,18 @@ def parse_work_block_record(text: str) -> ParseResult[WorkBlockRecord]:
                 "correct that line.",
             )
         )
-        return ParseResult(record=None, problems=problems)
+        return None
     if not isinstance(values, dict):
         problems.append(RecordProblem("", "The file must hold one JSON object, between { and }; wrap it in braces."))
+        return None
+    return values
+
+
+def parse_work_block_record(text: str) -> ParseResult[WorkBlockRecord]:
+    """Read the text of a work block record file."""
+    problems: list[RecordProblem] = []
+    values = _load_json_object(text, problems)
+    if values is None:
         return ParseResult(record=None, problems=problems)
 
     reader = _FieldReader(values, problems)
@@ -824,6 +944,8 @@ def validate_record(
 
     if isinstance(record, WorkBlockRecord):
         _validate_work_block_record(checker, record, workstreams)
+    elif isinstance(record, WorkBlockFix):
+        _validate_work_block_fix(checker, record, workstreams)
     elif isinstance(record, JournalEntry):
         checker.timestamp("written_at", record.written_at)
         checker.optional_record_id("work_block", record.work_block)
@@ -836,7 +958,15 @@ def validate_record(
 def _validate_work_block_record(
     checker: "_Checker", record: WorkBlockRecord, workstreams: Collection[str] | None
 ) -> None:
-    checker.identifier("workstream", record.workstream, workstreams, "the workstreams in eval.toml")
+    if record.workstream == UNKNOWN_WORKSTREAM:
+        if record.end_state != "abnormal":
+            checker.add(
+                "workstream",
+                f"workstream is {UNKNOWN_WORKSTREAM}, which goodall records only for a work block that ended "
+                "abnormal; use one of the workstreams in eval.toml.",
+            )
+    else:
+        checker.identifier("workstream", record.workstream, workstreams, "the workstreams in eval.toml")
     started_at_valid = checker.timestamp("started_at", record.started_at)
     if record.ended_at is None and record.end_state is None:
         # A work block that is still running.
@@ -861,6 +991,21 @@ def _validate_work_block_record(
         checker.required_text("machine.claude_code_version", machine.claude_code_version)
     for claude_session in record.claude_sessions:
         checker.claude_session("claude_sessions", claude_session)
+
+
+def _validate_work_block_fix(checker: "_Checker", record: WorkBlockFix, workstreams: Collection[str] | None) -> None:
+    checker.timestamp("written_at", record.written_at)
+    checker.record_id("work_block", record.work_block)
+    if record.workstream is None:
+        checker.add("workstream", "A work block fix must give at least one corrected value; add workstream.")
+    elif record.workstream == UNKNOWN_WORKSTREAM:
+        checker.add(
+            "workstream",
+            f"workstream is {UNKNOWN_WORKSTREAM}, the placeholder goodall records when it cannot tell; a fix "
+            "must name one of the workstreams in eval.toml.",
+        )
+    else:
+        checker.identifier("workstream", record.workstream, workstreams, "the workstreams in eval.toml")
 
 
 def _validate_intervention(
@@ -993,6 +1138,42 @@ class _Checker:
             line_number += 1
             if not self.publishable("body", line, where=f" line {line_number}"):
                 return
+
+
+# ---------------------------------------------------------------------------
+# Reading work block records together with their fixes
+# ---------------------------------------------------------------------------
+
+
+def effective_workstreams(
+    work_block_records: Iterable[WorkBlockRecord], work_block_fixes: Iterable[WorkBlockFix]
+) -> dict[str, str]:
+    """Return the workstream each work block counts towards, by work block id.
+
+    The one place to ask: analysis, export and `goodall status` all use it.
+    A work block counts towards the workstream in its own record unless a
+    work block fix gives another; with several fixes, the one written last
+    wins (ties, in the same second, go to the larger id, so the answer
+    never depends on the order files were found). Every fix is still kept in
+    the record repo. A fix that leaves the workstream alone, or names a work
+    block not among `work_block_records`, changes nothing. The result can
+    still be `unknown` (UNKNOWN_WORKSTREAM) for a work block nobody has
+    fixed yet.
+    """
+    workstreams: dict[str, str] = {}
+    for work_block in work_block_records:
+        workstreams[work_block.id] = work_block.workstream
+    latest_fix_by_work_block: dict[str, WorkBlockFix] = {}
+    for fix in work_block_fixes:
+        if fix.workstream is None or fix.work_block not in workstreams:
+            continue
+        latest = latest_fix_by_work_block.get(fix.work_block)
+        if latest is None or (fix.written_at, fix.id) > (latest.written_at, latest.id):
+            latest_fix_by_work_block[fix.work_block] = fix
+    for work_block_id, fix in latest_fix_by_work_block.items():
+        assert fix.workstream is not None
+        workstreams[work_block_id] = fix.workstream
+    return workstreams
 
 
 # ---------------------------------------------------------------------------

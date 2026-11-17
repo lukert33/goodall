@@ -28,10 +28,14 @@ HOOK_PATH_MODULES = [
     # Imported by goodall.local_settings for its Failure record; the hook
     # writes its refusals through it.
     "goodall.terminal",
+    # Decides which names a failure may show; the readers above call it.
+    "goodall.quoting",
     # Not imported by `goodall hook`, which starts no program (see
     # test_the_hook_command_loads_no_third_party_module_and_starts_no_program);
     # kept standard-library-only all the same.
     "goodall.runner",
+    # goodall.eval_config takes its rule for secret references from here.
+    "goodall.secrets_manager",
     # The prompt gate asks it whether a work block is active, and the hook
     # leaves heartbeats through it; it reads the marker with goodall.records.
     "goodall.work_blocks",
@@ -39,6 +43,8 @@ HOOK_PATH_MODULES = [
     # PostToolUse, Stop and SessionEnd copy the Claude session's transcript
     # into the log directory through it.
     "goodall.transcripts",
+    # The prompt gate notes input it could not read through it.
+    "goodall.hook_problems",
 ]
 
 # Runs inside the fresh interpreter: import the modules, then print every
@@ -134,6 +140,49 @@ def test_reading_local_settings_and_eval_config_loads_only_the_standard_library(
         check=False,
         timeout=30,
         env=environment,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout == ""
+
+
+# Runs inside the fresh interpreter: read a real env file and check its
+# references, then print every module loaded along the way that is neither
+# the standard library nor goodall. The code that launches programs will
+# read the env files through these two modules, so they stay standard
+# library only like the hook path (ADR 0005).
+READ_ENV_FILE_AND_LIST_THIRD_PARTY_MODULES = """
+import sys
+from pathlib import Path
+
+already_loaded = set(sys.modules)
+from goodall.env_files import EnvFileReading, read_env_file
+from goodall.secrets_manager import is_well_formed_secret_reference
+
+reading = read_env_file(Path(sys.argv[1]))
+if not isinstance(reading, EnvFileReading) or reading.problems:
+    raise SystemExit(f"expected a readable env file, got {reading!r}")
+for entry in reading.entries:
+    if not is_well_formed_secret_reference("1password", entry.value):
+        raise SystemExit(f"expected a well-formed reference for {entry.name}")
+
+for loaded_name in sorted(set(sys.modules) - already_loaded):
+    top_level_name = loaded_name.split(".")[0]
+    if top_level_name in sys.stdlib_module_names or top_level_name == "goodall":
+        continue
+    print(loaded_name)
+"""
+
+
+def test_reading_an_env_file_and_checking_its_references_loads_only_the_standard_library(tmp_path: Path) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text('ANTHROPIC_API_KEY_ENGINEERING="op://Eval/anthropic-engineering/credential"\n')
+
+    completed = subprocess.run(
+        [sys.executable, "-c", READ_ENV_FILE_AND_LIST_THIRD_PARTY_MODULES, str(env_file)],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
     )
     assert completed.returncode == 0, completed.stderr
     assert completed.stdout == ""
@@ -264,8 +313,26 @@ def test_the_hook_command_loads_no_third_party_module_and_starts_no_program(tmp_
         )
         assert completed.returncode == 0, completed.stderr
         assert completed.stdout == "", event_name
-    # Both heartbeats were recorded, so the hook really ran its whole path.
+
+    # The prompt gate with input it cannot read, which notes the problem in
+    # the log directory and prints its notice: standard output holds that one
+    # JSON line and no module name.
+    completed = subprocess.run(
+        [sys.executable, "-c", RUN_HOOK_AND_LIST_MODULES, "UserPromptSubmit"],
+        input="{cut short",
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+        env=environment,
+    )
+    assert completed.returncode == 0, completed.stderr
+    [notice_line] = completed.stdout.splitlines()
+    assert list(json.loads(notice_line)) == ["systemMessage"]
+    assert (log_directory / "hook-problems" / "hook-problems.jsonl").exists()
+
+    # All three heartbeats were recorded, so the hook really ran its whole path.
     heartbeat_file = work_blocks.WorkBlockFiles(log_directory).heartbeat_file(running.id)
-    assert len(heartbeat_file.read_text().splitlines()) == 2
+    assert len(heartbeat_file.read_text().splitlines()) == 3
     copied_transcript = log_directory / "transcripts" / "-Users-ada-work" / transcript.name
     assert copied_transcript.read_bytes() == transcript.read_bytes()

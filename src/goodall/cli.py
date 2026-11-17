@@ -7,7 +7,8 @@ exit code, so `main` returns a number instead of calling `sys.exit` itself.
 
 `goodall status` (goodall.status), `goodall doctor` (goodall.doctor),
 `goodall journal` and `goodall intervene` (goodall.entries),
-`goodall start` and `goodall stop` (goodall.work_block_commands), and
+`goodall start` and `goodall stop` (goodall.work_block_commands),
+`goodall fixblock` (goodall.fixblock), and
 `goodall hook` (goodall.hook) are built. The `goodall` command itself starts
 in goodall.entry_point, which sends `goodall hook` to goodall.hook without
 loading this module, for speed; `main` routes it there too, so both agree.
@@ -38,6 +39,7 @@ from pathlib import Path
 from goodall import exit_codes, records
 from goodall.doctor import run_doctor
 from goodall.entries import DECISION_MEANINGS, EntryRequest, InterventionDetails, run_intervene, run_journal
+from goodall.fixblock import run_fixblock
 from goodall.hook import run_hook
 from goodall.runner import RealRunner, Runner
 from goodall.status import run_status
@@ -83,6 +85,38 @@ def build_parser() -> argparse.ArgumentParser:
 
     stop = commands.add_parser("stop", help="End the current work block, which closes the prompt gate.")
     stop.set_defaults(command_name="stop")
+
+    fixblock = commands.add_parser(
+        "fixblock",
+        help="Say which workstream a work block was really for.",
+        description=(
+            "Record which workstream one work block was for, in a work block fix kept beside its record. The "
+            "record itself is never changed. Use it for a work block recorded with the workstream unknown (goodall "
+            "status lists each one with the command to run), or one recorded on the wrong workstream. Fixing a "
+            "work block again is allowed: the latest fix counts, and every fix is kept."
+        ),
+        epilog=(
+            "example:\n"
+            f"  goodall fixblock {records.EXAMPLE_RECORD_ID} --workstream research\n"
+            "\n"
+            "goodall status shows each of your work blocks waiting for its workstream, with the command to copy."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    # Optional to argparse so goodall reports a missing id itself, with
+    # whole commands to copy, rather than argparse's bare usage line.
+    fixblock.add_argument(
+        "work_block_id",
+        nargs="?",
+        metavar="<work block id>",
+        help="The id of the work block, such as goodall status shows it.",
+    )
+    fixblock.add_argument(
+        "--workstream",
+        metavar="<name>",
+        help="The workstream the work block was for: one of the workstreams in eval.toml, never unknown.",
+    )
+    fixblock.set_defaults(command_name="fixblock")
 
     status = commands.add_parser("status", help="Show whether a work block is active.")
     status.add_argument(
@@ -223,18 +257,44 @@ def add_entry_text_arguments(parser: argparse.ArgumentParser, text_help: str) ->
     )
 
 
+# What a person does by hand while a stub is not built. Working rule in
+# AGENTS.md (until goodall reaches version 0.9): a message may point at a
+# command that is not built, provided its stub says how to do the same step by
+# hand. So a command that a message points at needs a real entry here, and
+# tests/test_cli.py fails when it has none.
+BY_HAND_STEPS = {
+    "onboard": (
+        "ask whoever runs the eval for this eval account's local settings file, local-settings.toml, or write "
+        "it yourself, and put it in the folder ~/.config/goodall/ in this macOS user account's home folder "
+        "(goodall status names each setting it needs and shows an example line). Then add the Claude Code "
+        "hooks as docs/claude-code-hooks.md in goodall's documentation shows, and run goodall status."
+    ),
+}
+NOTHING_BY_HAND = "Nothing for now: this command will come in a later version of goodall."
+
+
 def run_stub(command_name: str, terminal: Terminal) -> int:
-    """Report that a planned command has no implementation yet.
+    """Report that a planned command has no implementation yet, and what to do by hand.
 
     Returns ERROR rather than USAGE_ERROR because the user typed a valid
     command; it is goodall that cannot do it yet.
+
+    The reader is a researcher, so the next step never mentions goodall's
+    own development tools. `goodall onboard` gets a way to set up by hand,
+    because "Run goodall onboard" is the next step when local settings are
+    missing, and that must not lead to a dead end.
     """
+    by_hand = BY_HAND_STEPS.get(command_name)
+    if by_hand is None:
+        by_hand = NOTHING_BY_HAND
+    else:
+        by_hand = by_hand[0].upper() + by_hand[1:]
     terminal.show_failure(
         Failure(
             kind="not_built",
             what_happened=f"goodall {command_name} is not built yet. Nothing was changed.",
-            why="This command is planned, but nobody has written it yet.",
-            what_to_do_next="Check bd ready in the goodall repo for progress.",
+            why="This command is planned for a later version of goodall.",
+            what_to_do_next=f"By hand: {by_hand}",
         )
     )
     return exit_codes.ERROR
@@ -287,6 +347,8 @@ def main(
         return run_start(terminal, runner, clock, workstream=arguments.workstream)
     if command_name == "stop":
         return run_stop(terminal, runner, clock)
+    if command_name == "fixblock":
+        return run_fixblock(terminal, runner, clock, arguments.work_block_id, arguments.workstream)
     if command_name == "doctor":
         return run_doctor(terminal, runner, as_json=arguments.json)
     if command_name == "journal":

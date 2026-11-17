@@ -25,7 +25,9 @@ recovered from it is recorded with end state `abnormal`; every ended
 work block's record still waiting in the log directory is written to the
 record repo; and every Claude Code transcript that changed since it was
 last copied is copied into the log directory (goodall.transcripts), which
-is said in one sentence only when something was copied.
+is said in one sentence only when something was copied; and any problem a
+hook noted (goodall.hook_problems), such as a prompt whose input goodall
+could not read, is reported once as a warning and filed away.
 
 A work block's record is written to the record repo ONCE, when it ends,
 because records are never rewritten. Until it is committed it waits in the
@@ -49,7 +51,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import goodall
-from goodall import exit_codes, records, transcripts, work_blocks
+from goodall import exit_codes, hook_problems, records, transcripts, work_blocks
 from goodall.eval_config import EvalForThisAccount, read_eval_for_this_account
 from goodall.folders import describe_folder_problem, log_directory_unreachable_failure, record_repo_missing_failure
 from goodall.local_settings import read_local_settings
@@ -315,12 +317,14 @@ class Settling:
     `closings` are sentences for a person, one per work block goodall closed
     itself (forgotten or damaged); `writes` are the waiting records it tried
     to write into the record repo; `transcript_sweep` is what the sweep of
-    Claude Code's transcripts into the log directory did.
+    Claude Code's transcripts into the log directory did; `noted_hook_problems` is
+    what hooks noted since a command last reported it, or None.
     """
 
     closings: list[str] = field(default_factory=list)
     writes: list[UnrecordedWrite] = field(default_factory=list)
     transcript_sweep: transcripts.SweepResult = field(default_factory=transcripts.SweepResult)
+    noted_hook_problems: hook_problems.HookProblems | None = None
 
     @property
     def warnings(self) -> list[Failure]:
@@ -335,6 +339,10 @@ class Settling:
                 warnings.append(record_waiting_failure(write.record, write.waiting_file, write.failures))
         if self.transcript_sweep.problems:
             warnings.append(transcripts_not_copied_failure(self.transcript_sweep))
+        if self.noted_hook_problems is not None and self.noted_hook_problems.unreadable_inputs > 0:
+            warnings.append(hook_input_unreadable_failure(self.noted_hook_problems))
+        if self.noted_hook_problems is not None and self.noted_hook_problems.unknown_events > 0:
+            warnings.append(hook_event_unknown_failure(self.noted_hook_problems))
         return warnings
 
     @property
@@ -344,7 +352,7 @@ class Settling:
         for write in self.writes:
             if write.committed and write.record is not None:
                 paragraphs.append(
-                    f"Recorded your work block on {write.record.workstream}, which ran from "
+                    f"Recorded your work block {describe_workstream(write.record)}, which ran from "
                     f"{describe_moment(write.record.started_at)} to {describe_ended_at(write.record)}. "
                     + where_the_record_went(write.push_state)
                 )
@@ -367,6 +375,7 @@ def settle(runner: Runner, eval_reading: EvalForThisAccount, now: datetime) -> S
        is copied into the log directory (goodall.transcripts.sweep). The
        hooks copy as Claude works, but a killed Claude Code fires none, so
        this is what guarantees nothing is left behind.
+    4. What hooks noted they could not do is taken, to be reported once.
     """
     log_directory = eval_reading.local_settings.log_directory.path
     closings = []
@@ -387,6 +396,7 @@ def settle(runner: Runner, eval_reading: EvalForThisAccount, now: datetime) -> S
         closings=closings,
         writes=write_unrecorded_records(runner, eval_reading),
         transcript_sweep=transcripts.sweep(transcripts.claude_projects_folder(), log_directory, now),
+        noted_hook_problems=hook_problems.take_hook_problems(log_directory, now),
     )
 
 
@@ -409,10 +419,17 @@ def close_damaged_work_block(
     )
     if recovered is None:
         return message + (
-            " Nothing could be recovered from it, so no record of that work block was written. Please tell the "
-            "researcher who runs the eval, with the path above."
+            " Not even when that work block started could be recovered, so no record of it was written. Please tell "
+            "the researcher who runs the eval, with the path above."
         )
     work_blocks.save_unrecorded(log_directory, recovered)
+    if recovered.workstream == records.UNKNOWN_WORKSTREAM:
+        return message + (
+            f" The marker did not say which workstream that work block was for, so it is recorded with the "
+            f"workstream unknown, from {describe_moment(recovered.started_at)} to {describe_ended_at(recovered)}, "
+            "with the end state abnormal. Nothing is lost: once it is in the record repo, goodall status shows the "
+            "goodall fixblock command that says which workstream it was."
+        )
     return message + (
         f" What could be recovered is recorded as a work block on {recovered.workstream} from "
         f"{describe_moment(recovered.started_at)} to {describe_ended_at(recovered)}, its last heartbeat, with the "
@@ -425,18 +442,26 @@ def recover_work_block(
 ) -> records.WorkBlockRecord | None:
     """Rebuild what can be trusted of a damaged marker's work block, ended at its last heartbeat; None if too little.
 
-    Only observations are used, never guesses. The workstream must be in
-    the marker, because nothing else says which one it was. The contributor
-    falls back to this account's own, since an eval account belongs to one
-    contributor; the start falls back to when the marker file was made;
-    the machine facts, if lost, are observed again now, on what is the same
-    Mac. PROVISIONAL: the owner may prefer to record nothing but the kept
-    marker.
+    Only observations are used, never guesses, because the owner would
+    rather keep a work block with a gap in it than lose the activity:
+
+    - The workstream comes from the marker. When the marker names none the
+      eval has, it is recorded as `unknown` (records.UNKNOWN_WORKSTREAM),
+      a word no eval may use for a real workstream, and the person says
+      which it was later with `goodall fixblock`. Nothing more marks it as a
+      placeholder: the reserved word and the end state `abnormal` say it.
+    - The contributor falls back to this account's own, since an eval
+      account belongs to one contributor.
+    - The start falls back to when the marker file last changed. With not
+      even that, None is returned and nothing is recorded, because any
+      start goodall wrote would be invented and would look real.
+    - The machine facts, if lost, are observed again now, on what is the
+      same Mac.
     """
     values = damaged.values
     workstream = values.get("workstream")
     if not isinstance(workstream, str) or workstream not in eval_reading.eval_config.workstreams:
-        return None
+        workstream = records.UNKNOWN_WORKSTREAM
     contributor = values.get("contributor")
     if not isinstance(contributor, str) or not records.IDENTIFIER_PATTERN.fullmatch(contributor):
         contributor = eval_reading.contributor.id
@@ -530,6 +555,13 @@ def show_settling(terminal: Terminal, settling: Settling) -> None:
     terminal.show_warnings(settling.warnings)
 
 
+def describe_workstream(record: records.WorkBlockRecord) -> str:
+    """`on research`, or `with the workstream unknown` for a work block goodall could not attribute."""
+    if record.workstream == records.UNKNOWN_WORKSTREAM:
+        return f"with the workstream {records.UNKNOWN_WORKSTREAM}"
+    return f"on {record.workstream}"
+
+
 def describe_ended_at(record: records.WorkBlockRecord) -> str:
     """When an ended work block ended, for a person."""
     assert record.ended_at is not None
@@ -621,7 +653,7 @@ def record_waiting_failure(
     return Failure(
         kind="work_block_record_waiting",
         what_happened=(
-            f"Your work block on {ended_record.workstream} is stopped. Its record is saved on this Mac and has "
+            f"Your work block {describe_workstream(ended_record)} is stopped. Its record is saved on this Mac and has "
             "not reached the record repo yet. " + " ".join(reasons)
         ),
         why=(
@@ -653,6 +685,61 @@ def transcripts_not_copied_failure(sweep_result: transcripts.SweepResult) -> Fai
         what_to_do_next=(
             "Check that the log directory has free space and that this account can write to it, then run goodall "
             "status again. If it keeps failing, tell the researcher who runs the eval."
+        ),
+    )
+
+
+def hook_input_unreadable_failure(problems: hook_problems.HookProblems) -> Failure:
+    """The warning for prompts the gate let through although it could not read what Claude Code sent.
+
+    Shown once: settling has already filed the note away (goodall.hook_problems).
+    """
+    since = ""
+    if problems.unreadable_inputs_since is not None:
+        since = f" since {describe_moment(problems.unreadable_inputs_since)}"
+    return Failure(
+        kind="hook_input_unreadable",
+        what_happened=(
+            f"Goodall could not read what Claude Code sent with a prompt {describe_times(problems.unreadable_inputs)}"
+            f"{since}. Those prompts were sent and your work block kept recording, but their Claude sessions are "
+            "not linked to the work block."
+        ),
+        why=(
+            "Claude Code sends each prompt's details to goodall's prompt gate. When goodall cannot read them, it "
+            "lets the prompt through rather than block your work, and keeps a note of when, in "
+            f"{problems.filed_at}, so the researcher can link those Claude sessions later. Their transcripts are "
+            "still copied."
+        ),
+        what_to_do_next=(
+            "Tell the researcher who runs the eval: goodall may need updating for this version of Claude Code. "
+            "Nothing needs to be run again."
+        ),
+    )
+
+
+def hook_event_unknown_failure(problems: hook_problems.HookProblems) -> Failure:
+    """The warning for goodall hooks that ran without knowing which Claude Code event they were for.
+
+    Shown once: settling has already filed the note away (goodall.hook_problems).
+    """
+    since = ""
+    if problems.unknown_events_since is not None:
+        since = f" since {describe_moment(problems.unknown_events_since)}"
+    return Failure(
+        kind="hook_event_unknown",
+        what_happened=(
+            f"A goodall hook ran {describe_times(problems.unknown_events)}{since} without being told which Claude "
+            "Code event it was for, or for an event goodall does not handle."
+        ),
+        why=(
+            "Each goodall hook in Claude Code's settings names its event, such as goodall hook UserPromptSubmit. "
+            "One that does not may leave prompts ungated or unrecorded. The moments are kept in "
+            f"{problems.filed_at}."
+        ),
+        what_to_do_next=(
+            "Check the hooks in this account's Claude Code settings, ~/.claude/settings.json, against "
+            "docs/claude-code-hooks.md in goodall, and correct any command that does not end in one of the events "
+            "listed there. If you did not set them up, tell the researcher who runs the eval."
         ),
     )
 

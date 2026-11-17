@@ -1,13 +1,14 @@
 # Record schemas
 
 This page describes the files goodall and contributors write into an eval's
-record repo: **work block records**, **journal entries** and
-**interventions**. These are goodall's own records, the middle of the three
+record repo: **work block records**, **journal entries**,
+**interventions** and **work block fixes**. These are goodall's own records,
+the middle of the three
 layers in ADR 0003. Raw records (transcripts, telemetry) are kept elsewhere,
 byte for byte, and are not described here.
 
 The code that builds, writes, reads and checks these files is
-`src/goodall/records.py`. The three examples on this page are read by the
+`src/goodall/records.py`. The four examples on this page are read by the
 tests, so if this page and the code disagree, a test fails.
 
 > **Provisional.** Every shape on this page is a first draft, chosen so that
@@ -30,8 +31,10 @@ never has to merge one.
 │   └── 20261116T090000Z-ada-lovelace-0a1b2c3d.json
 ├── journal/
 │   └── 20261116T100500Z-ada-lovelace-7f3a9c2e.md
-└── interventions/
-    └── 20261116T112013Z-ada-lovelace-1c2d3e4f.md
+├── interventions/
+│   └── 20261116T112013Z-ada-lovelace-1c2d3e4f.md
+└── work-block-fixes/
+    └── 20261116T140210Z-ada-lovelace-5e6f7a8b.json
 ```
 
 ### File names
@@ -46,7 +49,7 @@ parts joined by hyphens:
 | Eight random hexadecimal characters | `0a1b2c3d` | The same contributor writing twice in one second (two terminals, two agents) gets different names. |
 
 The time comes from `started_at` for a work block, `written_at` for a journal
-entry and `occurred_at` for an intervention, so an intervention written down
+entry and a work block fix, and `occurred_at` for an intervention, so an intervention written down
 later still sorts where it happened.
 
 The name is safe on macOS disks: it has no colon (Finder shows a colon as a
@@ -60,7 +63,7 @@ under the 255-byte limit.
 | Field | Required | Value |
 | --- | --- | --- |
 | `schema_version` | yes | `1` |
-| `record_type` | yes | `work_block`, `journal_entry` or `intervention`. Makes a file self-describing if it is moved out of its folder. |
+| `record_type` | yes | `work_block`, `journal_entry`, `intervention` or `work_block_fix`. Makes a file self-describing if it is moved out of its folder. |
 | `id` | yes | The record id described above; the file name without its extension. |
 | `contributor` | yes | The contributor id from the roster in `eval.toml`: lowercase letters, digits and hyphens, at most 64 characters. A contributor is always a person; agents are never contributors. |
 
@@ -74,7 +77,7 @@ goodall writes, so it is JSON. Folder: `work-blocks/`.
 
 | Field | Required | Value |
 | --- | --- | --- |
-| `workstream` | yes | One of the `workstreams` in `eval.toml`. |
+| `workstream` | yes | One of the `workstreams` in `eval.toml`, or `unknown` when goodall could not tell which (only on a work block that ended `abnormal`; see [Work block fix](#work-block-fix-json)). No eval may name a real workstream `unknown`. |
 | `started_at` | yes | When the work block started. |
 | `ended_at` | no | When it ended; `null` while it is still running. |
 | `end_state` | no | How it ended: `clean` (closed by `goodall stop`), `abnormal` (ended by something going wrong), or `inferred` (nobody closed it, so its end was taken from its last heartbeat). `null` while running. Set together with `ended_at`: both or neither. |
@@ -108,6 +111,44 @@ billing field: goodall does not track billing.
     "0f6c1d2e-3a4b-4c5d-8e9f-a0b1c2d3e4f5",
     "5b8e2a71-9c04-4d3f-b6a2-17e0c9d4f8a3"
   ]
+}
+```
+
+## Work block fix (JSON)
+
+A corrected value for one work block. Records are never rewritten (ADR 0003),
+so when a work block record is wrong, or says its workstream is `unknown`,
+the correction is a new record beside it, written by
+`goodall fixblock <work block id> --workstream NAME` (ADR 0014). Folder:
+`work-block-fixes/`.
+
+| Field | Required | Value |
+| --- | --- | --- |
+| `written_at` | yes | When the fix was made. |
+| `work_block` | yes | The id of the work block it fixes. |
+| `workstream` | no | The workstream the work block was really for: one of the `workstreams` in `eval.toml`, never `unknown`. `null` when this fix leaves the workstream alone. |
+
+`contributor` is who made the fix, which need not be whose work block it is.
+Each value a fix can correct is an optional field named as in the work block
+record; at least one must be set. `workstream` is the only one today; another
+would be added as another optional field, so files already written keep
+their meaning.
+
+A work block may have several fixes. Each is kept, and the one with the
+latest `written_at` wins (ties go to the larger `id`). Code that needs the
+workstream a work block counts towards asks `effective_workstreams` in
+`records.py` rather than reading `workstream` from the work block record.
+
+<!-- example: work_block_fix -->
+```json
+{
+  "schema_version": 1,
+  "record_type": "work_block_fix",
+  "id": "20261116T140210Z-ada-lovelace-5e6f7a8b",
+  "contributor": "ada-lovelace",
+  "written_at": "2026-11-16T14:02:10Z",
+  "work_block": "20261116T090000Z-ada-lovelace-0a1b2c3d",
+  "workstream": "research"
 }
 ```
 
@@ -266,6 +307,10 @@ does not import Inspect. Checked against the `inspect_ai` source
 | `claude_session` | the sample the events belong to | Picks which transcript the events are added to. |
 | `id`, `category`, `written_at` | `metadata` | |
 
+A work block fix has no Inspect event of its own: an export applies it
+first, giving the work block's `SpanBeginEvent.name` from
+`effective_workstreams`, and may keep the fix's id in `metadata`.
+
 Gaps an export will have to decide: `ApprovalEvent` requires the tool call
 being approved (`call`) and the model's `message`, which goodall does not
 record (an intervention need not be about a tool call), and `InputEvent`
@@ -275,7 +320,7 @@ nearest thing goodall has.
 ## Problems and how they are reported
 
 Reading a file never stops with an error. `parse_work_block_record`,
-`parse_journal_entry` and `parse_intervention` return the record (when one
+`parse_journal_entry`, `parse_intervention` and `parse_work_block_fix` return the record (when one
 could be built) and a list of problems; `validate_record` returns a list of
 problems, and can also check the contributor, workstream and category
 against the eval config. Each problem names the field and says what to

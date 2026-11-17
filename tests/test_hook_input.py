@@ -2,7 +2,7 @@
 
 import json
 
-from goodall.hook import read_hook_input
+from goodall.hook import read_hook_input, unreadable_input_category
 
 CLAUDE_SESSION = "0f6c1d2e-3a4b-4c5d-8e9f-a0b1c2d3e4f5"
 
@@ -45,3 +45,17 @@ def test_hook_input_without_a_claude_session_id_is_unreadable() -> None:
     assert read_hook_input(json.dumps({"prompt": "hello"})) is None
     assert read_hook_input(json.dumps({"session_id": 42})) is None
     assert read_hook_input(json.dumps({"session_id": "not-a-session-id"})) is None
+
+
+def test_unreadable_hook_input_is_put_in_one_fixed_category_that_holds_none_of_it() -> None:
+    assert unreadable_input_category(None) == "empty"
+    assert unreadable_input_category("  \n") == "empty"
+    assert unreadable_input_category("{not json") == "not_json"
+    assert unreadable_input_category("[1, 2]") == "not_json"
+    assert unreadable_input_category(json.dumps({"prompt": "hello"})) == "no_session_id"
+    assert unreadable_input_category(json.dumps({"session_id": 42})) == "session_id_not_uuid"
+    assert unreadable_input_category(json.dumps({"session_id": "not-a-session-id"})) == "session_id_not_uuid"
+
+
+def test_readable_hook_input_has_no_category() -> None:
+    assert unreadable_input_category(json.dumps({"session_id": CLAUDE_SESSION})) is None

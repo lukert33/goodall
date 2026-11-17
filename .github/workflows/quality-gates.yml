@@ -9,8 +9,11 @@
 # - uv is installed from PyPI at an exact version and checked against its
 #   sha256 hash, instead of through a third-party setup action.
 # - uv versions below 0.13.4 trust a compromised certificate authority in their
-#   bundled certificate list (GHSA-hq85-5cpj-mr62). `UV_NATIVE_TLS` makes uv use
-#   the runner's system certificate store instead.
+#   bundled certificate list (GHSA-hq85-5cpj-mr62). The pinned uv is 0.13.7,
+#   and the advisory states that 0.13.4 removed that authority from the bundled
+#   list, so uv uses its own list again. The earlier `UV_NATIVE_TLS`
+#   workaround is gone: it made the gates depend on the runner's system store
+#   distrusting the same authority, which could not be checked.
 
 name: Quality gates
 
@@ -36,7 +39,6 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     env:
-      UV_NATIVE_TLS: "true"
       # Use the runner's own Python 3.12 rather than downloading one.
       UV_PYTHON_DOWNLOADS: never
     steps:
@@ -49,10 +51,12 @@ jobs:
         # Ubuntu's system Python refuses `pip install` outside a virtual
         # environment, so uv goes into its own. The hash is the PyPI wheel for
         # Linux x86_64; raise the version and the hash together, and keep the
-        # version inside the uv_build range in pyproject.toml.
+        # version inside the uv_build range in pyproject.toml. 0.13.7 (uploaded
+        # 2026-11-03) is the newest release in that range that was at least two
+        # weeks old when it was pinned.
         run: |
           python3 -m venv "$RUNNER_TEMP/uv-tool"
-          echo "uv==0.11.33 --hash=sha256:9542178978b0b6f16a7ae99e55aca039f493a1edb373a15d7993eab80a28615a" > "$RUNNER_TEMP/uv-requirements.txt"
+          echo "uv==0.13.7 --hash=sha256:2c9bdc4a872b60a93c5f26c0791089ea11585a4f9d3b3c017d78eb8487505e25" > "$RUNNER_TEMP/uv-requirements.txt"
           "$RUNNER_TEMP/uv-tool/bin/pip" install --require-hashes --only-binary :all: -r "$RUNNER_TEMP/uv-requirements.txt"
           echo "$RUNNER_TEMP/uv-tool/bin" >> "$GITHUB_PATH"
 
@@ -62,6 +66,11 @@ jobs:
 
       - name: Tests
         run: uv run pytest
+
+      - name: Stress tests
+        # About 20 seconds. Heavy bursts against the telemetry receiver, with
+        # every request accounted for; skipped by the plain test run above.
+        run: uv run pytest -m stress
 
       - name: Lint
         run: uv run ruff check .
