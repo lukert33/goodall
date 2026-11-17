@@ -7,8 +7,11 @@ does, and git runs for real.
 
 They fall under three headings, each with its own id prefix:
 
-- "Tools": git, gh and the secrets manager's command are installed. One
-  check per program, so each missing program is one failure naming it.
+- "Tools": git and gh are installed. One check per program, so each
+  missing program is one failure naming it. The secrets manager's command
+  is checked under this heading too, but by goodall.secrets_checks, because
+  whether it is needed depends on the env file (ADR 0006: a secrets manager
+  is required only when a secret exists).
 - "Eval account": this macOS user account is a standard account, not an
   administrator.
 - "Record repo": the record repo folder is a git repository. Later checks
@@ -18,25 +21,22 @@ The dependency edges, chosen so one broken thing is one failure:
 
 - git and gh need nothing else, so they are checked even when local
   settings are missing.
-- The secrets manager's command waits for valid local settings, because
-  they name the secrets manager.
 - The account check needs nothing else.
 - The git repository check waits for the record repo folder and for git:
   without git it cannot ask, and the report should say "git is missing"
   once, not again under the record repo.
 
-Like every check, these only look (ADR 0012): programs are looked for on
+Like every check, these only look (AGENTS.md invariant 5): programs are looked for on
 the PATH without being run, `id -Gn` and `git rev-parse` only read, and no
 check that could print a secret runs here.
 """
 
-from dataclasses import dataclass
 from pathlib import Path
 
 from goodall.checks import Check, CheckContext, CheckOutcome, failed, passed
 from goodall.local_settings import LocalSettings
-from goodall.runner import Command, CommandOutcome, first_non_blank_line
-from goodall.settings_checks import LOCAL_SETTINGS_VALID, RECORD_REPO_FOUND, valid_local_settings
+from goodall.runner import Command, CommandOutcome, RequiredProgram, first_non_blank_line
+from goodall.settings_checks import RECORD_REPO_FOUND, valid_local_settings
 from goodall.terminal import Failure
 
 TOOLS_GROUP = "Tools"
@@ -45,7 +45,6 @@ RECORD_REPO_GROUP = "Record repo"
 
 GIT_INSTALLED = "tools.git_installed"
 GH_INSTALLED = "tools.gh_installed"
-SECRETS_MANAGER_INSTALLED = "tools.secrets_manager_installed"
 STANDARD_ACCOUNT = "eval_account.standard_account"
 RECORD_REPO_IS_GIT_REPOSITORY = "record_repo.is_git_repository"
 
@@ -62,23 +61,6 @@ ACCOUNT_GROUPS_COMMAND = ["/usr/bin/id", "-Gn"]
 ADMINISTRATOR_GROUPS = ["admin", "wheel", "sudo"]
 
 
-@dataclass(frozen=True)
-class RequiredProgram:
-    """A program goodall needs, and what to tell a contributor when it is missing.
-
-    - `name` is the command, as found on the PATH.
-    - `described` names it for a person, at the start of a sentence, such
-      as "gh, GitHub's command-line tool,".
-    - `why` says what goodall uses it for.
-    - `how_to_install` says where to get it, as the end of a sentence.
-    """
-
-    name: str
-    described: str
-    why: str
-    how_to_install: str
-
-
 GIT = RequiredProgram(
     name="git",
     described="git",
@@ -92,22 +74,6 @@ GH = RequiredProgram(
     why="Goodall asks gh about the record repo on GitHub, so that goodall itself never holds a GitHub token.",
     how_to_install="from https://cli.github.com",
 )
-
-# The command of each secrets manager local settings can name. Local
-# settings accept only these (goodall.local_settings), so a lookup cannot
-# miss. This moves into the secrets manager module (ADR 0011) once that
-# module exists.
-SECRETS_MANAGER_PROGRAMS = {
-    "1password": RequiredProgram(
-        name="op",
-        described="op, 1Password's command-line tool,",
-        why=(
-            "This eval's secrets are kept in 1Password, and goodall reaches them only through op: op checks "
-            "that each secret reference points at a real item, and launches programs with the secrets they need."
-        ),
-        how_to_install="following https://developer.1password.com/docs/cli/get-started/",
-    ),
-}
 
 
 def check_program_installed(context: CheckContext, program: RequiredProgram) -> CheckOutcome:
@@ -147,12 +113,6 @@ def check_git_installed(context: CheckContext) -> CheckOutcome:
 def check_gh_installed(context: CheckContext) -> CheckOutcome:
     """gh is installed."""
     return check_program_installed(context, GH)
-
-
-def check_secrets_manager_installed(context: CheckContext) -> CheckOutcome:
-    """The command of the secrets manager that local settings name is installed."""
-    local_settings = valid_local_settings(context)
-    return check_program_installed(context, SECRETS_MANAGER_PROGRAMS[local_settings.secrets_manager])
 
 
 def check_standard_account(context: CheckContext) -> CheckOutcome:
@@ -313,13 +273,6 @@ PROGRAM_CHECKS = [
         summary="gh is installed",
         prerequisites=[],
         run=check_gh_installed,
-    ),
-    Check(
-        id=SECRETS_MANAGER_INSTALLED,
-        group=TOOLS_GROUP,
-        summary="The secrets manager's command is installed",
-        prerequisites=[LOCAL_SETTINGS_VALID],
-        run=check_secrets_manager_installed,
     ),
     Check(
         id=STANDARD_ACCOUNT,
