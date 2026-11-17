@@ -32,6 +32,7 @@ looking at real results, without re-reading transcripts.
 | `interruption` | `interruption_from_marker`, `interruption_from_tool_result` | `interrupted` (`"generate"` or `"tool_call"`), `interrupted_tool_call_id` |
 | `tool_call_rejection` | `rejection_from_tool_result` | `tool_call_id`, `tool_name`, `decision` (always `"reject"`), `feedback` |
 | `shell_command` | `shell_command_from_bash_input` | `text` (the command as typed), `output_line_number`, `output_entry_id` |
+| `slash_command` | `slash_command_from_command_tags` | `command_name`, `arguments` (both as typed), `command_type` (`"local"` or `"prompt"`) |
 
 `tool_name` is read from the assistant entry that made the call, when it is in
 the same transcript; only the name is kept, never the tool's input.
@@ -73,7 +74,19 @@ Only entries of type `user` can hold a human action. Within one:
    Code the output is the next entry, beginning with `<bash-stdout>` or
    `<bash-stderr>`, whose `parentUuid` is the command's entry. The command's
    output link then names that entry. Output is never copied.
-8. **Typed prompt** (`is_typed_prompt`). What is left after rule 4 counts
+8. **Slash command** (`slash_command_from_command_tags`). An entry from the
+   person whose text (after rule 4) opens with `<command-name>` or
+   `<command-message>` and holds a `<command-name>` tag. `command_name` and
+   `arguments` are the contents of `<command-name>` and `<command-args>`, as
+   typed; `arguments` is empty when there is no `<command-args>` tag.
+   `command_type` is `local` when the name tag opens the entry (a command
+   Claude Code runs itself; its output follows as `<local-command-stdout>`)
+   and `prompt` when the message tag opens it (the command expands into a
+   prompt, which follows as a meta entry and is not kept). The tag order
+   separated the two in every transcript in the structure scan (Claude Code
+   2.1.205 to 2.1.326). Claude Code does not record which commands are built
+   in; a plugin's commands have a `plugin:` prefix in their name.
+9. **Typed prompt** (`is_typed_prompt`). What is left after rule 4 counts
    when rule 5 allows it, unless the text begins with a harness wrapper tag
    (`<command-name>`, `<command-message>`, `<local-command-...>`,
    `<task-notification>`, `<bash-...>`), or there is neither text nor an image.
@@ -91,8 +104,6 @@ entry with no message content, an unknown content block type, an unknown
 - **Permission approvals.** Newer transcripts carry `permissionDecision` on
   tool results, with `source` values such as `user_temporary` and
   `user_permanent`, which look like the person's approvals. Not yet used.
-- **Slash commands** the person typed (`/command`). They are recorded inside
-  wrapper tags and are excluded, even when `origin.kind` is `human`.
 - **Interruptions between turns**, which leave nothing in a transcript.
 - **Prompts refused by the prompt gate**, which leave a `queue-operation`
   entry, not a user entry.

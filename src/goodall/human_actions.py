@@ -71,6 +71,13 @@ class ClaudeCodeMarkers:
     shell_command_opening_tag: str
     shell_command_closing_tag: str
     shell_output_opening_tags: tuple[str, ...]
+    # The tags Claude Code writes around a slash command. Which of the first
+    # two opens the entry says what kind of command it was: the name tag
+    # first for a command Claude Code runs itself, the message tag first for
+    # one that expands into a prompt.
+    slash_command_name_tags: tuple[str, str]
+    slash_command_message_tags: tuple[str, str]
+    slash_command_arguments_tags: tuple[str, str]
     # Block types known to appear in a "user" entry's message content.
     known_content_block_types: tuple[str, ...]
     # Values of a "user" entry's `origin.kind`; only "human" is the person.
@@ -118,6 +125,9 @@ def claude_code_markers() -> ClaudeCodeMarkers:
         shell_command_opening_tag="<bash-input>",
         shell_command_closing_tag="</bash-input>",
         shell_output_opening_tags=("<bash-stdout>", "<bash-stderr>"),
+        slash_command_name_tags=("<command-name>", "</command-name>"),
+        slash_command_message_tags=("<command-message>", "</command-message>"),
+        slash_command_arguments_tags=("<command-args>", "</command-args>"),
         known_content_block_types=("text", "image", "document", "tool_result"),
         known_origin_kinds=("human", "task-notification", "peer", "coordinator"),
         prepended_context_opening_tag="<system-reminder>",
@@ -247,7 +257,35 @@ class ShellCommand:
     duration_seconds: float | None = field(default=None, init=False)
 
 
-TranscriptAction = TypedPrompt | Interruption | ToolCallRejection | ShellCommand
+@dataclass(frozen=True, kw_only=True)
+class SlashCommand:
+    """A slash command the person typed, such as `/model example-model`.
+
+    `command_name` and `arguments` are as typed; `arguments` is None when the
+    entry has no arguments tag at all. The prompt a command may expand into is
+    not kept: those words are the command author's, not the person's.
+
+    `command_type` is "local" for a command Claude Code runs itself (such as
+    /model, /compact, /fast) and "prompt" for one that expands into a prompt
+    for the model (a skill, a plugin or custom command, and some built-in
+    commands). Claude Code does not record which commands are built in.
+    """
+
+    line_number: int
+    entry_id: str | None
+    session_id: str | None
+    timestamp: str | None
+    command_name: str
+    arguments: str | None
+    command_type: Literal["local", "prompt"]
+    transcript_path: Path | None = field(default=None, compare=False)
+    source: str = field(default=SOURCE, init=False)
+    kind: str = field(default="slash_command", init=False)
+    rule: str = field(default="slash_command_from_command_tags", init=False)
+    duration_seconds: float | None = field(default=None, init=False)
+
+
+TranscriptAction = TypedPrompt | Interruption | ToolCallRejection | ShellCommand | SlashCommand
 
 
 @dataclass(frozen=True)
@@ -491,6 +529,10 @@ def actions_from_user_entry(
     if shell_command is not None:
         return [shell_command]
 
+    slash_command = slash_command_from_command_tags(entry, place, typed_text, markers)
+    if slash_command is not None:
+        return [slash_command]
+
     if is_typed_prompt(entry, typed_text, content.image_count, markers):
         prompt = TypedPrompt(
             line_number=place.line_number,
@@ -535,6 +577,55 @@ def shell_command_from_bash_input(
         text=command,
         output_line_number=place.line_number if output_in_same_entry else None,
         output_entry_id=place.entry_id if output_in_same_entry else None,
+    )
+
+
+def text_between(text: str, tags: tuple[str, str]) -> str | None:
+    """Return the text inside the first pair of these tags, or None if either is missing."""
+    opening_tag, closing_tag = tags
+    opening_position = text.find(opening_tag)
+    if opening_position == -1:
+        return None
+    start = opening_position + len(opening_tag)
+    closing_position = text.find(closing_tag, start)
+    if closing_position == -1:
+        return None
+    return text[start:closing_position]
+
+
+def slash_command_from_command_tags(
+    entry: dict[str, Any], place: EntryPlace, typed_text: str, markers: ClaudeCodeMarkers
+) -> SlashCommand | None:
+    """Rule: an entry from the person that opens with slash-command tags is a slash command.
+
+    The trap: older transcripts carry no origin on these entries, and newer
+    ones carry an origin of "human" only for some commands, so the origin
+    cannot decide; the tags do, together with `is_from_the_person`. The tag
+    that opens the entry gives `command_type` (see `SlashCommand`); this was
+    observed to separate the two kinds in every transcript scanned, across
+    Claude Code 2.1.205 to 2.1.326, and is the first thing to recheck if a
+    later version changes it.
+    """
+    if not is_from_the_person(entry):
+        return None
+    if typed_text.startswith(markers.slash_command_name_tags[0]):
+        command_type: Literal["local", "prompt"] = "local"
+    elif typed_text.startswith(markers.slash_command_message_tags[0]):
+        command_type = "prompt"
+    else:
+        return None
+    command_name = text_between(typed_text, markers.slash_command_name_tags)
+    if command_name is None:
+        return None
+    return SlashCommand(
+        line_number=place.line_number,
+        entry_id=place.entry_id,
+        session_id=place.session_id,
+        timestamp=place.timestamp,
+        transcript_path=place.transcript_path,
+        command_name=command_name,
+        arguments=text_between(typed_text, markers.slash_command_arguments_tags),
+        command_type=command_type,
     )
 
 

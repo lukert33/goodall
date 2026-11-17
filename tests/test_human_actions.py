@@ -13,6 +13,7 @@ from goodall.human_actions import (
     RULES_VERSION,
     Interruption,
     ShellCommand,
+    SlashCommand,
     ToolCallRejection,
     TypedPrompt,
     UnfamiliarEntry,
@@ -262,6 +263,68 @@ def test_shell_commands_the_person_ran_are_found_with_a_link_to_their_output() -
     ]
     assert result.actions[0].kind == "shell_command"
     assert result.actions[0].rule == "shell_command_from_bash_input"
+    assert result.unfamiliar_entries == []
+
+
+def test_slash_commands_keep_the_name_and_arguments_as_typed() -> None:
+    result = parse_human_actions(FIXTURES / "slash_commands.jsonl")
+
+    assert result.actions == [
+        # A command Claude Code runs itself writes its name tag first, and
+        # its output follows as harness text (line 2).
+        SlashCommand(
+            line_number=1,
+            entry_id="u-0001",
+            session_id="session-h",
+            timestamp="2026-03-03T09:00:00.000Z",
+            command_name="/model",
+            arguments="example-model",
+            command_type="local",
+        ),
+        # A command that expands into a prompt (a skill or custom command)
+        # writes its message tag first. The arguments are kept as typed; the
+        # prompt it expanded into (line 4) is not the person's words.
+        SlashCommand(
+            line_number=3,
+            entry_id="u-0003",
+            session_id="session-h",
+            timestamp="2026-03-03T09:01:00.000Z",
+            command_name="/example-skill",
+            arguments="write the example  twice",
+            command_type="prompt",
+        ),
+        # No arguments tag at all: no arguments, as opposed to empty ones.
+        SlashCommand(
+            line_number=5,
+            entry_id="u-0005",
+            session_id="session-h",
+            timestamp="2026-03-03T09:02:00.000Z",
+            command_name="/example-plugin:review",
+            arguments=None,
+            command_type="prompt",
+        ),
+        # Near miss: a prompt that mentions the tag part-way through.
+        TypedPrompt(
+            line_number=6,
+            entry_id="u-0006",
+            session_id="session-h",
+            timestamp="2026-03-03T09:03:00.000Z",
+            text="What does the <command-name> tag in the example log mean?",
+            image_count=0,
+        ),
+        # Line 7 is on a subagent's sidechain, so the person did not type it.
+        SlashCommand(
+            line_number=8,
+            entry_id="u-0008",
+            session_id="session-h",
+            timestamp="2026-03-03T09:05:00.000Z",
+            command_name="/compact",
+            arguments="",
+            command_type="local",
+        ),
+    ]
+    assert result.actions[0].kind == "slash_command"
+    assert result.actions[0].rule == "slash_command_from_command_tags"
     assert result.unfamiliar_entries == []
 
 
