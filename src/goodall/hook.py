@@ -257,7 +257,11 @@ def record_activity(event_name: str, hook_input_text: str | None, now: datetime)
         pass
     if event_name in TRANSCRIPT_COPY_EVENTS and hook_input is not None and hook_input.transcript_path is not None:
         transcripts.copy_from_hook(
-            transcripts.claude_projects_folder(), log_directory, hook_input.claude_session, hook_input.transcript_path
+            transcripts.claude_projects_folder(),
+            log_directory,
+            hook_input.claude_session,
+            hook_input.transcript_path,
+            now,
         )
 
 

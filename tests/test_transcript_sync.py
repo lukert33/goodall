@@ -163,6 +163,45 @@ def test_a_hook_copies_the_claude_sessions_subagent_files_in_the_same_layout(tmp
     }
 
 
+def superseded_copies(eval_account: EvalAccount) -> dict[str, bytes]:
+    """Every earlier copy kept aside, by its path below its `superseded-transcripts/<moment>/` folder."""
+    found = {}
+    for moment_folder in sorted((eval_account.log_directory / "superseded-transcripts").iterdir()):
+        for relative_path, contents in files_and_bytes(moment_folder).items():
+            found[relative_path] = contents
+    return found
+
+
+def test_a_transcript_that_shrank_is_copied_and_the_longer_copy_is_kept_aside(tmp_path: Path) -> None:
+    eval_account = make_eval_account(tmp_path)
+    eval_account.transcript.write_bytes(FIRST_LINES + MORE_LINES)
+    run_hook(eval_account, "Stop", hook_input(eval_account, "Stop"))
+    # Something rewrote the transcript shorter: the copy must not lose the end.
+    eval_account.transcript.write_bytes(FIRST_LINES)
+
+    completed = run_hook(eval_account, "SessionEnd", hook_input(eval_account, "SessionEnd", reason="other"))
+
+    assert completed.returncode == 0
+    assert completed.stderr == ""
+    transcript_name = f"{PROJECT_FOLDER_NAME}/{CLAUDE_SESSION}.jsonl"
+    assert files_and_bytes(eval_account.copied_transcripts) == {transcript_name: FIRST_LINES}
+    assert superseded_copies(eval_account) == {transcript_name: FIRST_LINES + MORE_LINES}
+
+
+def test_a_transcript_that_was_rewritten_is_copied_and_the_earlier_copy_is_kept_aside(tmp_path: Path) -> None:
+    eval_account = make_eval_account(tmp_path)
+    eval_account.transcript.write_bytes(FIRST_LINES)
+    run_hook(eval_account, "Stop", hook_input(eval_account, "Stop"))
+    rewritten = FIRST_LINES.replace(b"Fix the tests", b"Fix the build") + MORE_LINES
+    eval_account.transcript.write_bytes(rewritten)
+
+    run_hook(eval_account, "Stop", hook_input(eval_account, "Stop"))
+
+    transcript_name = f"{PROJECT_FOLDER_NAME}/{CLAUDE_SESSION}.jsonl"
+    assert files_and_bytes(eval_account.copied_transcripts) == {transcript_name: rewritten}
+    assert superseded_copies(eval_account) == {transcript_name: FIRST_LINES}
+
+
 def test_a_transcript_that_grew_between_two_hooks_is_copied_again_in_full(tmp_path: Path) -> None:
     eval_account = make_eval_account(tmp_path)
     eval_account.transcript.write_bytes(FIRST_LINES)
@@ -176,3 +215,5 @@ def test_a_transcript_that_grew_between_two_hooks_is_copied_again_in_full(tmp_pa
     assert files_and_bytes(eval_account.copied_transcripts) == {
         f"{PROJECT_FOLDER_NAME}/{CLAUDE_SESSION}.jsonl": FIRST_LINES + MORE_LINES,
     }
+    # Growth is the normal case, so nothing is kept aside for it.
+    assert not (eval_account.log_directory / "superseded-transcripts").exists()

@@ -30,8 +30,20 @@ Decisions a reader would otherwise reverse-engineer (PROVISIONAL):
   then renamed over the copy. A rename is atomic, so a copy interrupted at
   any moment, even by SIGKILL, leaves the old copy or the new one, never a
   file cut short.
-- The copy takes the source's modification time, so it can be compared
-  with the source later. Copies are readable by this macOS user account
+- "Unchanged" means the same size and the same modification time, to the
+  nanosecond, as the source. The copy takes the source's modification
+  time so that this comparison works. It is a cheap stand-in for comparing
+  bytes; a tool that rewrote a transcript and then set its modification
+  time back would fool it, and Claude Code is not known to do that.
+- A copy is never overwritten by something it is not the start of.
+  Transcripts are append-only in normal use, so a source that is shorter
+  than the copy, or no longer begins with it, means something rewrote it
+  (compaction, an edit, a different Claude Code version). The earlier copy
+  is then moved to `superseded-transcripts/<moment in UTC>/` at the same
+  relative path, and the new copy takes its place. Kept copies sit outside
+  `transcripts/`, because an importer walking `transcripts/` would read a
+  kept copy as a second Claude session with the same id. Trap: an importer
+  pointed at the whole log directory would still find them. Copies are readable by this macOS user account
   only (0600, folders 0700), as goodall.work_blocks does, because
   transcripts hold a person's prompts.
 """
@@ -40,10 +52,15 @@ import enum
 import os
 import secrets
 import stat
+from datetime import UTC, datetime
 from pathlib import Path
 
 # The folder in the log directory that mirrors Claude Code's projects folder.
 TRANSCRIPTS_FOLDER_NAME = "transcripts"
+
+# The folder in the log directory where an earlier copy is kept when the
+# source no longer starts with it.
+SUPERSEDED_FOLDER_NAME = "superseded-transcripts"
 
 # Where Claude Code keeps a Claude session's subagent transcripts, inside a
 # folder named after the session.
@@ -72,14 +89,16 @@ def claude_projects_folder() -> Path:
     return Path(claude_config_directory).expanduser() / "projects"
 
 
-def copy_from_hook(projects_folder: Path, log_directory: Path, claude_session: str, transcript_path: Path) -> None:
+def copy_from_hook(
+    projects_folder: Path, log_directory: Path, claude_session: str, transcript_path: Path, now: datetime
+) -> None:
     """Copy the Claude session a hook named, from `transcript_path`, into the log directory."""
     project_folder_name = transcript_path.parent.name
-    copy_claude_session(projects_folder, log_directory, project_folder_name, claude_session)
+    copy_claude_session(projects_folder, log_directory, project_folder_name, claude_session, now)
 
 
 def copy_claude_session(
-    projects_folder: Path, log_directory: Path, project_folder_name: str, claude_session: str
+    projects_folder: Path, log_directory: Path, project_folder_name: str, claude_session: str, now: datetime
 ) -> None:
     """Copy one Claude session's files into the same places under the log directory's `transcripts` folder.
 
@@ -88,28 +107,16 @@ def copy_claude_session(
     `.meta.json` and `.prefix.json`). Anything else in `<session id>/`,
     and any folder inside `subagents/`, is not copied.
     """
-    project_folder = projects_folder / project_folder_name
-    source = project_folder / f"{claude_session}.jsonl"
-    copied_project_folder = make_folders(log_directory, [TRANSCRIPTS_FOLDER_NAME, project_folder_name])
-    copy_file(source, copied_project_folder / source.name, log_directory / "superseded" / source.name)
-
-    subagents_folder = project_folder / claude_session / SUBAGENTS_FOLDER_NAME
-    subagent_files = list_regular_files(subagents_folder)
-    if not subagent_files:
-        return
-    copied_subagents_folder = make_folders(
-        log_directory, [TRANSCRIPTS_FOLDER_NAME, project_folder_name, claude_session, SUBAGENTS_FOLDER_NAME]
-    )
-    for subagent_file in subagent_files:
-        copy_file(
-            subagent_file,
-            copied_subagents_folder / subagent_file.name,
-            log_directory / "superseded" / subagent_file.name,
-        )
+    relative_paths = [Path(project_folder_name) / f"{claude_session}.jsonl"]
+    subagents_folder = Path(project_folder_name) / claude_session / SUBAGENTS_FOLDER_NAME
+    for subagent_file_name in list_regular_files(projects_folder / subagents_folder):
+        relative_paths.append(subagents_folder / subagent_file_name)
+    for relative_path in relative_paths:
+        copy_file(projects_folder, log_directory, relative_path, now)
 
 
-def list_regular_files(folder: Path) -> list[Path]:
-    """The regular files directly inside `folder`, sorted; none when it is missing or not a real folder.
+def list_regular_files(folder: Path) -> list[str]:
+    """The names of the regular files directly inside `folder`, sorted; none when it is missing or not a real folder.
 
     Symbolic links are skipped, and so is a `folder` reached through one
     (checked for `folder` and its parent), so nothing outside the Claude
@@ -119,19 +126,21 @@ def list_regular_files(folder: Path) -> list[Path]:
         folder_status = status_or_none(folder_to_check)
         if folder_status is None or not stat.S_ISDIR(folder_status.st_mode):
             return []
-    regular_files = []
+    file_names = []
     with os.scandir(folder) as entries:
         for entry in entries:
             if entry.is_file(follow_symlinks=False):
-                regular_files.append(Path(entry.path))
-    return sorted(regular_files)
+                file_names.append(entry.name)
+    return sorted(file_names)
 
 
 def make_folders(log_directory: Path, folder_names: list[str]) -> Path:
     """Create each of `folder_names` inside the one before, starting in the log directory; return the last.
 
     One at a time, owner-only, because `mkdir(parents=True)` would give the
-    folders it creates on the way the default permissions instead.
+    folders it creates on the way the default permissions instead. The log
+    directory itself is never created: if it is missing (an external drive
+    unplugged), this raises rather than make a stray folder in its place.
     """
     folder = log_directory
     for folder_name in folder_names:
@@ -145,17 +154,27 @@ class FileOutcome(enum.Enum):
 
     UNCHANGED = "unchanged"
     COPIED = "copied"
+    # The earlier copy was not the start of the source, so it was kept aside.
+    COPIED_AND_EARLIER_COPY_KEPT = "copied_and_earlier_copy_kept"
 
 
-def copy_file(source: Path, destination: Path, superseded_destination: Path) -> FileOutcome:
-    """Copy `source` to `destination` byte for byte, atomically, keeping the source's modification time.
+def copy_file(projects_folder: Path, log_directory: Path, relative_path: Path, now: datetime) -> FileOutcome:
+    """Copy one file from the Claude projects folder into `transcripts` in the log directory, at the same path.
 
-    A copy whose size and modification time (to the nanosecond) match the
-    source's is taken to be identical and left alone, without reading
-    either file: that is what keeps a hook fast when nothing changed.
-    `superseded_destination` is where an existing copy would be kept if it
-    had to be replaced. The destination folder must exist.
+    Byte for byte and atomically, keeping the source's modification time.
+
+    - A copy whose size and modification time (to the nanosecond) match
+      the source's is taken to be identical and left alone, without reading
+      either file: that is what keeps a hook fast when nothing changed.
+    - Otherwise the source is copied in full. Transcripts only grow in
+      normal use, so the earlier copy is normally the start of the new one.
+    - When it is not (the source is shorter, or what was copied before has
+      changed), the earlier copy is kept, never overwritten: it is moved to
+      `superseded-transcripts/<moment>/` at the same relative path, then
+      the new copy takes its place.
     """
+    source = projects_folder / relative_path
+    destination = log_directory / TRANSCRIPTS_FOLDER_NAME / relative_path
     source_descriptor = os.open(source, os.O_RDONLY | os.O_NOFOLLOW)
     try:
         source_status = os.fstat(source_descriptor)
@@ -168,16 +187,58 @@ def copy_file(source: Path, destination: Path, superseded_destination: Path) -> 
             and copy_status.st_mtime_ns == source_status.st_mtime_ns
         ):
             return FileOutcome.UNCHANGED
+
+        outcome = FileOutcome.COPIED
+        make_folders(log_directory, [TRANSCRIPTS_FOLDER_NAME, *relative_path.parent.parts])
         temporary_file = destination.parent / f".{destination.name}.{secrets.token_hex(4)}{TEMPORARY_SUFFIX}"
         try:
             write_copy(source_descriptor, source_status.st_size, temporary_file)
             os.utime(temporary_file, ns=(source_status.st_atime_ns, source_status.st_mtime_ns))
+            if copy_status is not None and not is_start_of(destination, temporary_file):
+                keep_earlier_copy(log_directory, relative_path, now)
+                outcome = FileOutcome.COPIED_AND_EARLIER_COPY_KEPT
             os.replace(temporary_file, destination)
         finally:
             temporary_file.unlink(missing_ok=True)
     finally:
         os.close(source_descriptor)
-    return FileOutcome.COPIED
+    return outcome
+
+
+def is_start_of(earlier_copy: Path, new_copy: Path) -> bool:
+    """True when every byte of `earlier_copy` is at the same place at the start of `new_copy`.
+
+    Reads the whole of the earlier copy, and as much of the new one: an
+    honest check that nothing copied before would be lost, at the price of
+    reading the file twice. The new copy is compared, not the source, since
+    the new copy is what will replace the earlier one.
+    """
+    if earlier_copy.stat().st_size > new_copy.stat().st_size:
+        return False
+    with earlier_copy.open("rb") as earlier, new_copy.open("rb") as new:
+        while True:
+            earlier_chunk = earlier.read(CHUNK_BYTES)
+            if earlier_chunk == b"":
+                return True
+            if new.read(len(earlier_chunk)) != earlier_chunk:
+                return False
+
+
+def keep_earlier_copy(log_directory: Path, relative_path: Path, now: datetime) -> None:
+    """Move the copy at `relative_path` to `superseded-transcripts/<moment>/<relative_path>`, keeping it.
+
+    The moment, in UTC to the microsecond, names the folder so a person can
+    see when each earlier copy was replaced. The kept copy sits outside
+    `transcripts/` on purpose, so a program reading `transcripts/` as a
+    Claude projects folder never sees two versions of one Claude session.
+    Raises FileExistsError rather than overwrite anything already kept there.
+    """
+    moment = now.astimezone(UTC).strftime("%Y%m%dT%H%M%S.%fZ")
+    kept_folder = make_folders(log_directory, [SUPERSEDED_FOLDER_NAME, moment, *relative_path.parent.parts])
+    kept_copy = kept_folder / relative_path.name
+    if kept_copy.exists():
+        raise FileExistsError(f"{kept_copy} is already there")
+    os.rename(log_directory / TRANSCRIPTS_FOLDER_NAME / relative_path, kept_copy)
 
 
 def status_or_none(path: Path) -> os.stat_result | None:

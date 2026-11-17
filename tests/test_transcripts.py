@@ -7,58 +7,98 @@ synthetic files in tmp_path.
 
 import os
 import stat
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
 from goodall import transcripts
 
 CLAUDE_SESSION = "0f6c1d2e-3a4b-4c5d-8e9f-a0b1c2d3e4f5"
+NOW = datetime(2026, 11, 17, 10, 15, 0, 123456, tzinfo=UTC)
+RELATIVE_PATH = Path("-Users-ada-work") / f"{CLAUDE_SESSION}.jsonl"
+
+
+@dataclass(frozen=True)
+class Folders:
+    """A synthetic Claude projects folder and a log directory, both inside tmp_path."""
+
+    projects_folder: Path
+    log_directory: Path
+
+    @property
+    def source(self) -> Path:
+        return self.projects_folder / RELATIVE_PATH
+
+    @property
+    def copy(self) -> Path:
+        return self.log_directory / "transcripts" / RELATIVE_PATH
+
+    def copy_file(self) -> transcripts.FileOutcome:
+        return transcripts.copy_file(self.projects_folder, self.log_directory, RELATIVE_PATH, NOW)
+
+
+def make_folders(tmp_path: Path) -> Folders:
+    projects_folder = tmp_path / "claude-config" / "projects"
+    (projects_folder / "-Users-ada-work").mkdir(parents=True)
+    log_directory = tmp_path / "logs"
+    log_directory.mkdir()
+    return Folders(projects_folder, log_directory)
 
 
 def test_copy_file_makes_a_byte_identical_owner_only_copy_with_the_sources_modification_time(tmp_path: Path) -> None:
-    source = tmp_path / "source.jsonl"
-    source.write_bytes(b'{"a":1}\n\xff\n')
-    os.utime(source, ns=(1_700_000_000_000_000_000, 1_700_000_000_123_456_789))
-    destination = tmp_path / "copy" / "source.jsonl"
-    destination.parent.mkdir()
+    folders = make_folders(tmp_path)
+    folders.source.write_bytes(b'{"a":1}\n\xff\n')
+    os.utime(folders.source, ns=(1_700_000_000_000_000_000, 1_700_000_000_123_456_789))
 
-    outcome = transcripts.copy_file(source, destination, tmp_path / "superseded" / "source.jsonl")
+    outcome = folders.copy_file()
 
     assert outcome == transcripts.FileOutcome.COPIED
-    assert destination.read_bytes() == b'{"a":1}\n\xff\n'
-    assert destination.stat().st_mtime_ns == 1_700_000_000_123_456_789
-    assert stat.S_IMODE(destination.stat().st_mode) == 0o600
+    assert folders.copy.read_bytes() == b'{"a":1}\n\xff\n'
+    assert folders.copy.stat().st_mtime_ns == 1_700_000_000_123_456_789
+    assert stat.S_IMODE(folders.copy.stat().st_mode) == 0o600
+    for folder in [folders.log_directory / "transcripts", folders.copy.parent]:
+        assert stat.S_IMODE(folder.stat().st_mode) == 0o700
 
 
 def test_copy_file_leaves_a_copy_alone_when_size_and_modification_time_still_match(tmp_path: Path) -> None:
-    source = tmp_path / "source.jsonl"
-    source.write_bytes(b"line\n")
-    destination = tmp_path / "copy.jsonl"
-    transcripts.copy_file(source, destination, tmp_path / "superseded.jsonl")
-    inode_before = destination.stat().st_ino
+    folders = make_folders(tmp_path)
+    folders.source.write_bytes(b"line\n")
+    folders.copy_file()
+    inode_before = folders.copy.stat().st_ino
 
-    outcome = transcripts.copy_file(source, destination, tmp_path / "superseded.jsonl")
+    outcome = folders.copy_file()
 
     assert outcome == transcripts.FileOutcome.UNCHANGED
-    assert destination.stat().st_ino == inode_before
+    assert folders.copy.stat().st_ino == inode_before
 
 
-def make_projects_folder(tmp_path: Path) -> Path:
-    """A synthetic Claude projects folder holding one project folder, and the transcript path inside it."""
-    projects_folder = tmp_path / "claude-config" / "projects"
-    (projects_folder / "-Users-ada-work").mkdir(parents=True)
-    return projects_folder
+def test_copy_file_replaces_a_copy_that_the_grown_source_starts_with_and_keeps_nothing_aside(tmp_path: Path) -> None:
+    folders = make_folders(tmp_path)
+    folders.source.write_bytes(b"one\n")
+    folders.copy_file()
+    with folders.source.open("ab") as source:
+        source.write(b"two\n")
+
+    outcome = folders.copy_file()
+
+    assert outcome == transcripts.FileOutcome.COPIED
+    assert folders.copy.read_bytes() == b"one\ntwo\n"
+    assert not (folders.log_directory / "superseded-transcripts").exists()
 
 
-def test_copy_from_hook_copies_the_named_transcript_into_owner_only_folders_of_the_same_layout(tmp_path: Path) -> None:
-    projects_folder = make_projects_folder(tmp_path)
-    transcript = projects_folder / "-Users-ada-work" / f"{CLAUDE_SESSION}.jsonl"
-    transcript.write_bytes(b"line\n")
-    log_directory = tmp_path / "logs"
-    log_directory.mkdir()
+def test_copy_file_keeps_an_earlier_copy_the_source_no_longer_starts_with_under_the_moment_it_was_replaced(
+    tmp_path: Path,
+) -> None:
+    folders = make_folders(tmp_path)
+    folders.source.write_bytes(b"one\ntwo\n")
+    folders.copy_file()
+    # Same length, different bytes: not a shrink, but still not an extension.
+    folders.source.write_bytes(b"one\nTWO\n")
 
-    transcripts.copy_from_hook(projects_folder, log_directory, CLAUDE_SESSION, transcript)
+    outcome = folders.copy_file()
 
-    copied_project_folder = log_directory / "transcripts" / "-Users-ada-work"
-    assert (copied_project_folder / f"{CLAUDE_SESSION}.jsonl").read_bytes() == b"line\n"
-    for folder in [log_directory / "transcripts", copied_project_folder]:
-        assert stat.S_IMODE(folder.stat().st_mode) == 0o700
+    assert outcome == transcripts.FileOutcome.COPIED_AND_EARLIER_COPY_KEPT
+    assert folders.copy.read_bytes() == b"one\nTWO\n"
+    kept_copy = folders.log_directory / "superseded-transcripts" / "20261117T101500.123456Z" / RELATIVE_PATH
+    assert kept_copy.read_bytes() == b"one\ntwo\n"
+    assert stat.S_IMODE(kept_copy.parent.stat().st_mode) == 0o700
