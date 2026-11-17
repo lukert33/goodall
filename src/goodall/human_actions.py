@@ -491,8 +491,34 @@ class SdkPrompt:
     duration_seconds: float | None = field(default=None, init=False)
 
 
+@dataclass(frozen=True, kw_only=True)
+class PermissionModeChange:
+    """The permission mode differed from the one on the person's previous prompt.
+
+    Claude Code writes the permission mode (such as "default", "plan",
+    "acceptEdits", "auto") on each prompt the person sends, and nowhere at the
+    moment it changes. So the change is seen on the next prompt, and takes
+    that prompt's place and time; it happened some time after the previous
+    prompt. The person usually changes the mode themselves, but approving a
+    plan also leaves plan mode, and an agent can ask to enter plan mode.
+    """
+
+    line_number: int
+    entry_id: str | None
+    session_id: str | None
+    timestamp: str | None
+    from_mode: str
+    to_mode: str
+    transcript_path: Path | None = field(default=None, compare=False)
+    source: str = field(default=SOURCE, init=False)
+    kind: str = field(default="permission_mode_change", init=False)
+    rule: str = field(default="permission_mode_change_between_prompts", init=False)
+    duration_seconds: float | None = field(default=None, init=False)
+
+
 TranscriptAction = (
     TypedPrompt
+    | PermissionModeChange
     | SdkPrompt
     | QueuedPrompt
     | BlockedPrompt
@@ -609,6 +635,10 @@ def parse_human_actions(transcript_path: Path) -> ParseResult:
             link_shell_command_output(entry, place, user_content.text, result.actions, memory, markers)
             actions = actions_from_user_entry(entry, place, user_content, markers, memory)
             for action in actions:
+                if isinstance(action, TypedPrompt):
+                    mode_change = permission_mode_change_between_prompts(entry, place, memory)
+                    if mode_change is not None:
+                        result.actions.append(mode_change)
                 if isinstance(action, ToolCallRejection) and action.entry_id is not None:
                     memory.rejection_entry_ids.add(action.entry_id)
                 if isinstance(action, ShellCommand) and action.entry_id is not None and action.output_entry_id is None:
@@ -637,6 +667,35 @@ class TranscriptMemory:
     # The text of the last prompt Claude Code queued and has not yet written
     # as a user entry, so a blocked prompt can say what was blocked.
     undelivered_prompt: str | None = None
+    # The permission mode written on the person's last prompt that had one.
+    last_permission_mode: str | None = None
+
+
+def permission_mode_change_between_prompts(
+    entry: dict[str, Any], place: EntryPlace, memory: TranscriptMemory
+) -> PermissionModeChange | None:
+    """Rule: a typed prompt whose permission mode differs from the last one is a mode change.
+
+    Only the person's typed prompts are compared, so a mode written on a
+    program's prompt or a tool result cannot produce a change. A prompt with
+    no mode is skipped, and the next one is compared with the last known mode.
+    """
+    permission_mode = entry.get("permissionMode")
+    if not isinstance(permission_mode, str):
+        return None
+    previous_mode = memory.last_permission_mode
+    memory.last_permission_mode = permission_mode
+    if previous_mode is None or previous_mode == permission_mode:
+        return None
+    return PermissionModeChange(
+        line_number=place.line_number,
+        entry_id=place.entry_id,
+        session_id=place.session_id,
+        timestamp=place.timestamp,
+        transcript_path=place.transcript_path,
+        from_mode=previous_mode,
+        to_mode=permission_mode,
+    )
 
 
 def remember_queued_prompt(entry: dict[str, Any], memory: TranscriptMemory) -> None:

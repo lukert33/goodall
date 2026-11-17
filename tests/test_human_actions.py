@@ -13,6 +13,7 @@ from goodall.human_actions import (
     RULES_VERSION,
     BlockedPrompt,
     Interruption,
+    PermissionModeChange,
     PermissionPromptDismissal,
     PlanApproval,
     QuestionAnswer,
@@ -577,6 +578,37 @@ def test_prompts_sent_through_the_sdk_are_kept_apart_from_typed_prompts() -> Non
     assert result.unfamiliar_entries == [
         UnfamiliarEntry(line_number=7, entry_id="u-0007", reason="unknown turn origin 'example-future-turn-origin'"),
     ]
+
+
+def test_a_change_of_permission_mode_between_the_persons_prompts_is_found() -> None:
+    result = parse_human_actions(FIXTURES / "permission_modes.jsonl")
+
+    changes = [action for action in result.actions if isinstance(action, PermissionModeChange)]
+    assert changes == [
+        # Seen on the prompt after the change, with that prompt's place.
+        PermissionModeChange(
+            line_number=3,
+            entry_id="u-0003",
+            session_id="session-m",
+            timestamp="2026-03-09T09:02:00.000Z",
+            from_mode="default",
+            to_mode="plan",
+        ),
+        # Line 4 was sent by a program, so its mode is not compared.
+        PermissionModeChange(
+            line_number=5,
+            entry_id="u-0005",
+            session_id="session-m",
+            timestamp="2026-03-09T09:04:00.000Z",
+            from_mode="plan",
+            to_mode="acceptEdits",
+        ),
+        # Line 6 records no mode, so line 7 is compared with line 5.
+    ]
+    # The change comes just before the prompt it was seen on.
+    kinds = [action.kind for action in result.actions]
+    assert kinds[2:4] == ["permission_mode_change", "typed_prompt"]
+    assert changes[0].rule == "permission_mode_change_between_prompts"
 
 
 def test_text_the_harness_wrote_is_not_a_human_action() -> None:

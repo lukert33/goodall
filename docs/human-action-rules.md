@@ -40,6 +40,7 @@ looking at real results, without re-reading transcripts.
 | `plan_approval` | `plan_approval_from_tool_result` | `tool_call_id`, `decision` (always `"approve"`) |
 | `queued_prompt` | `queued_prompt_from_attachment` | `text`, `image_count` |
 | `sdk_prompt` | `sdk_prompt_from_turn_origin` | `text`, `image_count` |
+| `permission_mode_change` | `permission_mode_change_between_prompts` | `from_mode`, `to_mode` |
 | `blocked_prompt` | `blocked_prompt_from_hook_warning` | `text` (the queued prompt, if found) |
 
 `tool_name` is read from the assistant entry that made the call, when it is in
@@ -140,6 +141,14 @@ a blocked prompt in a `system` entry). Within a `user` entry:
    of `sdk`, not meta, not a compaction summary, not on a sidechain, and with
    prompt text as in rule 9: a program sent it. Whether that is the person is
    undecided (see below), so it is never a `typed_prompt`.
+9b. **Permission mode change** (`permission_mode_change_between_prompts`). A
+   typed prompt whose `permissionMode` differs from the one on the last typed
+   prompt that had one. Claude Code records the mode only on prompts, so the
+   change is listed just before the prompt it was seen on, with that
+   prompt's place and time; it happened some time after the previous prompt.
+   Usually the person switched mode; approving a plan also leaves plan mode,
+   and an agent can ask to enter it, so this kind is less certain than the
+   others.
 
 Outside `user` entries:
 
