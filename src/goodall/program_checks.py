@@ -121,20 +121,33 @@ def check_program_installed(context: CheckContext, program: RequiredProgram) -> 
     return failed([program_missing_failure(program)])
 
 
+def install_by_administrator(program_name: str) -> str:
+    """The sentence that says who has to install `program_name`, in the same words every time.
+
+    An eval account is a standard macOS user account and cannot install
+    software, so every message that tells someone to install a program starts
+    with this sentence. It lives here, once, so the wording cannot drift.
+    """
+    return (
+        f"{program_name} has to be installed from an administrator macOS user account on this Mac, "
+        "not from this eval account. That is usually whoever set up this Mac, or the researcher who runs the eval."
+    )
+
+
 def program_missing_failure(program: RequiredProgram) -> Failure:
     """The failure for a required program that is not installed.
 
-    The next step is for the owner of the Mac, not the contributor: an eval
-    account is a standard account, which cannot install software.
+    The next step is for an administrator macOS user account, not the eval
+    account: an eval account is a standard account, which cannot install
+    software.
     """
     return Failure(
         kind="program_missing",
         what_happened=f"{program.described} is not installed for this macOS user account (it is not on the PATH).",
         why=program.why,
         what_to_do_next=(
-            f"Ask the owner of this Mac to install {program.name} {program.how_to_install}, from an "
-            "administrator account, because a standard account cannot install software. Then run goodall "
-            "doctor again."
+            f"{install_by_administrator(program.name)} Install it {program.how_to_install}. "
+            "Then run goodall doctor again in this eval account."
         ),
     )
 

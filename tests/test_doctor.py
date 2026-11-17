@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-from goodall import cli, exit_codes
+from goodall import cli, exit_codes, program_checks
 from goodall.fake_runner import FakeRunner
 from goodall.terminal import Terminal
 
@@ -517,7 +517,7 @@ def check_document(document: dict[str, object], check_id: str) -> dict[str, obje
     raise AssertionError(f"No check {check_id} in the document.")
 
 
-def test_missing_gh_is_one_failure_naming_it_and_saying_the_owner_of_the_mac_installs_it(
+def test_missing_gh_is_one_failure_naming_it_and_saying_an_administrator_account_installs_it(
     healthy_account: EvalAccount,
 ) -> None:
     runner = healthy_runner()
@@ -535,8 +535,7 @@ def test_missing_gh_is_one_failure_naming_it_and_saying_the_owner_of_the_mac_ins
     assert isinstance(gh_check["next_step"], str)
     # On an eval account the contributor cannot install software, so the
     # next step goes to whoever administers the Mac.
-    assert "owner of this Mac" in gh_check["next_step"]
-    assert "administrator account" in gh_check["next_step"]
+    assert "administrator macOS user account" in gh_check["next_step"]
     assert "https://cli.github.com" in gh_check["next_step"]
 
 
@@ -571,6 +570,35 @@ def test_missing_op_fails_the_secrets_manager_check_naming_1password(healthy_acc
     assert "op, 1Password's command-line tool," in secrets_manager_check["detail"]
     assert isinstance(secrets_manager_check["next_step"], str)
     assert "https://developer.1password.com/docs/cli/get-started/" in secrets_manager_check["next_step"]
+
+
+@pytest.mark.parametrize(
+    ("program", "check_id"),
+    [("git", "tools.git_installed"), ("gh", "tools.gh_installed"), ("op", "tools.secrets_manager_installed")],
+)
+def test_every_missing_program_says_in_the_same_words_that_an_administrator_account_installs_it(
+    healthy_account: EvalAccount, program: str, check_id: str
+) -> None:
+    runner = healthy_runner()
+    runner.installed_programs.remove(program)
+
+    _, standard_output, _ = run_goodall(["doctor", "--json"], runner)
+
+    next_step = check_document(json.loads(standard_output), check_id)["next_step"]
+    assert isinstance(next_step, str)
+    assert (
+        f"{program} has to be installed from an administrator macOS user account on this Mac, "
+        "not from this eval account. That is usually whoever set up this Mac, or the researcher who runs the eval."
+    ) in next_step
+    assert "Then run goodall doctor again in this eval account." in next_step
+
+
+def test_every_program_goodall_requires_gets_the_administrator_sentence() -> None:
+    # A program added to program_checks later must not slip past the test above.
+    required_programs = [program_checks.GIT, program_checks.GH, *program_checks.SECRETS_MANAGER_PROGRAMS.values()]
+    for program in required_programs:
+        failure = program_checks.program_missing_failure(program)
+        assert program_checks.install_by_administrator(program.name) in failure.what_to_do_next
 
 
 # The groups of an administrator on macOS: the same as a standard account's,
