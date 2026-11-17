@@ -27,7 +27,7 @@ from typing import Any
 
 import pytest
 
-from goodall import cli, exit_codes, records, work_blocks
+from goodall import cli, exit_codes, records, work_block_commands, work_blocks
 from goodall.fake_runner import FakeRunner
 from goodall.terminal import Terminal
 
@@ -539,20 +539,58 @@ def test_a_damaged_marker_is_kept_aside_and_what_can_be_recovered_is_recorded_as
     assert "Started a work block" in start.everything_printed
 
 
-def test_a_marker_too_damaged_to_recover_is_kept_aside_and_the_person_is_told(eval_account: EvalAccount) -> None:
+def test_a_marker_cut_short_is_kept_aside_and_recorded_with_an_unknown_workstream(eval_account: EvalAccount) -> None:
     run_goodall(eval_account, ["start"])
     marker_file(eval_account).write_text('{"schema_version": 1, "record_type": "work_bl')
+    # The damage happened at 09:45; that is all the file can still say about when.
+    damaged_at = (MONDAY_MORNING + timedelta(minutes=15)).timestamp()
+    os.utime(marker_file(eval_account), (damaged_at, damaged_at))
+    eval_account.clock.advance(timedelta(hours=1))
 
     start = run_goodall(eval_account, ["start"])
 
     assert start.exit_code == exit_codes.SUCCESS, start.standard_error
     assert "could not read the marker of your work block" in start.everything_printed
-    assert "Nothing could be recovered from it" in start.everything_printed
     [kept] = damaged_markers(eval_account)
     assert kept.read_text() == '{"schema_version": 1, "record_type": "work_bl'
     assert stat.S_IMODE(kept.stat().st_mode) == 0o600
-    assert eval_account.work_block_files() == []
+    [record] = eval_account.work_block_records()
+    assert record["workstream"] == "unknown"
+    assert record["end_state"] == "abnormal"
+    assert record["contributor"] == "ada-lovelace"
+    assert record["started_at"] == "2026-11-16T09:45:00Z"
+    assert "did not say which workstream" in start.everything_printed
+    assert "recorded with the workstream unknown" in start.everything_printed
     assert "Started a work block" in start.everything_printed
+
+
+def test_a_damaged_marker_naming_a_workstream_the_eval_does_not_have_is_recorded_as_unknown(
+    eval_account: EvalAccount,
+) -> None:
+    run_goodall(eval_account, ["start"])
+    marker = json.loads(marker_file(eval_account).read_text())
+    marker["workstream"] = "Research!"
+    marker_file(eval_account).write_text(json.dumps(marker))
+
+    status = run_goodall(eval_account, ["status"])
+
+    [record] = eval_account.work_block_records()
+    assert record["id"] == marker["id"]
+    assert record["workstream"] == "unknown"
+    assert record["started_at"] == "2026-11-16T09:30:00Z"
+    assert "Research!" not in status.everything_printed
+
+
+def test_a_damaged_marker_that_gives_no_start_time_at_all_is_not_given_an_invented_one(
+    eval_account: EvalAccount,
+) -> None:
+    eval_reading = work_block_commands.find_eval_for_work_blocks()
+    assert not isinstance(eval_reading, list)
+    nothing_left = work_blocks.DamagedMarker(values={"workstream": "research"}, modified_at=None)
+
+    recovered = work_block_commands.recover_work_block(FakeRunner(), eval_reading, nothing_left)
+
+    assert recovered is None
 
 
 # ---------------------------------------------------------------------------

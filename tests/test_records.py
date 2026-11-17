@@ -359,6 +359,19 @@ def test_a_decision_inspect_does_not_know_is_reported_with_the_allowed_values() 
     assert "approve, modify, reject, escalate, terminate" in message
 
 
+def test_an_abnormal_work_block_may_have_the_unknown_workstream_though_the_eval_lists_no_such_workstream() -> None:
+    work_block = good_work_block(workstream="unknown", end_state="abnormal")
+
+    assert records.validate_record(work_block, contributor_ids=ROSTER, workstreams=WORKSTREAMS) == []
+
+
+def test_only_an_abnormal_work_block_may_have_the_unknown_workstream() -> None:
+    message = problem_with(good_work_block(workstream="unknown", end_state="clean"), "workstream").message
+
+    assert "unknown" in message
+    assert "abnormal" in message
+
+
 def test_an_unknown_interrupted_activity_is_reported() -> None:
     message = problem_with(good_intervention(interrupted="thinking"), "interrupted").message
 

@@ -793,6 +793,17 @@ def test_duplicate_workstreams_are_reported(eval_account: EvalAccount) -> None:
     assert failure_kinds() == ["eval_config_duplicate"]
 
 
+def test_a_workstream_named_unknown_is_refused_because_goodall_reserves_that_name(eval_account: EvalAccount) -> None:
+    break_eval_config(eval_account, '"go-to-market"]', '"go-to-market", "unknown"]')
+
+    _, _, standard_error = run_goodall(["status"])
+
+    message = " ".join(standard_error.split())
+    assert "unknown is reserved" in message
+    assert "Rename that workstream" in message
+    assert failure_kinds() == ["eval_config_reserved_name"]
+
+
 def test_several_eval_config_problems_are_all_shown(eval_account: EvalAccount) -> None:
     eval_account.make_valid()
     eval_account.write_eval_config(

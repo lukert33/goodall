@@ -71,6 +71,14 @@ HEADER_FENCE = "+++"
 # taken from its last heartbeat (the glossary's "inferred end").
 END_STATES = ("clean", "abnormal", "inferred")
 
+# The workstream recorded when goodall cannot tell which workstream a work
+# block was for: its marker was damaged and named none it could use. Never a
+# real workstream (the eval config reader refuses it as a name), and allowed
+# only on a work block that ended `abnormal`, since only that path writes it.
+# A person says which workstream it was with `goodall fixblock`, which
+# writes a work block fix beside the record (see `effective_workstreams`).
+UNKNOWN_WORKSTREAM = "unknown"
+
 # What the person decided, in Inspect's ApprovalEvent `decision` values.
 DECISIONS = ("approve", "modify", "reject", "escalate", "terminate")
 
@@ -836,7 +844,15 @@ def validate_record(
 def _validate_work_block_record(
     checker: "_Checker", record: WorkBlockRecord, workstreams: Collection[str] | None
 ) -> None:
-    checker.identifier("workstream", record.workstream, workstreams, "the workstreams in eval.toml")
+    if record.workstream == UNKNOWN_WORKSTREAM:
+        if record.end_state != "abnormal":
+            checker.add(
+                "workstream",
+                f"workstream is {UNKNOWN_WORKSTREAM}, which goodall records only for a work block that ended "
+                "abnormal; use one of the workstreams in eval.toml.",
+            )
+    else:
+        checker.identifier("workstream", record.workstream, workstreams, "the workstreams in eval.toml")
     started_at_valid = checker.timestamp("started_at", record.started_at)
     if record.ended_at is None and record.end_state is None:
         # A work block that is still running.

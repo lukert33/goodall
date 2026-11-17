@@ -409,10 +409,17 @@ def close_damaged_work_block(
     )
     if recovered is None:
         return message + (
-            " Nothing could be recovered from it, so no record of that work block was written. Please tell the "
-            "researcher who runs the eval, with the path above."
+            " Not even when that work block started could be recovered, so no record of it was written. Please tell "
+            "the researcher who runs the eval, with the path above."
         )
     work_blocks.save_unrecorded(log_directory, recovered)
+    if recovered.workstream == records.UNKNOWN_WORKSTREAM:
+        return message + (
+            f" The marker did not say which workstream that work block was for, so it is recorded with the "
+            f"workstream unknown, from {describe_moment(recovered.started_at)} to {describe_ended_at(recovered)}, "
+            "with the end state abnormal. Nothing is lost: once it is in the record repo, goodall status shows the "
+            "goodall fixblock command that says which workstream it was."
+        )
     return message + (
         f" What could be recovered is recorded as a work block on {recovered.workstream} from "
         f"{describe_moment(recovered.started_at)} to {describe_ended_at(recovered)}, its last heartbeat, with the "
@@ -425,18 +432,26 @@ def recover_work_block(
 ) -> records.WorkBlockRecord | None:
     """Rebuild what can be trusted of a damaged marker's work block, ended at its last heartbeat; None if too little.
 
-    Only observations are used, never guesses. The workstream must be in
-    the marker, because nothing else says which one it was. The contributor
-    falls back to this account's own, since an eval account belongs to one
-    contributor; the start falls back to when the marker file was made;
-    the machine facts, if lost, are observed again now, on what is the same
-    Mac. PROVISIONAL: the owner may prefer to record nothing but the kept
-    marker.
+    Only observations are used, never guesses, because the owner would
+    rather keep a work block with a gap in it than lose the activity:
+
+    - The workstream comes from the marker. When the marker names none the
+      eval has, it is recorded as `unknown` (records.UNKNOWN_WORKSTREAM),
+      a word no eval may use for a real workstream, and the person says
+      which it was later with `goodall fixblock`. Nothing more marks it as a
+      placeholder: the reserved word and the end state `abnormal` say it.
+    - The contributor falls back to this account's own, since an eval
+      account belongs to one contributor.
+    - The start falls back to when the marker file last changed. With not
+      even that, None is returned and nothing is recorded, because any
+      start goodall wrote would be invented and would look real.
+    - The machine facts, if lost, are observed again now, on what is the
+      same Mac.
     """
     values = damaged.values
     workstream = values.get("workstream")
     if not isinstance(workstream, str) or workstream not in eval_reading.eval_config.workstreams:
-        return None
+        workstream = records.UNKNOWN_WORKSTREAM
     contributor = values.get("contributor")
     if not isinstance(contributor, str) or not records.IDENTIFIER_PATTERN.fullmatch(contributor):
         contributor = eval_reading.contributor.id
