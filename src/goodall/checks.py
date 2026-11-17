@@ -40,6 +40,7 @@ from dataclasses import dataclass, field
 
 from goodall.eval_config import EvalConfig
 from goodall.local_settings import LocalSettings
+from goodall.runner import Runner
 from goodall.terminal import CheckResult, CheckStatus, Failure
 
 
@@ -47,8 +48,12 @@ from goodall.terminal import CheckResult, CheckStatus, Failure
 class CheckContext:
     """What the checks have learned so far, for the checks that depend on them.
 
-    Every field starts empty. A field is filled by the check that learns it,
-    and read only by checks that list that check as a prerequisite.
+    `runner` is given when the context is made: it is how a check starts
+    another program (goodall.runner), and a test gives a fake one.
+
+    Every other field starts empty. A field is filled by the check that
+    learns it, and read only by checks that list that check as a
+    prerequisite.
 
     - `local_settings_reading` is the full answer from reading local
       settings: the settings, or every problem with them. One check decides
@@ -57,6 +62,7 @@ class CheckContext:
     - `eval_config` is set once the eval config is known to be valid.
     """
 
+    runner: Runner
     local_settings_reading: LocalSettings | list[Failure] | None = None
     local_settings: LocalSettings | None = None
     eval_config: EvalConfig | None = None

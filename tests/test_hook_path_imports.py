@@ -18,6 +18,8 @@ HOOK_PATH_MODULES = [
     "goodall.eval_config",
     # Imported by goodall.local_settings for its Failure record.
     "goodall.terminal",
+    # The prompt gate will run git through it.
+    "goodall.runner",
 ]
 
 # Runs inside the fresh interpreter: import the modules, then print every

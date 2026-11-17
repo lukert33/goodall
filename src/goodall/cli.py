@@ -1,9 +1,9 @@
 """The `goodall` command line: parses arguments and runs one subcommand.
 
 Called by the `goodall` console script (see pyproject.toml) and by
-`python -m goodall`. Tests call `main(argv, terminal=...)` directly with a
-captured terminal and check the returned exit code, so `main` returns a
-number instead of calling `sys.exit` itself.
+`python -m goodall`. Tests call `main(argv, terminal=..., runner=...)`
+directly with a captured terminal and a fake runner, and check the returned
+exit code, so `main` returns a number instead of calling `sys.exit` itself.
 
 `goodall status` (goodall.status) and `goodall doctor` (goodall.doctor)
 are built. Every other subcommand is still a stub: it reports that it is not
@@ -21,14 +21,16 @@ Design decisions a reader might otherwise reverse-engineer:
 - Everything goodall says goes through the `Terminal` passed to `main`
   (goodall.terminal). The one exception is argparse's own help and usage
   messages, which argparse prints itself.
-- `main` will also accept a runner, the one gateway for starting other
-  programs (ADR 0011), once that module exists; no command needs it yet.
+- Every program goodall starts goes through the runner passed to `main`
+  (goodall.runner, ADR 0011), which defaults to the real one. A test passes
+  `goodall.fake_runner.FakeRunner` instead.
 """
 
 import argparse
 
 from goodall import exit_codes
 from goodall.doctor import run_doctor
+from goodall.runner import RealRunner, Runner
 from goodall.status import run_status
 from goodall.terminal import Failure, Terminal
 
@@ -132,16 +134,19 @@ def run_stub(command_name: str, terminal: Terminal) -> int:
     return exit_codes.ERROR
 
 
-def main(argv: list[str] | None = None, terminal: Terminal | None = None) -> int:
+def main(argv: list[str] | None = None, terminal: Terminal | None = None, runner: Runner | None = None) -> int:
     """Run goodall with the given arguments and return its exit code.
 
     `argv` defaults to the real command line. `terminal` defaults to one
-    writing to the real standard output and standard error. Passing both lets
-    a test run any command without a subprocess and read back what it
-    printed.
+    writing to the real standard output and standard error. `runner`
+    defaults to the real runner, which starts real programs. Passing all
+    three lets a test run any command without a subprocess, decide what
+    every program it runs does, and read back what it printed.
     """
     if terminal is None:
         terminal = Terminal()
+    if runner is None:
+        runner = RealRunner()
     parser = build_parser()
 
     try:
@@ -164,6 +169,6 @@ def main(argv: list[str] | None = None, terminal: Terminal | None = None) -> int
     if command_name == "status":
         return run_status(terminal, as_json=arguments.json)
     if command_name == "doctor":
-        return run_doctor(terminal, as_json=arguments.json)
+        return run_doctor(terminal, runner, as_json=arguments.json)
 
     return run_stub(command_name, terminal)

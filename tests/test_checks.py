@@ -10,6 +10,7 @@ skips nothing.
 import pytest
 
 from goodall.checks import Check, CheckContext, CheckFunction, CheckOutcome, failed, passed, run_checks, warned
+from goodall.fake_runner import FakeRunner
 from goodall.terminal import CheckStatus, Failure
 
 PROBLEM = Failure(kind="example", what_happened="It broke.", why="Because.", what_to_do_next="Mend it.")
@@ -35,7 +36,7 @@ def make_check(id: str, outcome: CheckOutcome, prerequisites: list[str] | None =
 
 
 def statuses_and_waits(checks: list[Check]) -> list[tuple[str, CheckStatus, str | None]]:
-    results = run_checks(checks, CheckContext())
+    results = run_checks(checks, CheckContext(runner=FakeRunner()))
     return [(result.id, result.status, result.waiting_for) for result in results]
 
 
@@ -85,14 +86,14 @@ def test_a_skipped_check_is_never_run() -> None:
         make_check("first", failed([PROBLEM])),
         Check(id="second", group="Example", summary="Second", prerequisites=["first"], run=record_run),
     ]
-    run_checks(checks, CheckContext())
+    run_checks(checks, CheckContext(runner=FakeRunner()))
     assert ran == []
 
 
 def test_a_prerequisite_must_come_earlier_in_the_list() -> None:
     checks = [make_check("second", passed(), prerequisites=["first"]), make_check("first", passed())]
     with pytest.raises(ValueError, match="first"):
-        run_checks(checks, CheckContext())
+        run_checks(checks, CheckContext(runner=FakeRunner()))
 
 
 def test_a_failure_or_warning_without_a_next_step_is_refused() -> None:
