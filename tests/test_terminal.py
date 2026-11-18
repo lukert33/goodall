@@ -1,7 +1,7 @@
 """Screen tests for goodall.terminal, the only module that prints.
 
 These compare whole screens, at the fixed width used when output is not a
-terminal, with colour off, plus a test with colour on. The screens are the
+terminal, with color off, plus a test with color on. The screens are the
 contract: a future replacement for the terminal module would have to
 produce them too.
 """
@@ -25,7 +25,7 @@ from goodall.terminal import (
 
 
 class FakeTerminalStream(io.StringIO):
-    """A captured stream that claims to be a terminal, to switch colour on.
+    """A captured stream that claims to be a terminal, to switch color on.
 
     It has no file descriptor, so the terminal module cannot measure it and
     falls back to the fixed width; that keeps the screen predictable.
@@ -56,7 +56,7 @@ Next  Run goodall onboard.
 """
 
 
-def test_failure_screen_without_colour() -> None:
+def test_failure_screen_without_color() -> None:
     standard_output = io.StringIO()
     standard_error = io.StringIO()
     terminal = Terminal(standard_output=standard_output, standard_error=standard_error)
@@ -67,7 +67,7 @@ def test_failure_screen_without_colour() -> None:
     assert standard_output.getvalue() == ""
 
 
-def test_failure_screen_with_colour_reads_the_same_once_colour_is_removed(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_failure_screen_with_color_reads_the_same_once_color_is_removed(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("NO_COLOR", raising=False)
     standard_error = FakeTerminalStream()
     terminal = Terminal(standard_output=io.StringIO(), standard_error=standard_error)
@@ -76,11 +76,11 @@ def test_failure_screen_with_colour_reads_the_same_once_colour_is_removed(monkey
 
     screen = standard_error.getvalue()
     assert screen.startswith("\x1b[1;31mFAIL\x1b[0m  No example")
-    without_colour = screen.replace("\x1b[1;31m", "").replace("\x1b[1m", "").replace("\x1b[0m", "")
-    assert without_colour == EXPECTED_SCREEN
+    without_color = screen.replace("\x1b[1;31m", "").replace("\x1b[1m", "").replace("\x1b[0m", "")
+    assert without_color == EXPECTED_SCREEN
 
 
-def test_no_color_variable_turns_colour_off_even_on_a_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_no_color_variable_turns_color_off_even_on_a_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("NO_COLOR", "1")
     standard_error = FakeTerminalStream()
     terminal = Terminal(standard_output=io.StringIO(), standard_error=standard_error)
@@ -175,7 +175,7 @@ def test_measured_width_is_clamped_to_a_readable_range() -> None:
 # The check report, which goodall doctor prints. Two groups and every status,
 # so the layout of each kind of line is pinned down. The words pass, FAIL,
 # warn, skip and unverified are always printed, so the screen reads without
-# colour. The status column is as wide as its longest word, "unverified", so
+# color. The status column is as wide as its longest word, "unverified", so
 # every summary starts in the same column.
 
 REPORT_RESULTS = [
@@ -249,7 +249,7 @@ Tools
 """
 
 
-def test_check_report_screen_without_colour() -> None:
+def test_check_report_screen_without_color() -> None:
     standard_output = io.StringIO()
     standard_error = io.StringIO()
     terminal = Terminal(standard_output=standard_output, standard_error=standard_error)
@@ -260,7 +260,7 @@ def test_check_report_screen_without_colour() -> None:
     assert standard_error.getvalue() == ""
 
 
-def test_check_report_with_colour_reads_the_same_once_colour_is_removed(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_check_report_with_color_reads_the_same_once_color_is_removed(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("NO_COLOR", raising=False)
     standard_output = FakeTerminalStream()
     terminal = Terminal(standard_output=standard_output, standard_error=io.StringIO())
@@ -269,8 +269,8 @@ def test_check_report_with_colour_reads_the_same_once_colour_is_removed(monkeypa
 
     screen = standard_output.getvalue()
     assert "\x1b[1;31mFAIL\x1b[0m        Settings are valid" in screen
-    without_colour = re.sub("\x1b\\[[0-9;]*m", "", screen)
-    assert without_colour == EXPECTED_REPORT_SCREEN
+    without_color = re.sub("\x1b\\[[0-9;]*m", "", screen)
+    assert without_color == EXPECTED_REPORT_SCREEN
 
 
 def test_check_counts_and_json_come_from_the_same_results() -> None:
@@ -368,3 +368,11 @@ def test_commands_after_a_success_go_to_standard_output_and_are_never_wrapped() 
 
 def test_a_failure_without_commands_to_try_keeps_its_four_json_keys() -> None:
     assert set(EXAMPLE_FAILURE.as_json()) == {"kind", "what_happened", "why", "what_to_do_next"}
+
+
+def test_terminal_records_color_separately_for_each_stream(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    terminal = Terminal(standard_output=io.StringIO(), standard_error=FakeTerminalStream())
+
+    assert terminal.error_color is True
+    assert terminal.output_color is False
