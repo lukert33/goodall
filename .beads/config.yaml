@@ -73,5 +73,9 @@
 
 sync:
     remote: "git+ssh://git@github.com/lukert33/goodall.git"
+# The issue database syncs through `bd dolt push` (AGENTS.md, "Beads sync"),
+# so `.beads/issues.jsonl` is only a readable snapshot. With this off it is
+# refreshed on purpose, with `bd export -o .beads/issues.jsonl`, instead of
+# changing on every commit.
 export:
-    auto: true
+    auto: false

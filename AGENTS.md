@@ -165,6 +165,28 @@ facts are the provenance.
 - Pull request descriptions fill in every heading of
   `.github/pull_request_template.md`.
 
+## Beads sync
+
+This section takes precedence over the Beads sections below.
+
+- **The Beads database is backed up by `bd dolt push`,** which stores it on
+  the git remote under `refs/dolt/data`, apart from every branch. That push is
+  the only off-machine copy of issues and memories. Recover on a new machine
+  with `bd bootstrap`.
+- **Claude Code pushes for you.** A hook (`.claude/hooks/beads_push.py`) runs
+  `bd dolt push` after any command that claims an issue, closes one, or saves
+  a memory. If it reports that the push failed, carry on, run `bd dolt push`
+  before you finish, and say so in your hand-off.
+- **In other tools, push by hand** after claiming or closing an issue or
+  saving a memory, and again before you finish.
+- **The repository is public, and so is what you push.** Keep secrets,
+  personal details and anything about people outside the project out of
+  issues and memories.
+- **`.beads/issues.jsonl` is a readable snapshot, not the sync channel.** It
+  no longer changes by itself. Leave it out of ordinary commits; refresh it
+  with `bd export -o .beads/issues.jsonl` only when the owner asks for a
+  snapshot.
+
 ## Upstream contributions
 
 `inspect_ai` and `inspect_scout` close pull requests that lack a
