@@ -160,6 +160,10 @@ facts are the provenance.
   session starts and on each prompt, and refuse `git commit` and `git push`
   there. In other tools, check with `gh pr list --head <branch> --state all`
   before committing.
+- **An issue stays in progress until its pull request merges into main.**
+  When you open the pull request, link it:
+  `bd update <id> --external-ref <pull request URL>`. A Claude Code hook
+  (`.claude/hooks/pull_request_status.py`) closes the issue once it merges.
 - Prefer smaller commits: one logical change each, made as soon as that change
   passes the quality gates. Imperative subject; the body gives the reason.
 - AI-authored commits keep their `Co-Authored-By` trailer, and branches are
