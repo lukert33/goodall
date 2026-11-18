@@ -390,7 +390,7 @@ def main(
     if command_name == "fixblock":
         return run_fixblock(terminal, runner, clock, arguments.work_block_id, arguments.workstream)
     if command_name == "doctor":
-        return run_doctor(terminal, runner, as_json=arguments.json, offline=arguments.offline)
+        return run_doctor(terminal, runner, clock, as_json=arguments.json, offline=arguments.offline)
     if command_name == "journal":
         entry_request = EntryRequest(text=arguments.text, as_json=arguments.json, text_file=arguments.file)
         return run_journal(terminal, runner, entry_request)

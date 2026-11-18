@@ -10,19 +10,29 @@ the terminal module would have to produce the same screens at the fixed width
 with color off.
 """
 
+import fcntl
 import io
 import json
+import os
 import shutil
 import subprocess
+import sys
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
 
-from goodall import cli, exit_codes, program_checks, secrets_manager
+from goodall import cli, exit_codes, program_checks, secrets_manager, telemetry_capture, work_blocks
 from goodall.doctor import closing_line
-from goodall.fake_runner import FakeRunner
-from goodall.runner import OutputMode, environment_for
+from goodall.fake_runner import (
+    FakeBackgroundPrograms,
+    FakeRunner,
+    InProcessTelemetryReceiver,
+    PretendProgram,
+    SimulatedProgram,
+)
+from goodall.runner import BackgroundProgram, OutputMode, environment_for
 from goodall.terminal import CheckResult, CheckStatus, Terminal
 
 # The command the account check runs, by its full path (see goodall.program_checks).
@@ -331,8 +341,13 @@ Claude Code
   pass        Claude Code's user settings run goodall's hooks
   pass        The goodall that the hooks run starts
 
+Telemetry
+  pass        The telemetry receiver is running for the active work block
+              No work block is active, so there is no receiver to check. Running
+              goodall start begins a work block and its receiver.
+
 All checks passed. One thing goodall cannot check without reading a secret.
-24 passed, 0 warned, 0 failed, 0 skipped, 1 unverified
+25 passed, 0 warned, 0 failed, 0 skipped, 1 unverified
 """
 
 
@@ -416,7 +431,11 @@ Claude Code
   skip        The goodall that the hooks run starts
               Waiting for: Local settings are found
 
-3 passed, 0 warned, 1 failed, 21 skipped, 0 unverified
+Telemetry
+  skip        The telemetry receiver is running for the active work block
+              Waiting for: Local settings are found
+
+3 passed, 0 warned, 1 failed, 22 skipped, 0 unverified
 """
 
 
@@ -484,6 +503,7 @@ ALL_CHECK_IDS = [
     "secrets.referenced_fields_exist",
     "claude_code.hooks_installed",
     "claude_code.hooks_run_goodall",
+    "telemetry.receiver_running",
 ]
 
 
@@ -492,7 +512,7 @@ def test_healthy_setup_as_json_gives_the_same_results(healthy_account: EvalAccou
 
     assert exit_code == exit_codes.SUCCESS
     assert document["schema_version"] == 1
-    assert document["summary"] == {"passed": 24, "warned": 0, "failed": 0, "skipped": 0, "unverified": 1}
+    assert document["summary"] == {"passed": 25, "warned": 0, "failed": 0, "skipped": 0, "unverified": 1}
     checks = document["checks"]
     assert isinstance(checks, list)
     assert checks[0] == {
@@ -518,7 +538,7 @@ def test_missing_local_settings_as_json_names_what_each_skip_waited_for(settings
     exit_code, document = doctor_json()
 
     assert exit_code == exit_codes.ERROR
-    assert document["summary"] == {"passed": 3, "warned": 0, "failed": 1, "skipped": 21, "unverified": 0}
+    assert document["summary"] == {"passed": 3, "warned": 0, "failed": 1, "skipped": 22, "unverified": 0}
     checks = document["checks"]
     assert isinstance(checks, list)
     failed_check = checks[0]
@@ -552,7 +572,7 @@ def test_invalid_local_settings_fail_once_and_name_every_problem(healthy_account
     assert "favorite_color" in standard_output
     assert standard_output.count("        Next: ") == 2
     assert "Waiting for: Local settings are valid" in standard_output
-    assert standard_output.endswith("4 passed, 0 warned, 1 failed, 20 skipped, 0 unverified\n")
+    assert standard_output.endswith("4 passed, 0 warned, 1 failed, 21 skipped, 0 unverified\n")
 
 
 def test_relative_settings_folder_override_fails_the_found_check(
@@ -620,6 +640,8 @@ def test_missing_record_repo_skips_the_eval_config_but_still_checks_the_log_dire
         "secrets.referenced_fields_exist": "unverified",
         "claude_code.hooks_installed": "pass",
         "claude_code.hooks_run_goodall": "pass",
+        # The receiver writes to the log directory, not the record repo.
+        "telemetry.receiver_running": "pass",
     }
     checks = document["checks"]
     assert isinstance(checks, list)
@@ -641,7 +663,7 @@ def test_unreachable_log_directory_is_a_warning_with_a_next_step_and_exits_0(hea
     assert exit_code == exit_codes.SUCCESS
     assert "  warn        The log directory can be written to\n              Not recording:" in standard_output
     assert "        Next: If the log directory is on an external drive, connect it." in standard_output
-    assert standard_output.endswith("23 passed, 1 warned, 0 failed, 0 skipped, 1 unverified\n")
+    assert standard_output.endswith("24 passed, 1 warned, 0 failed, 0 skipped, 1 unverified\n")
 
     json_exit_code, document = doctor_json()
     assert json_exit_code == exit_code
@@ -668,7 +690,7 @@ def test_contributor_and_main_workstream_are_reported_as_separate_checks(healthy
     exit_code, document = doctor_json()
 
     assert exit_code == exit_codes.ERROR
-    assert document["summary"] == {"passed": 22, "warned": 0, "failed": 2, "skipped": 0, "unverified": 1}
+    assert document["summary"] == {"passed": 23, "warned": 0, "failed": 2, "skipped": 0, "unverified": 1}
     checks = document["checks"]
     assert isinstance(checks, list)
     assert [failure["kind"] for failure in checks[5]["failures"]] == ["contributor_not_in_roster"]
@@ -843,7 +865,7 @@ def test_missing_gh_is_one_failure_naming_it_and_saying_an_administrator_account
 
     assert exit_code == exit_codes.ERROR
     document = json.loads(standard_output)
-    assert document["summary"] == {"passed": 21, "warned": 0, "failed": 1, "skipped": 2, "unverified": 1}
+    assert document["summary"] == {"passed": 22, "warned": 0, "failed": 1, "skipped": 2, "unverified": 1}
     gh_check = check_document(document, "tools.gh_installed")
     assert gh_check["status"] == "fail"
     assert isinstance(gh_check["detail"], str)
@@ -863,7 +885,7 @@ def test_missing_git_is_one_failure_and_the_record_repo_check_waits_for_it(healt
 
     assert exit_code == exit_codes.ERROR
     document = json.loads(standard_output)
-    assert document["summary"] == {"passed": 19, "warned": 0, "failed": 1, "skipped": 4, "unverified": 1}
+    assert document["summary"] == {"passed": 20, "warned": 0, "failed": 1, "skipped": 4, "unverified": 1}
     git_check = check_document(document, "tools.git_installed")
     assert git_check["status"] == "fail"
     assert isinstance(git_check["next_step"], str)
@@ -879,7 +901,7 @@ def test_missing_op_fails_the_secrets_manager_check_naming_1password(healthy_acc
 
     assert exit_code == exit_codes.ERROR
     document = json.loads(standard_output)
-    assert document["summary"] == {"passed": 21, "warned": 0, "failed": 1, "skipped": 3, "unverified": 0}
+    assert document["summary"] == {"passed": 22, "warned": 0, "failed": 1, "skipped": 3, "unverified": 0}
     secrets_manager_check = check_document(document, "tools.secrets_manager_installed")
     assert secrets_manager_check["status"] == "fail"
     assert isinstance(secrets_manager_check["detail"], str)
@@ -956,7 +978,7 @@ def test_an_administrator_account_fails_with_why_a_standard_account_is_required(
     # The reason, so a researcher does not wave it away as fussiness.
     assert "cannot reach other accounts' files or install software" in report_text
     assert "safe to hand to an agent" in report_text
-    assert standard_output.endswith("23 passed, 0 warned, 1 failed, 0 skipped, 1 unverified\n")
+    assert standard_output.endswith("24 passed, 0 warned, 1 failed, 0 skipped, 1 unverified\n")
 
 
 @pytest.mark.parametrize(
@@ -990,7 +1012,7 @@ def test_a_record_repo_folder_that_is_not_a_git_repository_fails(healthy_account
 
     assert exit_code == exit_codes.ERROR
     document = json.loads(standard_output)
-    assert document["summary"] == {"passed": 20, "warned": 0, "failed": 1, "skipped": 3, "unverified": 1}
+    assert document["summary"] == {"passed": 21, "warned": 0, "failed": 1, "skipped": 3, "unverified": 1}
     git_repository_check = check_document(document, "record_repo.is_git_repository")
     assert git_repository_check["status"] == "fail"
     assert isinstance(git_repository_check["detail"], str)
@@ -1062,7 +1084,7 @@ def test_an_account_check_that_never_finishes_is_reported_as_timed_out_and_docto
     assert isinstance(account_check["detail"], str)
     assert "`/usr/bin/id -Gn` timed out after 10 s" in account_check["detail"]
     # Every other check still ran.
-    assert document["summary"] == {"passed": 23, "warned": 0, "failed": 1, "skipped": 0, "unverified": 1}
+    assert document["summary"] == {"passed": 24, "warned": 0, "failed": 1, "skipped": 0, "unverified": 1}
 
 
 # A recognisable fake key. If any part of it shows up in goodall's output,
@@ -1654,7 +1676,7 @@ def test_a_report_whose_only_unverified_check_needs_a_secret_reads_as_healthy(he
     last_lines = standard_output.splitlines()[-2:]
     assert last_lines == [
         "All checks passed. One thing goodall cannot check without reading a secret.",
-        "24 passed, 0 warned, 0 failed, 0 skipped, 1 unverified",
+        "25 passed, 0 warned, 0 failed, 0 skipped, 1 unverified",
     ]
     # The check itself keeps its status and says when a wrong field shows up.
     assert "  unverified  Each secret reference names a field that exists\n" in standard_output
@@ -1663,7 +1685,7 @@ def test_a_report_whose_only_unverified_check_needs_a_secret_reads_as_healthy(he
         report_text
     )
     # --json is unchanged: the count is still there, and nothing calls it a pass.
-    assert document["summary"] == {"passed": 24, "warned": 0, "failed": 0, "skipped": 0, "unverified": 1}
+    assert document["summary"] == {"passed": 25, "warned": 0, "failed": 0, "skipped": 0, "unverified": 1}
     assert check_document(document, "secrets.referenced_fields_exist")["status"] == "unverified"
 
 
@@ -1688,7 +1710,7 @@ def test_a_report_with_a_warning_has_no_all_passed_line(healthy_account: EvalAcc
 
     assert exit_code == exit_codes.SUCCESS
     assert "All checks passed" not in standard_output
-    assert standard_output.splitlines()[-1] == "23 passed, 1 warned, 0 failed, 0 skipped, 1 unverified"
+    assert standard_output.splitlines()[-1] == "24 passed, 1 warned, 0 failed, 0 skipped, 1 unverified"
 
 
 def test_an_env_file_with_no_references_has_no_field_to_leave_unverified(healthy_account: EvalAccount) -> None:
@@ -2834,3 +2856,213 @@ def test_an_activitywatch_identifier_pasted_in_the_wrong_shape_is_never_shown(he
 
     for printed in [standard_output, standard_error, json_output, json_error]:
         assert "SYNTHETICsynthetic" not in printed
+
+
+# ---------------------------------------------------------------------------
+# The telemetry receiver of the active work block
+# ---------------------------------------------------------------------------
+
+RECEIVER_CHECK = "telemetry.receiver_running"
+
+# The command `goodall start` runs the receiver with (goodall.telemetry_receivers).
+RECEIVER_COMMAND_START = [sys.executable, "-I", "-m", "goodall.telemetry_receiver"]
+
+
+@pytest.fixture
+def background_programs() -> Iterator[FakeBackgroundPrograms]:
+    """The simulated background programs of one test, every one stopped when it ends."""
+    programs = FakeBackgroundPrograms()
+    yield programs
+    programs.stop_all()
+
+
+def runner_with(background_programs: FakeBackgroundPrograms) -> FakeRunner:
+    """A healthy runner that sees the same simulated receivers as every other runner in the test."""
+    runner = healthy_runner()
+    runner.background = background_programs
+    return runner
+
+
+def start_work_block(
+    background_programs: FakeBackgroundPrograms,
+    make_receiver: Callable[[], SimulatedProgram] = InProcessTelemetryReceiver,
+) -> None:
+    """Run `goodall start`, as the contributor would, with `make_receiver` in place of the real receiver."""
+    runner = runner_with(background_programs)
+    runner.answer_background(RECEIVER_COMMAND_START, make_receiver)
+    runner.answer_not_found(["claude", "--version"])
+    exit_code, _, standard_error = run_goodall(["start"], runner)
+    assert exit_code == exit_codes.SUCCESS, standard_error
+
+
+def only_receiver(background_programs: FakeBackgroundPrograms) -> SimulatedProgram:
+    [receiver] = background_programs.started.values()
+    return receiver
+
+
+def active_work_block_id(account: EvalAccount) -> str:
+    marker = work_blocks.read_marker(account.log_directory)
+    assert isinstance(marker, work_blocks.RunningWorkBlock)
+    return marker.id
+
+
+def test_with_no_work_block_active_the_receiver_check_passes_with_a_notice(healthy_account: EvalAccount) -> None:
+    exit_code, document = doctor_json()
+
+    assert exit_code == exit_codes.SUCCESS
+    receiver_check = check_document(document, RECEIVER_CHECK)
+    assert receiver_check["status"] == "pass"
+    assert receiver_check["group"] == "Telemetry"
+    assert receiver_check["note"] == (
+        "No work block is active, so there is no receiver to check. Running goodall start begins a work block and its "
+        "receiver."
+    )
+
+
+def test_the_running_receiver_of_the_active_work_block_passes(
+    healthy_account: EvalAccount, background_programs: FakeBackgroundPrograms
+) -> None:
+    start_work_block(background_programs)
+
+    exit_code, standard_output, _ = run_goodall(["doctor"], runner_with(background_programs))
+    json_exit_code, document = doctor_json(runner_with(background_programs))
+
+    assert exit_code == exit_codes.SUCCESS
+    assert json_exit_code == exit_codes.SUCCESS
+    assert "pass        The telemetry receiver is running for the active work block\n" in standard_output
+    receiver_check = check_document(document, RECEIVER_CHECK)
+    assert receiver_check["status"] == "pass"
+    assert receiver_check["note"] is None
+    assert receiver_check["failures"] == []
+
+
+def test_a_receiver_that_stopped_warns_like_status_saying_goodall_start_starts_it_again(
+    healthy_account: EvalAccount, background_programs: FakeBackgroundPrograms
+) -> None:
+    start_work_block(background_programs)
+    receiver = only_receiver(background_programs)
+    assert isinstance(receiver, InProcessTelemetryReceiver)
+    receiver.crash()
+
+    exit_code, standard_output, _ = run_goodall(["doctor"], runner_with(background_programs))
+    json_exit_code, document = doctor_json(runner_with(background_programs))
+
+    assert exit_code == exit_codes.SUCCESS
+    assert json_exit_code == exit_codes.SUCCESS
+    assert "warn        The telemetry receiver is running for the active work block" in standard_output
+    receiver_check = check_document(document, RECEIVER_CHECK)
+    assert receiver_check["status"] == "warn"
+    assert failure_kinds(document, RECEIVER_CHECK) == ["telemetry_receiver_not_running"]
+    assert isinstance(receiver_check["next_step"], str)
+    assert receiver_check["next_step"].startswith("Run goodall start")
+    failures = receiver_check["failures"]
+    assert isinstance(failures, list)
+    assert failures[0]["commands_to_try"] == ["goodall start"]
+
+
+def test_an_active_work_block_whose_receiver_never_started_warns(
+    healthy_account: EvalAccount, background_programs: FakeBackgroundPrograms
+) -> None:
+    # A port another program had, say: goodall start began the work block
+    # and warned that the receiver did not start, so no receiver is recorded.
+    start_work_block(background_programs, lambda: PretendProgram(exit_code=1, standard_error="port taken\n"))
+
+    exit_code, document = doctor_json(runner_with(background_programs))
+
+    assert exit_code == exit_codes.SUCCESS
+    assert failure_kinds(document, RECEIVER_CHECK) == ["telemetry_receiver_not_running"]
+
+
+def test_a_recorded_process_id_now_held_by_another_program_warns_as_not_goodall_s_receiver(
+    healthy_account: EvalAccount, background_programs: FakeBackgroundPrograms
+) -> None:
+    start_work_block(background_programs)
+    work_block_id = active_work_block_id(healthy_account)
+    receiver_record = telemetry_capture.receiver_record_for(healthy_account.log_directory, work_block_id)
+    assert receiver_record is not None
+    # The receiver ended and its process id went to another program, here
+    # the test itself: same id, a different start time.
+    stranger = BackgroundProgram(os.getpid(), "Thu Jan  1 00:00:00 1970", ("python",))
+    telemetry_capture.save_receiver_record(
+        healthy_account.log_directory,
+        telemetry_capture.ReceiverRecord(
+            work_block_id, receiver_record.port, receiver_record.started_at, stranger.as_json()
+        ),
+    )
+
+    exit_code, document = doctor_json(runner_with(background_programs))
+
+    assert exit_code == exit_codes.SUCCESS
+    assert failure_kinds(document, RECEIVER_CHECK) == ["telemetry_receiver_not_ours"]
+    receiver_check = check_document(document, RECEIVER_CHECK)
+    assert isinstance(receiver_check["next_step"], str)
+    assert receiver_check["next_step"].startswith("Run goodall start")
+
+
+def test_a_running_receiver_that_does_not_hold_its_receipt_log_warns(
+    healthy_account: EvalAccount, background_programs: FakeBackgroundPrograms
+) -> None:
+    # The recorded process is running, but it is not writing this work
+    # block's receipt log: its telemetry folder was moved away while it ran.
+    start_work_block(background_programs)
+    work_block_id = active_work_block_id(healthy_account)
+    telemetry_directory = telemetry_capture.TelemetryFiles(
+        healthy_account.log_directory, work_block_id
+    ).telemetry_directory
+    telemetry_directory.rename(telemetry_directory.with_name("moved-away"))
+    telemetry_capture.make_telemetry_directory(healthy_account.log_directory, work_block_id)
+
+    exit_code, document = doctor_json(runner_with(background_programs))
+
+    assert exit_code == exit_codes.SUCCESS
+    assert failure_kinds(document, RECEIVER_CHECK) == ["telemetry_receiver_not_writing"]
+    receiver_check = check_document(document, RECEIVER_CHECK)
+    assert isinstance(receiver_check["next_step"], str)
+    assert "goodall stop" in receiver_check["next_step"]
+
+
+@pytest.mark.parametrize("receiver_state", ["running", "stopped"])
+def test_doctor_changes_nothing_and_notes_nothing_while_a_work_block_is_active(
+    healthy_account: EvalAccount, background_programs: FakeBackgroundPrograms, tmp_path: Path, receiver_state: str
+) -> None:
+    start_work_block(background_programs)
+    if receiver_state == "stopped":
+        receiver = only_receiver(background_programs)
+        assert isinstance(receiver, InProcessTelemetryReceiver)
+        receiver.crash()
+    work_block_id = active_work_block_id(healthy_account)
+    before = snapshot_of_every_file(tmp_path)
+
+    run_goodall(["doctor"], runner_with(background_programs))
+    run_goodall(["doctor", "--json"], runner_with(background_programs))
+
+    assert snapshot_of_every_file(tmp_path) == before
+    # The hook and goodall status note a receiver found down; doctor does not.
+    assert not telemetry_capture.receiver_was_noted_down(healthy_account.log_directory, work_block_id)
+    # Nor does it start or stop anything.
+    assert only_receiver(background_programs).is_running() == (receiver_state == "running")
+
+
+def test_doctor_tries_the_receipt_log_lock_only_while_the_recorded_receiver_runs(
+    healthy_account: EvalAccount, background_programs: FakeBackgroundPrograms, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A receiver starting again takes the lock without waiting, so doctor
+    # holding it even for a moment could stop it from starting. While the
+    # recorded receiver runs it already holds the lock, so trying it takes
+    # nothing; once it has stopped, doctor must not try at all.
+    start_work_block(background_programs)
+    receiver = only_receiver(background_programs)
+    assert isinstance(receiver, InProcessTelemetryReceiver)
+    receiver.crash()
+    lock_attempts: list[int] = []
+    real_flock = fcntl.flock
+
+    def counting_flock(file_descriptor: int, operation: int) -> None:
+        lock_attempts.append(operation)
+        real_flock(file_descriptor, operation)
+
+    monkeypatch.setattr(fcntl, "flock", counting_flock)
+
+    doctor_json(runner_with(background_programs))
+
+    assert lock_attempts == []

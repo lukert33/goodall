@@ -78,8 +78,9 @@ first.
 8. **Capture is independent of analysis.** `inspect-ai` and `inspect-scout`
    are an optional extra, imported only by export code.
 9. **One gateway each.** All subprocess calls go through one runner module
-   with a fake for tests, and goodall makes no network calls of its own. All
-   terminal output goes through one UI module. The terminal never asks a
+   with a fake for tests, and goodall makes no network calls of its own,
+   except credential-free requests to a local server on the same Mac
+   (ADR 0011). All terminal output goes through one UI module. The terminal never asks a
    question: the setup page is the only place goodall asks a person for
    answers, and unattended setup reads an answers file.
 
