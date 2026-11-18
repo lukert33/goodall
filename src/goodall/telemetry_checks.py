@@ -20,6 +20,14 @@ How it decides, reusing what goodall already trusts rather than a new test
    receiver holds that lock for as long as it runs, so a receiver that does
    not is writing somewhere else (its telemetry folder was moved, say).
 
+A receiver that is down, not goodall's own, or not writing is a warning,
+not a failure, so on its own it leaves doctor's exit code at 0 (owner
+decision 2026-11-18: "Warn, like status"). The work block still records
+and its transcripts are still copied; only telemetry is lost, which is
+goodall working in a reduced way, the meaning of a warning
+(goodall.checks). `goodall status` warns about the same state. Every
+warning still carries its next step.
+
 No network call (AGENTS.md invariant 9): the receiver is never sent a
 request, and its port is never probed.
 
@@ -46,7 +54,7 @@ as it does for the prompt gate.
 """
 
 from goodall import telemetry_capture, work_blocks
-from goodall.checks import Check, CheckContext, CheckOutcome, failed, passed
+from goodall.checks import Check, CheckContext, CheckOutcome, passed, warned
 from goodall.runner import BackgroundProgram, BackgroundState
 from goodall.settings_checks import LOG_DIRECTORY_REACHABLE, valid_local_settings
 from goodall.terminal import Failure
@@ -74,25 +82,25 @@ def check_receiver_running(context: CheckContext) -> CheckOutcome:
 
     receiver_record = telemetry_capture.receiver_record_for(log_directory, active.id)
     if receiver_record is None:
-        return failed([receiver_not_running_failure()])
+        return warned([receiver_not_running_failure()])
     program = BackgroundProgram.from_json(receiver_record.program)
     if program is None:
-        return failed([receiver_not_running_failure()])
+        return warned([receiver_not_running_failure()])
     state = context.runner.check_background(program)
     if state == BackgroundState.REPLACED:
-        return failed([receiver_not_ours_failure()])
+        return warned([receiver_not_ours_failure()])
     if state != BackgroundState.RUNNING:
-        return failed([receiver_not_running_failure()])
+        return warned([receiver_not_running_failure()])
 
     # Only now, with the recorded receiver running and so holding the lock;
     # see the module docstring.
     if not telemetry_capture.receiver_is_listening(log_directory, active.id):
-        return failed([receiver_not_writing_failure()])
+        return warned([receiver_not_writing_failure()])
     return passed()
 
 
 def receiver_not_ours_failure() -> Failure:
-    """The failure for a recorded receiver whose process id now belongs to another program."""
+    """The warning for a recorded receiver whose process id now belongs to another program."""
     return Failure(
         kind="telemetry_receiver_not_ours",
         what_happened=(
@@ -111,7 +119,7 @@ def receiver_not_ours_failure() -> Failure:
 
 
 def receiver_not_writing_failure() -> Failure:
-    """The failure for a receiver that is running but is not writing this work block's telemetry folder."""
+    """The warning for a receiver that is running but is not writing this work block's telemetry folder."""
     return Failure(
         kind="telemetry_receiver_not_writing",
         what_happened=(

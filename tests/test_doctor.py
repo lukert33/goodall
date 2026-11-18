@@ -2818,7 +2818,7 @@ def test_the_running_receiver_of_the_active_work_block_passes(
     assert receiver_check["failures"] == []
 
 
-def test_a_receiver_that_stopped_fails_saying_goodall_start_starts_it_again(
+def test_a_receiver_that_stopped_warns_like_status_saying_goodall_start_starts_it_again(
     healthy_account: EvalAccount, background_programs: FakeBackgroundPrograms
 ) -> None:
     start_work_block(background_programs)
@@ -2829,11 +2829,11 @@ def test_a_receiver_that_stopped_fails_saying_goodall_start_starts_it_again(
     exit_code, standard_output, _ = run_goodall(["doctor"], runner_with(background_programs))
     json_exit_code, document = doctor_json(runner_with(background_programs))
 
-    assert exit_code == exit_codes.ERROR
-    assert json_exit_code == exit_codes.ERROR
-    assert "FAIL        The telemetry receiver is running for the active work block" in standard_output
+    assert exit_code == exit_codes.SUCCESS
+    assert json_exit_code == exit_codes.SUCCESS
+    assert "warn        The telemetry receiver is running for the active work block" in standard_output
     receiver_check = check_document(document, RECEIVER_CHECK)
-    assert receiver_check["status"] == "fail"
+    assert receiver_check["status"] == "warn"
     assert failure_kinds(document, RECEIVER_CHECK) == ["telemetry_receiver_not_running"]
     assert isinstance(receiver_check["next_step"], str)
     assert receiver_check["next_step"].startswith("Run goodall start")
@@ -2842,7 +2842,7 @@ def test_a_receiver_that_stopped_fails_saying_goodall_start_starts_it_again(
     assert failures[0]["commands_to_try"] == ["goodall start"]
 
 
-def test_an_active_work_block_whose_receiver_never_started_fails(
+def test_an_active_work_block_whose_receiver_never_started_warns(
     healthy_account: EvalAccount, background_programs: FakeBackgroundPrograms
 ) -> None:
     # A port another program had, say: goodall start began the work block
@@ -2851,11 +2851,11 @@ def test_an_active_work_block_whose_receiver_never_started_fails(
 
     exit_code, document = doctor_json(runner_with(background_programs))
 
-    assert exit_code == exit_codes.ERROR
+    assert exit_code == exit_codes.SUCCESS
     assert failure_kinds(document, RECEIVER_CHECK) == ["telemetry_receiver_not_running"]
 
 
-def test_a_recorded_process_id_now_held_by_another_program_fails_as_not_goodall_s_receiver(
+def test_a_recorded_process_id_now_held_by_another_program_warns_as_not_goodall_s_receiver(
     healthy_account: EvalAccount, background_programs: FakeBackgroundPrograms
 ) -> None:
     start_work_block(background_programs)
@@ -2874,14 +2874,14 @@ def test_a_recorded_process_id_now_held_by_another_program_fails_as_not_goodall_
 
     exit_code, document = doctor_json(runner_with(background_programs))
 
-    assert exit_code == exit_codes.ERROR
+    assert exit_code == exit_codes.SUCCESS
     assert failure_kinds(document, RECEIVER_CHECK) == ["telemetry_receiver_not_ours"]
     receiver_check = check_document(document, RECEIVER_CHECK)
     assert isinstance(receiver_check["next_step"], str)
     assert receiver_check["next_step"].startswith("Run goodall start")
 
 
-def test_a_running_receiver_that_does_not_hold_its_receipt_log_fails(
+def test_a_running_receiver_that_does_not_hold_its_receipt_log_warns(
     healthy_account: EvalAccount, background_programs: FakeBackgroundPrograms
 ) -> None:
     # The recorded process is running, but it is not writing this work
@@ -2896,7 +2896,7 @@ def test_a_running_receiver_that_does_not_hold_its_receipt_log_fails(
 
     exit_code, document = doctor_json(runner_with(background_programs))
 
-    assert exit_code == exit_codes.ERROR
+    assert exit_code == exit_codes.SUCCESS
     assert failure_kinds(document, RECEIVER_CHECK) == ["telemetry_receiver_not_writing"]
     receiver_check = check_document(document, RECEIVER_CHECK)
     assert isinstance(receiver_check["next_step"], str)
