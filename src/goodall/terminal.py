@@ -461,8 +461,12 @@ class Terminal:
                 self.standard_error.write("\n")
             self.show_failure(failure)
 
-    def show_check_report(self, results: list[CheckResult]) -> None:
+    def show_check_report(self, results: list[CheckResult], closing_line: str | None = None) -> None:
         """Write a diagnostic report to standard output: checks under group headings, then the counts.
+
+        `closing_line`, when given, is a plain sentence about the whole
+        report, such as "All checks passed.", written just above the counts
+        so that the counts stay the last line for a script that reads it.
 
         The whole report goes to standard output, failed checks included,
         because the report is the result the contributor asked for; it can be
@@ -508,7 +512,10 @@ class Terminal:
             f"{counts.passed} passed, {counts.warned} warned, {counts.failed} failed, {counts.skipped} skipped, "
             f"{counts.unverified} unverified\n"
         )
-        self.standard_output.write("\n".join(group_blocks) + "\n" + counts_line)
+        closing_text = ""
+        if closing_line is not None:
+            closing_text = self.wrap(closing_line, self.output_width, "") + "\n"
+        self.standard_output.write("\n".join(group_blocks) + "\n" + closing_text + counts_line)
 
     def check_entry(self, result: CheckResult, summaries_by_id: dict[str, str]) -> str:
         """The lines for one check: its status word and summary, then anything beneath it.

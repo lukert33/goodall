@@ -226,6 +226,30 @@ def first_non_blank_line(text: str) -> str | None:
     return None
 
 
+def environment_for(command: Command) -> dict[str, str]:
+    """The environment `command`'s program runs with: goodall's own, plus its extra variables.
+
+    Nothing is taken out unless the command asks for it by naming prefixes
+    in `removed_environment_prefixes` (record repo operations remove git's
+    own variables that way). That matters for 1Password: on a Mac that
+    runs unattended, op signs in with a service account token it reads
+    from OP_SERVICE_ACCOUNT_TOKEN, so that variable must reach op
+    unchanged. Goodall never reads the value; it only passes it on, as it
+    passes on PATH.
+
+    Built only as the program starts, and never stored in a `Command` or a
+    `CommandResult`, so no message or exception made from those can hold a
+    secret from the environment. A function of its own so a test can see
+    what the real runner would give a command that the fake runner ran.
+    """
+    environment = {}
+    for name, value in os.environ.items():
+        if not name.startswith(tuple(command.removed_environment_prefixes)):
+            environment[name] = value
+    environment.update(command.extra_environment)
+    return environment
+
+
 class Runner(Protocol):
     """The one seam for starting other programs. `RealRunner` and `FakeRunner` both fit it."""
 
@@ -260,11 +284,7 @@ class RealRunner:
         output_destination = subprocess.PIPE
         if command.output == OutputMode.DISCARD:
             output_destination = subprocess.DEVNULL
-        environment = {}
-        for name, value in os.environ.items():
-            if not name.startswith(tuple(command.removed_environment_prefixes)):
-                environment[name] = value
-        environment.update(command.extra_environment)
+        environment = environment_for(command)
         # Checked first, because Popen reports a missing working folder as
         # FileNotFoundError, which would read as "the program was not found".
         if command.working_directory is not None and not command.working_directory.is_dir():

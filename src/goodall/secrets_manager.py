@@ -44,6 +44,25 @@ documentation) suggests it for checking a session without setting off a
 Touch ID prompt, which matters because doctor must not ask a person
 anything.
 
+op signs in one of two ways, and goodall works the same with both:
+
+- through the 1Password app, which a person unlocks; or
+- with a service account, on a Mac that runs unattended: op reads a
+  service account token from the environment variable
+  OP_SERVICE_ACCOUNT_TOKEN, and `op whoami` then succeeds with "User Type:
+  SERVICE_ACCOUNT" (observed by the project owner on a real Mac,
+  2026-11-17; goodall discards that output, as above).
+
+The token reaches op because the runner gives every program all of
+goodall's environment (goodall.runner.environment_for). Goodall reads only
+whether the variable is set and not empty (`service_account_token_is_set`),
+never its value, and runs nothing extra to learn the account type; it uses
+that only to word its messages, since "unlock the 1Password app" is wrong
+advice for a service account. The token is the one secret that can never
+be a secret reference, because op needs it before it can resolve any, so a
+line setting it in the env file or the shared env file is refused
+(`is_service_account_token_variable`).
+
 To find out whether an item exists, goodall lists vaults (`op vault list`)
 and the items in a vault (`op item list --vault`). 1Password's reference
 says only that these return "all vaults the current user has read access
@@ -84,6 +103,7 @@ launches programs will use it, as the hook path may.
 """
 
 import json
+import os
 import re
 from dataclasses import dataclass
 from enum import StrEnum
@@ -150,6 +170,24 @@ SIGN_IN_STEPS = {
     ),
 }
 
+# The environment variable each secrets manager reads a service account
+# token from, for a Mac with no person to unlock its app. 1Password's op
+# reads OP_SERVICE_ACCOUNT_TOKEN, as its service account guide says and the
+# project owner saw on a real Mac; not otherwise checked against a real
+# service account.
+SERVICE_ACCOUNT_TOKEN_VARIABLES = {
+    "1password": "OP_SERVICE_ACCOUNT_TOKEN",
+}
+
+# The alternative to signing in through the app, offered beside the sign-in
+# step for a Mac that runs unattended.
+SERVICE_ACCOUNT_ALTERNATIVES = {
+    "1password": (
+        "On a Mac that runs unattended, a 1Password service account can sign op in instead: set its token in "
+        "OP_SERVICE_ACCOUNT_TOKEN for this eval account only, never in a file"
+    ),
+}
+
 # Why each secrets manager cannot say whether the field a reference names
 # exists, said so a researcher understands what goodall left unchecked.
 # 1Password has no command that lists an item's fields without their
@@ -185,10 +223,15 @@ class SignInAnswer:
     `problem` is set when the state is not SIGNED_IN: a one-line description
     of what happened, such as "`op whoami` timed out after 10 s", safe to
     show, because it holds nothing the secrets manager printed.
+
+    `service_account` is True when a service account token was set in the
+    environment, so the secrets manager was asked as a service account, not
+    through its app.
     """
 
     state: SignInState
     problem: str | None = None
+    service_account: bool = False
 
 
 def check_signed_in(secrets_manager: str, runner: Runner) -> SignInAnswer:
@@ -200,13 +243,32 @@ def check_signed_in(secrets_manager: str, runner: Runner) -> SignInAnswer:
     """
     if secrets_manager != "1password":
         raise ValueError(f"goodall.secrets_manager does not know the secrets manager {secrets_manager!r}.")
+    service_account = service_account_token_is_set(secrets_manager)
     result = runner.run(Command(ONE_PASSWORD_SIGNED_IN_COMMAND, output=OutputMode.DISCARD))
     if result.succeeded:
-        return SignInAnswer(state=SignInState.SIGNED_IN)
+        return SignInAnswer(state=SignInState.SIGNED_IN, service_account=service_account)
     # The output was discarded, so `problem` quotes nothing op printed.
     if result.outcome == CommandOutcome.COMPLETED:
-        return SignInAnswer(state=SignInState.SIGNED_OUT, problem=result.problem)
-    return SignInAnswer(state=SignInState.NO_ANSWER, problem=result.problem)
+        return SignInAnswer(state=SignInState.SIGNED_OUT, problem=result.problem, service_account=service_account)
+    return SignInAnswer(state=SignInState.NO_ANSWER, problem=result.problem, service_account=service_account)
+
+
+def service_account_token_is_set(secrets_manager: str) -> bool:
+    """True when the environment holds a service account token for `secrets_manager` that is not empty.
+
+    Only whether it is there is looked at: the value is compared with ""
+    and goes nowhere else. An empty variable counts as unset, because op
+    then signs in through the app.
+    """
+    variable = SERVICE_ACCOUNT_TOKEN_VARIABLES.get(secrets_manager)
+    if variable is None:
+        return False
+    return os.environ.get(variable, "") != ""
+
+
+def is_service_account_token_variable(name: str) -> bool:
+    """True when `name` is the variable any secrets manager goodall knows reads a service account token from."""
+    return name in SERVICE_ACCOUNT_TOKEN_VARIABLES.values()
 
 
 class ItemState(StrEnum):

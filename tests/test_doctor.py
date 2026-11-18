@@ -20,9 +20,10 @@ from pathlib import Path
 import pytest
 
 from goodall import cli, exit_codes, program_checks, secrets_manager
+from goodall.doctor import closing_line
 from goodall.fake_runner import FakeRunner
-from goodall.runner import OutputMode
-from goodall.terminal import Terminal
+from goodall.runner import OutputMode, environment_for
+from goodall.terminal import CheckResult, CheckStatus, Terminal
 
 # The command the account check runs, by its full path (see goodall.program_checks).
 ACCOUNT_GROUPS_COMMAND = ["/usr/bin/id", "-Gn"]
@@ -239,12 +240,15 @@ Secrets
               field exists without also handing over the field's value, the
               secret itself, so goodall does not ask. Not checked:
               ANTHROPIC_API_KEY_ENGINEERING (line 3), ANTHROPIC_API_KEY_RESEARCH
-              (line 4), ANTHROPIC_ADMIN_KEY (line 5).
+              (line 4), ANTHROPIC_ADMIN_KEY (line 5). If a field name is wrong,
+              it will show up the first time a program is launched with that
+              secret.
               Next: Nothing, if you copied each reference with Copy Secret
               Reference in 1Password and have not renamed the field since.
               Otherwise, copy each one that way and paste it over its value in
               the env file.
 
+All checks passed. One thing goodall cannot check without reading a secret.
 18 passed, 0 warned, 0 failed, 0 skipped, 1 unverified
 """
 
@@ -1073,23 +1077,49 @@ def test_an_unreadable_env_file_fails_saying_why(healthy_account: EvalAccount) -
     assert failure_kinds(document, "secrets.env_file_holds_only_references") == ["env_file_unreadable"]
 
 
-@pytest.mark.parametrize("permissions", [0o644, 0o640, 0o604])
-def test_an_env_file_other_accounts_can_read_is_a_warning_with_the_command_to_fix_it(
+# Any permission for the group or for everyone else counts: read, write or
+# run. 0o644 is what a new file on macOS usually gets.
+@pytest.mark.parametrize("permissions", [0o644, 0o640, 0o604, 0o620, 0o602, 0o610, 0o601, 0o700])
+def test_an_env_file_other_accounts_can_reach_fails_with_the_one_command_that_fixes_it(
     healthy_account: EvalAccount, permissions: int
 ) -> None:
     healthy_account.env_file.chmod(permissions)
 
-    exit_code, standard_output, _ = run_goodall(["doctor", "--json"])
+    exit_code, standard_output, _ = run_goodall(["doctor"])
+    json_exit_code, document = doctor_json()
 
-    # References are not secrets, so goodall still works; but they name
-    # vaults and items, which other accounts on the Mac have no need to see.
-    assert exit_code == exit_codes.SUCCESS
-    document = json.loads(standard_output)
+    if permissions == 0o700:
+        # Only the owner's own bits are set, so no other account can reach it.
+        assert exit_code == json_exit_code == exit_codes.SUCCESS
+        assert check_document(document, "secrets.env_file_private")["status"] == "pass"
+        return
+    assert exit_code == json_exit_code == exit_codes.ERROR
+    assert "  FAIL        Only this macOS user account can read the env file\n" in standard_output
     private_check = check_document(document, "secrets.env_file_private")
-    assert private_check["status"] == "warn"
+    assert private_check["status"] == "fail"
     assert failure_kinds(document, "secrets.env_file_private") == ["env_file_readable_by_others"]
     assert private_check["next_step"] == (
         f"Run chmod 600 {healthy_account.env_file} in Terminal, then run goodall doctor again."
+    )
+    # The one sentence on why is in what the report shows, not only in --json.
+    report_text = " ".join(standard_output.split())
+    assert "it names the vaults and items this eval's secrets are kept in" in report_text
+
+
+def test_the_command_to_fix_the_env_file_s_permissions_quotes_a_path_with_a_space(
+    healthy_account: EvalAccount, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spaced_config_directory = healthy_account.home_folder / "goodall config"
+    healthy_account.config_directory.rename(spaced_config_directory)
+    monkeypatch.setenv("GOODALL_CONFIG_DIR", str(spaced_config_directory))
+    (spaced_config_directory / ".env").chmod(0o644)
+
+    _, document = doctor_json()
+
+    # One complete command a person can paste: the path is quoted, so the
+    # space does not split it in two.
+    assert check_document(document, "secrets.env_file_private")["next_step"] == (
+        f"Run chmod 600 '{spaced_config_directory / '.env'}' in Terminal, then run goodall doctor again."
     )
 
 
@@ -1116,8 +1146,10 @@ def test_a_secret_looking_name_in_the_shared_env_file_fails_saying_to_move_it_to
         assert "RECOGNISABLEFAKEVALUE" not in printed
     assert "  FAIL        The shared env file holds no secrets\n" in standard_output
     document = json.loads(json_output)
+    # The key is reported for its format, the most certain reason; the
+    # other variable for its name.
     assert failure_kinds(document, "secrets.shared_env_file_holds_no_secrets") == [
-        "shared_env_file_secret_name",
+        "shared_env_file_value_is_a_key",
         "shared_env_file_secret_name",
     ]
     shared_check = check_document(document, "secrets.shared_env_file_holds_no_secrets")
@@ -1173,12 +1205,122 @@ def test_a_secret_reference_in_the_shared_env_file_fails_because_it_would_not_be
     assert "move this to the env file as a reference" in next_step
 
 
+# Synthetic values in each recognised key format (goodall.quoting.KEY_FORMATS),
+# with the issuer the failure names. Each is built from two pieces, so a
+# secret scanner reading this file does not mistake it for a leaked key.
+KEYS_IN_RECOGNISED_FORMATS = {
+    "Anthropic": "sk-" + "ant-api03-SYNTHETICsyntheticSYNTHETIC",
+    "OpenAI project": "sk-" + "proj-SYNTHETICsyntheticSYNTHETIC0123",
+    "OpenAI": "sk-" + "SYNTHETICsyntheticSYNTHETICsynthetic0123",
+    "GitHub classic": "ghp_" + "SYNTHETICsyntheticSYNTHETICsynthetic",
+    "GitHub OAuth": "gho_" + "SYNTHETICsyntheticSYNTHETICsynthetic",
+    "GitHub user-to-server": "ghu_" + "SYNTHETICsyntheticSYNTHETICsynthetic",
+    "GitHub server-to-server": "ghs_" + "SYNTHETICsyntheticSYNTHETICsynthetic",
+    "GitHub refresh": "ghr_" + "SYNTHETICsyntheticSYNTHETICsynthetic",
+    "GitHub fine-grained": "github_pat_" + "SYNTHETICsynthetic_SYNTHETICsynthetic",
+    "AWS access key id": "AKIA" + "SYNTHETIC0000000",
+    "AWS temporary access key id": "ASIA" + "SYNTHETIC0000000",
+    "Slack bot": "xoxb-" + "0000000000-SYNTHETICsynthetic",
+    "Slack user": "xoxp-" + "0000000000-SYNTHETICsynthetic",
+    "Slack app": "xoxa-" + "0000000000-SYNTHETICsynthetic",
+    "Google": "AIza" + "SyntheticSYNTHETICsyntheticSYNTHETI",
+    "1Password service account": "ops_" + "SYNTHETICsynthetic" * 3,
+    "PEM private key": "-----BEGIN " + "PRIVATE KEY-----SYNTHETIC",
+    "PEM RSA private key": "-----BEGIN " + "RSA PRIVATE KEY-----SYNTHETIC",
+    "JSON Web Token": "eyJ" + "SYNTHETICsynthetic.eyJSYNTHETICsynthetic.SYNTHETICsynthetic",
+}
+
+
+@pytest.mark.parametrize("key_format", list(KEYS_IN_RECOGNISED_FORMATS))
+def test_a_value_in_a_recognised_key_format_in_the_shared_env_file_fails_without_showing_it(
+    healthy_account: EvalAccount, key_format: str
+) -> None:
+    key = KEYS_IN_RECOGNISED_FORMATS[key_format]
+    # Quoted, because a PEM header holds spaces. The name says nothing about
+    # a secret, so only the value's format can catch it.
+    healthy_account.shared_env_file.write_text(VALID_SHARED_ENV_FILE_TEXT + f'DEPLOY_SETTING="{key}"\n')
+
+    exit_code, standard_output, standard_error = run_goodall(["doctor"])
+    json_exit_code, json_output, json_error = run_goodall(["doctor", "--json"])
+
+    assert exit_code == json_exit_code == exit_codes.ERROR
+    for printed in [standard_output, standard_error, json_output, json_error]:
+        assert "SYNTHETIC" not in printed
+    assert "  FAIL        The shared env file holds no secrets\n" in standard_output
+    document = json.loads(json_output)
+    assert failure_kinds(document, "secrets.shared_env_file_holds_no_secrets") == ["shared_env_file_value_is_a_key"]
+    shared_check = check_document(document, "secrets.shared_env_file_holds_no_secrets")
+    assert isinstance(shared_check["detail"], str)
+    assert "The value of DEPLOY_SETTING, on line 6 of the shared env file" in shared_check["detail"]
+    next_step = shared_check["next_step"]
+    assert isinstance(next_step, str)
+    assert "Delete line 6 of" in next_step
+    assert "If the shared env file was ever committed or pushed, treat the key as exposed" in next_step
+    assert "A secret belongs in 1Password, with a secret reference to it in the env file at" in next_step
+
+
+def test_a_key_under_a_name_that_could_be_a_secret_is_reported_by_its_line_alone(
+    healthy_account: EvalAccount,
+) -> None:
+    key = KEYS_IN_RECOGNISED_FORMATS["GitHub classic"]
+    healthy_account.shared_env_file.write_text(VALID_SHARED_ENV_FILE_TEXT + f"{PASTED_BASE64_TOKEN}={key}\n")
+
+    exit_code, standard_output, _ = run_goodall(["doctor", "--json"])
+
+    assert exit_code == exit_codes.ERROR
+    assert "SYNTHETIC" not in standard_output
+    document = json.loads(standard_output)
+    assert failure_kinds(document, "secrets.shared_env_file_holds_no_secrets") == ["shared_env_file_value_is_a_key"]
+    detail = check_document(document, "secrets.shared_env_file_holds_no_secrets")["detail"]
+    assert isinstance(detail, str)
+    assert "the variable whose name goodall does not show, on line 6" in detail
+
+
+def test_a_key_pasted_as_a_name_in_the_shared_env_file_fails_by_its_line_number(healthy_account: EvalAccount) -> None:
+    # A key with no dash in its format reads as a variable name.
+    key = KEYS_IN_RECOGNISED_FORMATS["AWS access key id"]
+    healthy_account.shared_env_file.write_text(VALID_SHARED_ENV_FILE_TEXT + f"{key}=x\n")
+
+    exit_code, standard_output, _ = run_goodall(["doctor", "--json"])
+
+    assert exit_code == exit_codes.ERROR
+    assert "SYNTHETIC" not in standard_output
+    document = json.loads(standard_output)
+    assert failure_kinds(document, "secrets.shared_env_file_holds_no_secrets") == ["shared_env_file_name_is_a_key"]
+    detail = check_document(document, "secrets.shared_env_file_holds_no_secrets")["detail"]
+    assert isinstance(detail, str)
+    assert detail.startswith("Line 6 of the shared env file at ")
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        # A UUID, a 40-character git commit id and a short word: long
+        # identifiers and ordinary settings, not keys.
+        "123e4567-e89b-12d3-a456-426614174000",
+        "9fceb02d0ae598e95dc970b74767f19372d61af8",
+        "otlp",
+    ],
+)
+def test_identifiers_and_ordinary_words_in_the_shared_env_file_do_not_fail(
+    healthy_account: EvalAccount, value: str
+) -> None:
+    healthy_account.shared_env_file.write_text(VALID_SHARED_ENV_FILE_TEXT + f"SOME_SETTING={value}\n")
+
+    exit_code, document = doctor_json()
+
+    assert exit_code == exit_codes.SUCCESS
+    assert check_document(document, "secrets.shared_env_file_holds_no_secrets")["status"] in ["pass", "warn"]
+
+
 @pytest.mark.parametrize(
     "line",
     [
-        f"SOME_SETTING={PASTED_KEY}",
         'OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer RECOGNISABLEFAKEVALUE0123456789abcdef"',
         "AWS_ID=AKIARECOGNISABLEFAKEVALUE7",
+        # A long identifier is shaped like a token too, which is why an
+        # anonymous token shape only warns.
+        "BUILD_COMMIT=9fceb02d0ae598e95dc970b74767f19372d61af8",
     ],
 )
 def test_a_value_in_the_shared_env_file_that_looks_like_a_random_token_is_a_warning(
@@ -1375,6 +1517,51 @@ def test_the_field_a_reference_names_is_reported_unverified_because_checking_it_
     assert check_document(document, "secrets.referenced_items_exist")["status"] == "pass"
 
 
+def test_a_report_whose_only_unverified_check_needs_a_secret_reads_as_healthy(healthy_account: EvalAccount) -> None:
+    exit_code, standard_output, _ = run_goodall(["doctor"])
+    json_exit_code, document = doctor_json()
+
+    assert exit_code == json_exit_code == exit_codes.SUCCESS
+    last_lines = standard_output.splitlines()[-2:]
+    assert last_lines == [
+        "All checks passed. One thing goodall cannot check without reading a secret.",
+        "18 passed, 0 warned, 0 failed, 0 skipped, 1 unverified",
+    ]
+    # The check itself keeps its status and says when a wrong field shows up.
+    assert "  unverified  Each secret reference names a field that exists\n" in standard_output
+    report_text = " ".join(standard_output.split())
+    assert "If a field name is wrong, it will show up the first time a program is launched with that secret." in (
+        report_text
+    )
+    # --json is unchanged: the count is still there, and nothing calls it a pass.
+    assert document["summary"] == {"passed": 18, "warned": 0, "failed": 0, "skipped": 0, "unverified": 1}
+    assert check_document(document, "secrets.referenced_fields_exist")["status"] == "unverified"
+
+
+def test_a_report_with_something_unverified_for_another_reason_says_so_without_blaming_a_secret(
+    healthy_account: EvalAccount,
+) -> None:
+    runner = healthy_runner()
+    runner.answer_timed_out(OP_ITEM_LIST_EVAL)
+
+    exit_code, standard_output, _ = run_goodall(["doctor"], runner)
+
+    assert exit_code == exit_codes.SUCCESS
+    assert standard_output.splitlines()[-2] == (
+        "All checks passed. 2 things goodall could not check are marked unverified."
+    )
+
+
+def test_a_report_with_a_warning_has_no_all_passed_line(healthy_account: EvalAccount) -> None:
+    healthy_account.shared_env_file.unlink()
+
+    exit_code, standard_output, _ = run_goodall(["doctor"])
+
+    assert exit_code == exit_codes.SUCCESS
+    assert "All checks passed" not in standard_output
+    assert standard_output.splitlines()[-1] == "17 passed, 1 warned, 0 failed, 0 skipped, 1 unverified"
+
+
 def test_an_env_file_with_no_references_has_no_field_to_leave_unverified(healthy_account: EvalAccount) -> None:
     healthy_account.env_file.write_text("# No secrets in this eval.\n")
 
@@ -1436,6 +1623,185 @@ def test_an_answer_from_op_that_goodall_cannot_read_leaves_every_reference_unver
     detail = check_document(document, "secrets.referenced_items_exist")["detail"]
     assert isinstance(detail, str)
     assert "goodall could not read the answer `op vault list` gave" in detail
+
+
+# A synthetic 1Password service account token. A real one starts ops_ and
+# runs to hundreds of characters; this one is built from pieces so a secret
+# scanner does not mistake it for a leak. If any part of it shows up in
+# goodall's output, a real token would have too.
+SYNTHETIC_SERVICE_ACCOUNT_TOKEN = "ops_" + "SYNTHETICserviceACCOUNT" * 4
+
+
+@pytest.fixture
+def service_account_token(monkeypatch: pytest.MonkeyPatch) -> str:
+    """Sign op in the unattended way: with a service account token in the environment."""
+    monkeypatch.setenv("OP_SERVICE_ACCOUNT_TOKEN", SYNTHETIC_SERVICE_ACCOUNT_TOKEN)
+    return SYNTHETIC_SERVICE_ACCOUNT_TOKEN
+
+
+def test_a_service_account_token_in_the_environment_reaches_every_op_command(
+    healthy_account: EvalAccount, service_account_token: str
+) -> None:
+    runner = healthy_runner()
+
+    exit_code, _, _ = run_goodall(["doctor"], runner)
+
+    assert exit_code == exit_codes.SUCCESS
+    op_commands = []
+    for command in runner.calls:
+        if command.arguments[0] == "op":
+            op_commands.append(command)
+    assert len(op_commands) == 3
+    for command in op_commands:
+        # The environment the real runner would give the command: nothing
+        # strips the token, and nothing sets an OP_ variable over it.
+        assert environment_for(command)["OP_SERVICE_ACCOUNT_TOKEN"] == service_account_token
+        for name in command.extra_environment:
+            assert not name.startswith("OP_")
+
+
+def test_a_passing_sign_in_with_a_service_account_carries_a_note_about_the_token(
+    healthy_account: EvalAccount, service_account_token: str
+) -> None:
+    exit_code, standard_output, _ = run_goodall(["doctor"])
+    json_exit_code, document = doctor_json()
+
+    assert exit_code == json_exit_code == exit_codes.SUCCESS
+    signed_in_check = check_document(document, "secrets.secrets_manager_signed_in")
+    assert signed_in_check["status"] == "pass"
+    assert signed_in_check["note"] == (
+        "Signed in with a 1Password service account, using the token in OP_SERVICE_ACCOUNT_TOKEN. That token is "
+        "itself a secret, kept in the environment rather than in 1Password, so set it only for this eval account "
+        "and never write it into a file."
+    )
+    assert "pass        The secrets manager is signed in\n              Signed in with a 1Password" in standard_output
+
+
+def test_a_passing_sign_in_through_the_app_has_no_note(healthy_account: EvalAccount) -> None:
+    _, document = doctor_json()
+
+    assert check_document(document, "secrets.secrets_manager_signed_in")["note"] is None
+
+
+def test_a_refused_service_account_token_says_so_and_does_not_send_the_person_to_the_app(
+    healthy_account: EvalAccount, service_account_token: str
+) -> None:
+    runner = healthy_runner()
+    runner.answer(OP_WHOAMI, exit_code=1)
+
+    exit_code, standard_output, _ = run_goodall(["doctor"], runner)
+    _, document = doctor_json(runner)
+
+    assert exit_code == exit_codes.ERROR
+    assert failure_kinds(document, "secrets.secrets_manager_signed_in") == ["secrets_manager_service_account_refused"]
+    signed_in_check = check_document(document, "secrets.secrets_manager_signed_in")
+    assert signed_in_check["detail"] == (
+        "Goodall found a 1Password service account token in OP_SERVICE_ACCOUNT_TOKEN, and 1Password refused it: "
+        "`op whoami` exited with code 1."
+    )
+    next_step = signed_in_check["next_step"]
+    assert isinstance(next_step, str)
+    assert next_step.startswith("The token may be wrong, expired, or without access to this eval's vault.")
+    assert "1Password app" not in next_step
+    assert "op signin" not in next_step
+    assert "Next: The token may be wrong" in standard_output
+
+
+def test_a_service_account_sign_in_that_never_answers_does_not_send_the_person_to_the_app(
+    healthy_account: EvalAccount, service_account_token: str
+) -> None:
+    runner = healthy_runner()
+    runner.answer_timed_out(OP_WHOAMI)
+
+    _, document = doctor_json(runner)
+
+    assert failure_kinds(document, "secrets.secrets_manager_signed_in") == ["secrets_manager_did_not_answer"]
+    signed_in_check = check_document(document, "secrets.secrets_manager_signed_in")
+    for text in [signed_in_check["detail"], signed_in_check["next_step"]]:
+        assert isinstance(text, str)
+        assert "1Password app" not in text
+        assert "approve" not in text
+    assert "service account token in OP_SERVICE_ACCOUNT_TOKEN" in str(signed_in_check["next_step"])
+
+
+def test_signing_in_through_the_app_mentions_a_service_account_for_an_unattended_mac(
+    healthy_account: EvalAccount,
+) -> None:
+    runner = healthy_runner()
+    runner.answer(OP_WHOAMI, exit_code=1)
+
+    _, document = doctor_json(runner)
+
+    assert failure_kinds(document, "secrets.secrets_manager_signed_in") == ["secrets_manager_signed_out"]
+    next_step = check_document(document, "secrets.secrets_manager_signed_in")["next_step"]
+    assert isinstance(next_step, str)
+    assert next_step.startswith("Open the 1Password app and unlock it.")
+    assert (
+        "On a Mac that runs unattended, a 1Password service account can sign op in instead: set its token in "
+        "OP_SERVICE_ACCOUNT_TOKEN for this eval account only, never in a file."
+    ) in next_step
+
+
+@pytest.mark.parametrize(
+    "scenario",
+    ["healthy", "refused", "refused, echoing the token", "no answer", "listing fails, echoing the token", "op missing"],
+)
+def test_a_service_account_token_never_appears_in_anything_doctor_says(
+    healthy_account: EvalAccount, service_account_token: str, scenario: str
+) -> None:
+    runner = healthy_runner()
+    echo = f"[ERROR] invalid token {service_account_token}\n"
+    if scenario == "refused":
+        runner.answer(OP_WHOAMI, exit_code=1)
+    elif scenario == "refused, echoing the token":
+        runner.answer(OP_WHOAMI, exit_code=1, standard_output=echo, standard_error=echo)
+    elif scenario == "no answer":
+        runner.answer_timed_out(OP_WHOAMI)
+    elif scenario == "listing fails, echoing the token":
+        runner.answer(OP_VAULT_LIST, exit_code=1, standard_output=echo, standard_error=echo)
+    elif scenario == "op missing":
+        runner.installed_programs.remove("op")
+
+    _, text_output, text_error = run_goodall(["doctor"], runner)
+    _, json_output, json_error = run_goodall(["doctor", "--json"], runner)
+
+    for printed in [text_output, text_error, json_output, json_error]:
+        assert "SYNTHETICservice" not in printed
+
+
+@pytest.mark.parametrize(
+    ("file_name", "check_id", "kind"),
+    [
+        ("env_file", "secrets.env_file_holds_only_references", "env_file_sets_service_account_token"),
+        ("shared_env_file", "secrets.shared_env_file_holds_no_secrets", "shared_env_file_sets_service_account_token"),
+    ],
+)
+@pytest.mark.parametrize(
+    "value", [SYNTHETIC_SERVICE_ACCOUNT_TOKEN, "op://Eval/service-account/credential"], ids=["token", "reference"]
+)
+def test_an_env_file_line_setting_the_service_account_token_fails_with_its_own_message(
+    healthy_account: EvalAccount, file_name: str, check_id: str, kind: str, value: str
+) -> None:
+    env_file = getattr(healthy_account, file_name)
+    env_file.write_text(env_file.read_text() + f"OP_SERVICE_ACCOUNT_TOKEN={value}\n")
+
+    exit_code, standard_output, standard_error = run_goodall(["doctor"])
+    json_exit_code, json_output, json_error = run_goodall(["doctor", "--json"])
+
+    assert exit_code == json_exit_code == exit_codes.ERROR
+    for printed in [standard_output, standard_error, json_output, json_error]:
+        assert "SYNTHETICservice" not in printed
+        assert "service-account/credential" not in printed
+    document = json.loads(json_output)
+    # Even a reference fails: op needs this token before it can resolve any.
+    assert failure_kinds(document, check_id) == [kind]
+    check = check_document(document, check_id)
+    assert isinstance(check["detail"], str)
+    assert "sets OP_SERVICE_ACCOUNT_TOKEN" in check["detail"]
+    assert "can never be a secret reference" in check["detail"]
+    assert isinstance(check["next_step"], str)
+    assert "treat it as exposed" in check["next_step"]
+    assert "never in a file" in check["next_step"]
 
 
 # The only secrets manager commands whose output goodall may read, by the
@@ -1607,3 +1973,37 @@ def test_a_secret_pasted_anywhere_doctor_reads_is_never_shown(healthy_account: E
     # field check that lists every variable.
     summary = json.loads(json_output)["summary"]
     assert summary["failed"] + summary["warned"] + summary["unverified"] > 0
+
+
+# Unit tests for the line above the counts (goodall.doctor.closing_line).
+
+
+def result_with_status(check_id: str, status: CheckStatus) -> CheckResult:
+    """A check result with only the parts the closing line looks at."""
+    return CheckResult(id=check_id, group="Secrets", status=status, summary="A check")
+
+
+FIELDS_UNVERIFIED = result_with_status("secrets.referenced_fields_exist", CheckStatus.UNVERIFIED)
+ITEMS_UNVERIFIED = result_with_status("secrets.referenced_items_exist", CheckStatus.UNVERIFIED)
+PASSED = result_with_status("tools.git_installed", CheckStatus.PASS)
+
+
+@pytest.mark.parametrize(
+    ("results", "expected_line"),
+    [
+        ([PASSED, FIELDS_UNVERIFIED], "All checks passed. One thing goodall cannot check without reading a secret."),
+        ([PASSED, ITEMS_UNVERIFIED], "All checks passed. One thing goodall could not check is marked unverified."),
+        (
+            [PASSED, ITEMS_UNVERIFIED, FIELDS_UNVERIFIED],
+            "All checks passed. 2 things goodall could not check are marked unverified.",
+        ),
+        # Every check passed, or something needs attention: the counts say it all.
+        ([PASSED], None),
+        ([PASSED, FIELDS_UNVERIFIED, result_with_status("tools.gh_installed", CheckStatus.WARN)], None),
+        ([FIELDS_UNVERIFIED, result_with_status("tools.gh_installed", CheckStatus.FAIL)], None),
+    ],
+)
+def test_the_closing_line_reads_as_healthy_only_when_nothing_but_unverified_checks_remain(
+    results: list[CheckResult], expected_line: str | None
+) -> None:
+    assert closing_line(results) == expected_line

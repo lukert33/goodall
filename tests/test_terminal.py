@@ -322,6 +322,21 @@ def test_a_passing_check_with_a_note_shows_the_note_beneath_it_and_in_json() -> 
     assert REPORT_RESULTS[4].as_json()["note"] is None
 
 
+def test_a_closing_line_goes_just_above_the_counts_so_the_counts_stay_last() -> None:
+    standard_output = io.StringIO()
+    terminal = Terminal(standard_output=standard_output, standard_error=io.StringIO())
+
+    terminal.show_check_report([REPORT_RESULTS[4]], closing_line="All checks passed.")
+
+    assert standard_output.getvalue() == (
+        "Tools\n"
+        "  pass        git is installed\n"
+        "\n"
+        "All checks passed.\n"
+        "1 passed, 0 warned, 0 failed, 0 skipped, 0 unverified\n"
+    )
+
+
 def test_commands_to_try_are_shown_one_per_line_and_never_wrapped() -> None:
     standard_error = io.StringIO()
     terminal = Terminal(standard_output=io.StringIO(), standard_error=standard_error)
