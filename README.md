@@ -11,10 +11,10 @@ rather than a benchmark run in a sandbox. You do not need to be a software
 engineer to use it, but you do need a Mac, a terminal, and someone (possibly
 you) who can install programs on that Mac.
 
-## Status: being rebuilt
+## Status: being rebuilt after a closed source prototype phase
 
-Goodall is being rebuilt from scratch. Much of what this page describes is
-planned, not built. Do not rely on goodall for a real eval yet.
+Goodall is being rebuilt from scratch after I validated the security posture with a prototype. 
+Much of what this page describes is planned, not built. Do not rely on goodall for a real eval yet.
 
 These commands work today:
 
