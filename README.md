@@ -104,7 +104,7 @@ eval account.
 | GitHub's `gh` | Required: `goodall doctor` fails without it | Administrator | Lets `goodall doctor` check your GitHub sign-in, so that goodall never holds a GitHub token itself. |
 | 1Password's `op` | Required only if the eval uses secrets. An eval with no secrets does not need it. | Administrator | Looks up secrets the eval needs, without goodall storing them. |
 | The export extra | Optional | Whoever installed goodall | Turns records into the form the Inspect analysis tools read. It brings in `inspect-ai` and `inspect-scout`, about 95 packages, so install it only if you export. **Placeholder:** the install command is not decided, and the export is not built. |
-| ActivityWatch | Optional, recommended | Administrator | Notes which app and window were in use, to back up what the human did. Not yet used by goodall. It records window titles, which can contain private text. |
+| ActivityWatch | Required in every eval account when the eval config says `activitywatch = true`; otherwise not used | Administrator | Notes which app and window were in use, to back up what the human did. Goodall reads its settings but does not yet copy its data. It records window titles, which can contain private text. |
 
 Signing in is separate from installing, and always happens inside the eval
 account: Claude Code, `gh` and, when the eval uses secrets, 1Password.
@@ -131,7 +131,7 @@ one of three places.
 2. **The record repo.** A git repository, separate from goodall and from the
    work being studied, that holds the eval's own records as readable files:
    the eval config (`eval.toml`: name, roster of contributors, workstreams,
-   declared scope), the construct (`CONSTRUCT.md`, the question the eval
+   declared scope, and whether the eval includes ActivityWatch), the construct (`CONSTRUCT.md`, the question the eval
    measures), a shared env file (`.env.shared`, non-secret variables), and
    one file per work block, journal entry, intervention and work block fix.
    Goodall commits and pushes to it. **You** create the remote repository and
@@ -146,8 +146,34 @@ one of three places.
 
 Two small files sit in the eval account's home folder and belong to neither
 place: the local settings (`~/.config/goodall/local-settings.toml`: where the
-record repo and log directory are, and which contributor this account is) and
-the env file (`.env`), which holds secret *references* only.
+record repo and log directory are, which contributor this account is, and,
+when the eval includes ActivityWatch, this account's ActivityWatch port and
+identifier) and the env file (`.env`), which holds secret *references* only.
+
+### ActivityWatch settings
+
+ActivityWatch is decided for the whole eval, in `eval.toml`:
+
+```toml
+activitywatch = true   # every contributor runs ActivityWatch; leave it out, or write false, for an eval without it
+```
+
+When it is `true`, each eval account's local settings record that account's
+own copy of ActivityWatch:
+
+```toml
+activitywatch_port = 5610                                          # any free port except 5600
+activitywatch_device_id = "8d3f2c1e-4b5a-4c6d-9e7f-0a1b2c3d4e5f"   # this account's own, made-up here
+```
+
+The port may not be 5600, ActivityWatch's default. Ports are shared by every
+macOS user account on the Mac, and ActivityWatch silently joins any copy
+already answering on its port, so two accounts on 5600 would mix their
+records. Set the same port in ActivityWatch's own settings for its server
+and its watchers. The identifier is the `device_id` ActivityWatch shows at
+`/api/0/info` on that port. `goodall doctor` fails when the eval includes
+ActivityWatch and either setting is missing; other commands keep working.
+In an eval without ActivityWatch the two settings are ignored.
 
 Secrets never go in a file. The env file holds references such as
 `op://vault/item/field`, which name a secret in 1Password without containing

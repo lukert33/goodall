@@ -46,12 +46,24 @@ same way. This module checks the file only. Whether the folders it names
 exist is a question about the machine, answered by goodall.folders for the
 commands that need them.
 
+Two settings are optional here: `activitywatch_port` and
+`activitywatch_device_id`, for the eval account's own copy of ActivityWatch
+(ADR 0016). Whether they are needed depends on the eval config, which this
+module does not read, so their absence is reported by goodall.eval_config's
+cross-check through `goodall doctor`, never here. When present they are
+checked here, whatever the eval config says, because a malformed value is
+wrong in any eval. The port may not be ActivityWatch's default, 5600: ports
+are shared by every macOS user account on a Mac, and ActivityWatch's launcher
+silently joins any ActivityWatch already answering on its port, so two
+accounts on 5600 mix their data without a warning.
+
 The file's shape is provisional by the owner's instruction (goodall-xes.8);
 `schema_version` is there so it can change.
 """
 
 import difflib
 import os
+import re
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -81,8 +93,28 @@ TEXT_SETTING_NAMES = ["contributor", "main_workstream", "record_repo", "log_dire
 # The text settings above that name a folder on this Mac.
 FOLDER_SETTING_NAMES = ["record_repo", "log_directory"]
 
+# The settings for this account's own ActivityWatch (ADR 0016). Optional
+# here; see the module docstring.
+ACTIVITYWATCH_SETTING_NAMES = ["activitywatch_port", "activitywatch_device_id"]
+
 # Every key local settings may contain, in the order goodall reports them.
-KNOWN_SETTING_NAMES = ["schema_version", *TEXT_SETTING_NAMES]
+KNOWN_SETTING_NAMES = ["schema_version", *TEXT_SETTING_NAMES, *ACTIVITYWATCH_SETTING_NAMES]
+
+# ActivityWatch's own default port, which the eval account's copy must not
+# use; see the module docstring.
+ACTIVITYWATCH_DEFAULT_PORT = 5600
+
+# The highest port number there is.
+HIGHEST_PORT = 65535
+
+# The shape of ActivityWatch's device_id: a UUID, written as 8-4-4-4-12 hex
+# digits joined by hyphens. ActivityWatch writes it in lowercase; capitals are
+# accepted and recorded in lowercase, so later comparisons need no care.
+DEVICE_ID_PATTERN = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
+
+# Where a person finds the device_id: ActivityWatch's server reports it about
+# itself at this path, on its own port.
+ACTIVITYWATCH_INFO_PATH = "/api/0/info"
 
 # The secrets managers goodall can work with. ADR 0006: 1Password is the
 # only one supported today.
@@ -96,6 +128,13 @@ EXAMPLE_VALUES = {
     "record_repo": "~/evals/goodall-pilot-records",
     "log_directory": "/Volumes/EvalLogs/goodall-pilot",
     "secrets_manager": "1password",
+}
+
+# Example lines for the ActivityWatch settings, one of which is not text. The
+# identifier is made up.
+ACTIVITYWATCH_EXAMPLE_LINES = {
+    "activitywatch_port": "activitywatch_port = 5610",
+    "activitywatch_device_id": 'activitywatch_device_id = "8d3f2c1e-4b5a-4c6d-9e7f-0a1b2c3d4e5f"',
 }
 
 
@@ -132,7 +171,12 @@ class FolderSetting:
 
 @dataclass(frozen=True)
 class LocalSettings:
-    """Local settings that passed every check in this module."""
+    """Local settings that passed every check in this module.
+
+    `activitywatch_port` and `activitywatch_device_id` are None when the file
+    does not have them; whether the eval needs them is for goodall.eval_config
+    to say. The device_id is always lowercase.
+    """
 
     settings_file: Path
     schema_version: int
@@ -141,6 +185,8 @@ class LocalSettings:
     record_repo: FolderSetting
     log_directory: FolderSetting
     secrets_manager: str
+    activitywatch_port: int | None = None
+    activitywatch_device_id: str | None = None
 
 
 class RelativeConfigDirectoryError(ValueError):
@@ -309,6 +355,9 @@ def check_settings_table(settings_file: Path, settings_table: dict[str, object])
     if secrets_manager is not None and secrets_manager not in SUPPORTED_SECRETS_MANAGERS:
         problems.append(secrets_manager_unsupported_failure(settings_file))
 
+    activitywatch_port = read_activitywatch_port(settings_file, settings_table, problems)
+    activitywatch_device_id = read_activitywatch_device_id(settings_file, settings_table, problems)
+
     if problems:
         return problems
 
@@ -321,7 +370,58 @@ def check_settings_table(settings_file: Path, settings_table: dict[str, object])
         record_repo=folder_settings["record_repo"],
         log_directory=folder_settings["log_directory"],
         secrets_manager=text_values["secrets_manager"],
+        activitywatch_port=activitywatch_port,
+        activitywatch_device_id=activitywatch_device_id,
     )
+
+
+def read_activitywatch_port(
+    settings_file: Path, settings_table: dict[str, object], problems: list[Failure]
+) -> int | None:
+    """Return the ActivityWatch port, or None when it is absent or a problem was recorded."""
+    if "activitywatch_port" not in settings_table:
+        return None
+    value = settings_table["activitywatch_port"]
+    if not is_whole_number(value) or value < 1 or value > HIGHEST_PORT:
+        problems.append(
+            value_invalid_failure(
+                settings_file,
+                "activitywatch_port",
+                f"must be a port number from 1 to {HIGHEST_PORT}, written without quotes",
+                ACTIVITYWATCH_EXAMPLE_LINES["activitywatch_port"],
+            )
+        )
+        return None
+    if value == ACTIVITYWATCH_DEFAULT_PORT:
+        problems.append(activitywatch_default_port_failure(settings_file))
+        return None
+    return value
+
+
+def read_activitywatch_device_id(
+    settings_file: Path, settings_table: dict[str, object], problems: list[Failure]
+) -> str | None:
+    """Return the ActivityWatch identifier in lowercase, or None when it is absent or a problem was recorded.
+
+    Trap: the value is never shown, because text of the wrong shape here may
+    be a key pasted into the wrong setting.
+    """
+    if "activitywatch_device_id" not in settings_table:
+        return None
+    value = settings_table["activitywatch_device_id"]
+    if not isinstance(value, str) or DEVICE_ID_PATTERN.fullmatch(value) is None:
+        problems.append(
+            value_invalid_failure(
+                settings_file,
+                "activitywatch_device_id",
+                "is not an identifier in the shape ActivityWatch reports: 36 characters of digits, letters a to f "
+                f"and hyphens, in double quotes. ActivityWatch shows it as device_id at {ACTIVITYWATCH_INFO_PATH} "
+                "on its own port",
+                ACTIVITYWATCH_EXAMPLE_LINES["activitywatch_device_id"],
+            )
+        )
+        return None
+    return value.lower()
 
 
 def is_whole_number(value: object) -> TypeGuard[int]:
@@ -508,6 +608,27 @@ def value_invalid_failure(settings_file: Path, setting_name: str, problem: str, 
         what_happened=f"In local settings at {settings_file}, {setting_name} {problem}.",
         why=f"Goodall cannot use {setting_name} until its value has the right form.",
         what_to_do_next=f"Change the line in {settings_file} to this form, with your own value: {example_line}",
+    )
+
+
+def activitywatch_default_port_failure(settings_file: Path) -> Failure:
+    """The failure for an eval account's ActivityWatch set to ActivityWatch's default port (ADR 0016)."""
+    return Failure(
+        kind="local_settings_activitywatch_default_port",
+        what_happened=(
+            f"In local settings at {settings_file}, activitywatch_port is {ACTIVITYWATCH_DEFAULT_PORT}, "
+            "ActivityWatch's default port, which an eval account's ActivityWatch must not use."
+        ),
+        why=(
+            "Ports are shared by every macOS user account on this Mac, and ActivityWatch silently joins any "
+            f"ActivityWatch already answering on its port. On {ACTIVITYWATCH_DEFAULT_PORT}, this eval account's "
+            "record could mix with what another account's ActivityWatch records, without any warning."
+        ),
+        what_to_do_next=(
+            "Choose another port that nothing else on this Mac uses, such as 5610. Set it in ActivityWatch's own "
+            "settings for its server and for its watchers, restart ActivityWatch, and set the same port in "
+            f"{settings_file}: {ACTIVITYWATCH_EXAMPLE_LINES['activitywatch_port']}"
+        ),
     )
 
 

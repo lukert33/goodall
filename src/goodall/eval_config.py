@@ -3,8 +3,9 @@
 The eval config is the file `eval.toml` at the top of the record repo. It
 holds what is true for every contributor to one eval (ADR 0009): the eval's
 name and description, its workstreams, its intervention categories, the
-roster of contributors, and the declared scope. Local settings say where the
-record repo is (goodall.local_settings); this module takes it from there.
+roster of contributors, the declared scope, and whether the eval includes
+ActivityWatch (ADR 0016). Local settings say where the record repo is
+(goodall.local_settings); this module takes it from there.
 
 Two functions are the way in:
 
@@ -14,6 +15,11 @@ Two functions are the way in:
   workstream is one of the eval's workstreams. Those cross-checks live here,
   beside the roster and workstreams they compare against, so every command
   words them the same way.
+
+A third cross-check, `missing_activitywatch_settings`, is not part of
+`read_eval_for_this_account`: only `goodall doctor` runs it, so that a
+contributor whose ActivityWatch is not set up yet can still record their work
+(see that function).
 
 Both return either records or a list of `Failure` records, and never raise
 for bad input. Every problem is reported at once, so a hand edit can fix them
@@ -54,7 +60,12 @@ import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
-from goodall.local_settings import LocalSettings, is_whole_number
+from goodall.local_settings import (
+    ACTIVITYWATCH_EXAMPLE_LINES,
+    ACTIVITYWATCH_INFO_PATH,
+    LocalSettings,
+    is_whole_number,
+)
 from goodall.quoting import can_show_name, toml_error_as_shown
 from goodall.records import UNKNOWN_WORKSTREAM
 from goodall.secrets_manager import looks_like_a_secret_reference
@@ -68,7 +79,7 @@ EVAL_CONFIG_FILE_NAME = "eval.toml"
 SUPPORTED_SCHEMA_VERSION = 1
 
 # Every top-level key the eval config may contain, in the order goodall
-# reports them. All are required.
+# reports them. All are required except `activitywatch`.
 KNOWN_KEYS = [
     "schema_version",
     "name",
@@ -77,6 +88,7 @@ KNOWN_KEYS = [
     "intervention_categories",
     "contributors",
     "scope",
+    "activitywatch",
 ]
 
 # How messages name the part of the file above the first [[block]]. Messages
@@ -123,6 +135,7 @@ EXAMPLE_LINES = {
     "display_name": 'display_name = "Ada Lovelace"',
     "repository": 'repository = "github.com/your-org/goodall-pilot-app"',
     "paths": 'paths = ["**"]',
+    "activitywatch": "activitywatch = true",
 }
 
 
@@ -144,7 +157,12 @@ class ScopeEntry:
 
 @dataclass(frozen=True)
 class EvalConfig:
-    """An eval config that passed every check in this module."""
+    """An eval config that passed every check in this module.
+
+    `activitywatch` is True when the eval includes ActivityWatch, so every
+    contributor's eval account runs it (ADR 0016), and False when the file
+    says false or does not say.
+    """
 
     config_file: Path
     schema_version: int
@@ -154,6 +172,7 @@ class EvalConfig:
     intervention_categories: list[str]
     contributors: list[Contributor]
     scope: list[ScopeEntry]
+    activitywatch: bool = False
 
 
 @dataclass(frozen=True)
@@ -279,6 +298,7 @@ def check_eval_config_table(config_file: Path, config_table: dict[str, object]) 
 
     contributors = read_contributors(config_file, config_table, problems)
     scope = read_scope(config_file, config_table, problems)
+    activitywatch = read_activitywatch(config_file, config_table, problems)
 
     if problems:
         return problems
@@ -294,7 +314,46 @@ def check_eval_config_table(config_file: Path, config_table: dict[str, object]) 
         intervention_categories=name_lists["intervention_categories"],
         contributors=contributors,
         scope=scope,
+        activitywatch=activitywatch,
     )
+
+
+def read_activitywatch(config_file: Path, table: dict[str, object], problems: list[Failure]) -> bool:
+    """Return whether the eval includes ActivityWatch, or record a problem and return False.
+
+    Absent means not included. Every eval config written before goodall knew
+    ActivityWatch has no such key, and reading those as including it would
+    fail every contributor's `goodall doctor` for software the eval never
+    asked them to run. Including it is a choice someone makes in the file.
+    """
+    if "activitywatch" not in table:
+        return False
+    value = table["activitywatch"]
+    if not isinstance(value, bool):
+        problems.append(
+            value_invalid_failure(config_file, "activitywatch", "must be true or false, without quotes", TOP_OF_FILE)
+        )
+        return False
+    return value
+
+
+def missing_activitywatch_settings(local_settings: LocalSettings, eval_config: EvalConfig) -> list[str]:
+    """Name each ActivityWatch setting this account's local settings lack, when the eval includes ActivityWatch.
+
+    Returns an empty list when the eval does not include ActivityWatch: the
+    settings then have no effect, so having them or not is fine. A cross-check
+    between the two files, run by `goodall doctor` only. Other commands keep
+    working without these settings, because ActivityWatch keeps its own
+    history and a copy missed now can be taken once they are recorded.
+    """
+    if not eval_config.activitywatch:
+        return []
+    missing: list[str] = []
+    if local_settings.activitywatch_port is None:
+        missing.append("activitywatch_port")
+    if local_settings.activitywatch_device_id is None:
+        missing.append("activitywatch_device_id")
+    return missing
 
 
 def read_text(config_file: Path, table: dict[str, object], key: str, where: str, problems: list[Failure]) -> str | None:
@@ -891,6 +950,33 @@ def contributor_not_in_roster_failure(local_settings: LocalSettings, eval_config
         what_to_do_next=(
             f"If your id is misspelled, correct contributor in {local_settings.settings_file}. If you are new "
             f"to this eval, ask whoever runs it to add a [[contributors]] block for you to {eval_config.config_file}."
+        ),
+    )
+
+
+def activitywatch_settings_missing_failure(
+    local_settings: LocalSettings, eval_config: EvalConfig, missing_settings: list[str]
+) -> Failure:
+    """The failure for an eval that includes ActivityWatch and local settings that lack its port or identifier."""
+    example_lines: list[str] = []
+    for setting_name in missing_settings:
+        example_lines.append(ACTIVITYWATCH_EXAMPLE_LINES[setting_name])
+    return Failure(
+        kind="activitywatch_settings_missing",
+        what_happened=(
+            f"This eval includes ActivityWatch, but local settings at {local_settings.settings_file} have no "
+            f"{' and no '.join(missing_settings)}."
+        ),
+        why=(
+            "Every contributor to an eval that includes ActivityWatch runs it in their eval account, on a port of "
+            "its own. Goodall needs that port to reach it, and the identifier it reports to be sure it is this "
+            "account's ActivityWatch and not another account's."
+        ),
+        what_to_do_next=(
+            f"Add {' and '.join(example_lines)} to {local_settings.settings_file}, with this account's own values: "
+            "the port set in ActivityWatch's own settings, and the device_id that ActivityWatch shows at "
+            f"{ACTIVITYWATCH_INFO_PATH} on that port. If this eval should not include ActivityWatch, ask whoever "
+            f"runs it to remove activitywatch from {eval_config.config_file}."
         ),
     )
 

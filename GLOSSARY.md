@@ -96,11 +96,11 @@ A contributor's written note about what was decided or done, and by whom.
 _Avoid_: Log entry, diary entry, note
 
 **Eval config**:
-The settings that are true for every contributor to one eval: its name, roster, workstreams, declared scope and intervention categories.
+The settings that are true for every contributor to one eval: its name, roster, workstreams, declared scope, intervention categories, and whether it includes ActivityWatch.
 _Avoid_: Project config, project file, settings
 
 **Local settings**:
-The settings true for one eval account on one machine: where its record repo and log directory are, which contributor it is and their main workstream, and which secrets manager it uses.
+The settings true for one eval account on one machine: where its record repo and log directory are, which contributor it is and their main workstream, which secrets manager it uses, and, when the eval includes ActivityWatch, the port and identifier of the account's own ActivityWatch.
 _Avoid_: Local config, machine config, pointer file
 
 **Setup page**:

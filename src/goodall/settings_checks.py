@@ -3,8 +3,10 @@
 `goodall doctor` runs `SETTINGS_CHECKS` first (goodall.doctor), because
 every later check needs to know which eval this account belongs to. They
 follow the same chain as `goodall status`: local settings, then the folders
-they name, then the eval config, then the two cross-checks between local
-settings and the eval config.
+they name, then the eval config, then the cross-checks between local
+settings and the eval config. The last cross-check, that an eval including
+ActivityWatch has its port and identifier recorded, is doctor's alone:
+`goodall status` and the commands that record work do not need them.
 
 Each check reuses the reader or folder check that `goodall status` uses, and
 reports that reader's own failures, so a problem is worded the same way by
@@ -18,10 +20,12 @@ module and their own prefix.
 from goodall.checks import Check, CheckContext, CheckOutcome, failed, passed, warned
 from goodall.eval_config import (
     EvalConfig,
+    activitywatch_settings_missing_failure,
     contributor_not_in_roster_failure,
     find_this_contributor,
     main_workstream_is_known,
     main_workstream_unknown_failure,
+    missing_activitywatch_settings,
     read_eval_config,
 )
 from goodall.folders import describe_folder_problem, log_directory_unreachable_failure, record_repo_missing_failure
@@ -36,6 +40,7 @@ LOG_DIRECTORY_REACHABLE = "settings.log_directory_reachable"
 EVAL_CONFIG_VALID = "settings.eval_config_valid"
 CONTRIBUTOR_IN_ROSTER = "settings.contributor_in_roster"
 MAIN_WORKSTREAM_KNOWN = "settings.main_workstream_known"
+ACTIVITYWATCH_SETTINGS_RECORDED = "settings.activitywatch_settings_recorded"
 
 # The failure kinds from goodall.local_settings that mean goodall could not
 # get at the file at all, as opposed to finding something wrong inside it.
@@ -120,6 +125,21 @@ def check_main_workstream_known(context: CheckContext) -> CheckOutcome:
     return passed()
 
 
+def check_activitywatch_settings_recorded(context: CheckContext) -> CheckOutcome:
+    """When the eval includes ActivityWatch, local settings hold its port and identifier.
+
+    Passes when the eval does not include it, whatever local settings hold.
+    Reads the two files only; whether ActivityWatch answers on that port
+    with that identifier is a later check of its own.
+    """
+    local_settings = valid_local_settings(context)
+    eval_config = valid_eval_config(context)
+    missing_settings = missing_activitywatch_settings(local_settings, eval_config)
+    if missing_settings:
+        return failed([activitywatch_settings_missing_failure(local_settings, eval_config, missing_settings)])
+    return passed()
+
+
 def valid_local_settings(context: CheckContext) -> LocalSettings:
     """The valid local settings an earlier check put in the context.
 
@@ -188,5 +208,12 @@ SETTINGS_CHECKS = [
         summary="The main workstream is one of the eval's workstreams",
         prerequisites=[EVAL_CONFIG_VALID],
         run=check_main_workstream_known,
+    ),
+    Check(
+        id=ACTIVITYWATCH_SETTINGS_RECORDED,
+        group=GROUP,
+        summary="ActivityWatch's port and identifier are recorded, if the eval includes it",
+        prerequisites=[EVAL_CONFIG_VALID],
+        run=check_activitywatch_settings_recorded,
     ),
 ]
