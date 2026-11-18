@@ -22,7 +22,7 @@ only. Anything that publishes or shares these actions must redact them first.
 
 ## Who did it
 
-Every action here is labelled as done by a human, with no claim about which
+Every action here is labeled as done by a human, with no claim about which
 human. ActivityWatch records what happened at one macOS user account; it does
 not know who was at the keyboard. This follows the owner's direction that
 humans are humans, harnesses are harnesses and agents are agents, whatever

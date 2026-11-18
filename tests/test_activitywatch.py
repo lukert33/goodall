@@ -114,7 +114,7 @@ def test_each_watcher_gives_its_own_kind_with_a_duration_in_time_order() -> None
     assert result.rules_version == RULES_VERSION == "1"
 
 
-def test_what_the_parser_does_not_recognise_is_reported_without_its_values() -> None:
+def test_what_the_parser_does_not_recognize_is_reported_without_its_values() -> None:
     result = parse_activitywatch_export(FIXTURES / "all_buckets_rust_server.json")
 
     assert result.unfamiliar_records == [

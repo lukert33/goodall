@@ -86,5 +86,5 @@ def test_no_service_account_token_when_the_variable_is_absent() -> None:
     ("name", "is_the_variable"),
     [("OP_SERVICE_ACCOUNT_TOKEN", True), ("OP_CONNECT_TOKEN", False), ("ANTHROPIC_API_KEY", False)],
 )
-def test_the_service_account_token_variable_is_recognised_by_its_exact_name(name: str, is_the_variable: bool) -> None:
+def test_the_service_account_token_variable_is_recognized_by_its_exact_name(name: str, is_the_variable: bool) -> None:
     assert is_service_account_token_variable(name) is is_the_variable

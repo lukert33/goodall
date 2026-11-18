@@ -5,7 +5,7 @@ It is the one place to ask what the person did in a time range:
 
 ```python
 from datetime import datetime, UTC
-from goodall.human_activity import human_actions_in_time_range, summarise_human_actions
+from goodall.human_activity import human_actions_in_time_range, summarize_human_actions
 
 actions = human_actions_in_time_range(
     datetime(2026, 11, 17, 9, tzinfo=UTC),
@@ -13,7 +13,7 @@ actions = human_actions_in_time_range(
     transcript_paths=[...],  # Claude Code transcripts
     activitywatch_export_paths=[...],  # ActivityWatch exports
 )
-summary = summarise_human_actions(actions)
+summary = summarize_human_actions(actions)
 ```
 
 An action is in the range when it began at or after the start and before the
@@ -38,7 +38,7 @@ So two tool calls stopped close together stay two. The act becomes one
 `MergedInterruption` (`kind` `interruption`, `rule`
 `merge_repeated_interruptions`) at the earliest original's time, whose
 `stands_for` lists every original action. Known gap: when both records name a
-call, as when the main transcript's cancelled result names the subagent's
+call, as when the main transcript's canceled result names the subagent's
 launching call and the subagent's names its own inner call, they stay two.
 The structure scan found that about a third of subagent entries carry a
 `sessionId` different from their folder's session, for reasons not yet known;
@@ -76,8 +76,8 @@ each new kind a row in the table below, and write its rules page.
 **Provisional.** The kinds are deliberately split finely, to be merged,
 renamed or dropped after reviewing real results. This table is a first guess
 at a higher-level grouping, in `PROVISIONAL_CATEGORIES`. Nothing uses it but
-`category_of(kind)` and `summarise_human_actions`. A kind not in the table is
-`uncategorised`.
+`category_of(kind)` and `summarize_human_actions`. A kind not in the table is
+`uncategorized`.
 
 | kind | provisional category |
 |---|---|
@@ -103,7 +103,7 @@ at a higher-level grouping, in `PROVISIONAL_CATEGORIES`. Nothing uses it but
 
 ## The summary
 
-`summarise_human_actions(actions)` returns `total`, `actions_by_kind`,
+`summarize_human_actions(actions)` returns `total`, `actions_by_kind`,
 `actions_by_category` (every kind and category listed, zero when unused) and
 `actions_by_source`. A prompt a program sent (`sdk_prompt`) is counted on its
 own, never with typed prompts.

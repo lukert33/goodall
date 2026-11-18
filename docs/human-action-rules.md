@@ -229,7 +229,7 @@ the subagent's. Each file's parse keeps its own record; the merged list in
 - **Prompts a program sent** (`sdk_prompt`). A script may send a prompt on
   the person's behalf, or an automation may send one on its own. Whether that
   is the person is undecided until real results show how often it happens; it
-  is kept apart, counted separately, and the actor labeller leaves its
+  is kept apart, counted separately, and the actor labeler leaves its
   entries unmatched.
-- **Who chose a `custom-title`.** Labelled `ai` for now (see
+- **Who chose a `custom-title`.** Labeled `ai` for now (see
   [actor-label-rules.md](actor-label-rules.md)); the person can also type one.

@@ -33,8 +33,8 @@ Design decisions a reader would otherwise have to reverse-engineer:
 - The gate runs before the command does, so a command such as
   `git switch -c next origin/main && git commit ...` would otherwise be judged
   by the branch it is leaving. A `git switch` or `git checkout` earlier in the
-  same line, joined to the commit by `&&` all the way, moves the judgement to
-  the branch it switches to. Only a few plain forms are recognised; anything
+  same line, joined to the commit by `&&` all the way, moves the judgment to
+  the branch it switches to. Only a few plain forms are recognized; anything
   else (unknown options, detached checkouts, `git switch -`, checking out
   files) falls back to the branch checked out now. Wrongly refusing a commit
   is cheap; wrongly allowing one onto a finished branch is what this hook
@@ -176,7 +176,7 @@ def find_git_subcommand(words: list[str]) -> tuple[str, str, list[str]]:
 def branch_after_switch(subcommand: str, arguments: list[str], directory: Path) -> str:
     """The branch a `git switch` / `git checkout` leaves checked out, or "" if unsure.
 
-    Recognises only these forms, optionally with `-q`:
+    Recognizes only these forms, optionally with `-q`:
       git switch -c <name> [<start-point>]     (also -C, --create, --force-create)
       git checkout -b <name> [<start-point>]   (also -B)
       git switch <name>

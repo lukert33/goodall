@@ -180,7 +180,7 @@ def test_each_kind_of_record_has_its_own_folder_and_extension() -> None:
 def test_the_toml_writer_escapes_awkward_text_so_tomllib_reads_it_back() -> None:
     # Validation keeps today's header fields to plain identifiers, so no valid
     # record can carry this text. The writer is tested directly because it is
-    # the last line of defence if a free-text header field is added later.
+    # the last line of defense if a free-text header field is added later.
     awkward = 'quote " backslash \\ tab \t newline \n delete \x7f bell \x07 accent é'
 
     written = "value = " + records._toml_value(awkward)

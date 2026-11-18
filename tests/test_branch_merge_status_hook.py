@@ -3,7 +3,7 @@ stops agents committing to a branch whose pull request is already merged.
 
 These are outside-in tests: each one runs the hook script as a separate
 process, the way Claude Code does, feeding it the JSON a real hook receives on
-standard input. The git repository is real (git behaviour is part of what is
+standard input. The git repository is real (git behavior is part of what is
 being checked). GitHub is not: a fake `gh` program is placed first on PATH and
 answers from a file, so no test touches the network.
 

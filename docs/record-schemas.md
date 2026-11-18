@@ -13,7 +13,7 @@ tests, so if this page and the code disagree, a test fails.
 
 > **Provisional.** Every shape on this page is a first draft, chosen so that
 > work can start, and is expected to change once real evals use it. Each file
-> carries `schema_version` so a later goodall can recognise older files and
+> carries `schema_version` so a later goodall can recognize older files and
 > migrate them. To change a shape: change the code and this page together,
 > and raise `schema_version` if files already written would no longer read.
 
@@ -250,7 +250,7 @@ Why TOML rather than the more common YAML between `---` lines:
 - TOML has a native timestamp, so `written_at = 2026-11-16T10:05:00Z` is read
   as a time, not as text.
 - `+++` is the usual marker for a TOML header (Hugo and other static site
-  tools use it), so editors and site generators recognise it.
+  tools use it), so editors and site generators recognize it.
 
 The cost: some Markdown tools show a TOML header as text instead of hiding
 it, and the standard library cannot write TOML. Goodall therefore has a

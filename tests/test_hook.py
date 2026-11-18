@@ -82,7 +82,7 @@ def hook_input(event_name: str, **extra_fields: object) -> str:
 
 
 def prompt_input() -> str:
-    return hook_input("UserPromptSubmit", prompt="Summarise the failing tests.", prompt_id="prompt-1")
+    return hook_input("UserPromptSubmit", prompt="Summarize the failing tests.", prompt_id="prompt-1")
 
 
 def run_hook(config_directory: Path, arguments: list[str], standard_input: str) -> subprocess.CompletedProcess[str]:

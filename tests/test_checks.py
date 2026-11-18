@@ -1,6 +1,6 @@
 """Tests for goodall.checks, the small machinery every diagnostic check runs through.
 
-`goodall doctor`'s own tests (tests/test_doctor.py) prove the behaviour a
+`goodall doctor`'s own tests (tests/test_doctor.py) prove the behavior a
 contributor sees. These pin down the rules the later checks rely on, with
 made-up checks, so the rules hold whatever checks exist: a failure skips
 what depends on it, a skip names the failure that caused it, and a warning

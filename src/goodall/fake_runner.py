@@ -15,7 +15,7 @@ What it promises, and why (ADR 0011):
   and gets back the same answer every time that command runs.
 - Every command it is asked to run is kept in `calls`, in order.
 - The programs named in `real_programs` (git, by default) run for real,
-  through the real runner, because git's actual behaviour is what tests
+  through the real runner, because git's actual behavior is what tests
   verify (AGENTS.md, "Testing"). Use them only in temporary folders.
 - `find_program` finds exactly the programs listed in `installed_programs`
   and no others. A real program is found where it really is; any other is

@@ -16,7 +16,7 @@ from goodall.human_activity import (
     MergedInterruption,
     category_of,
     human_actions_in_time_range,
-    summarise_human_actions,
+    summarize_human_actions,
 )
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -91,7 +91,7 @@ def test_one_interruption_seen_by_a_main_agent_and_its_subagent_counts_once() ->
     assert isinstance(third_call, Interruption)
     assert second_call.interrupted_tool_call_id == "toolu_example_52"
     assert third_call.interrupted_tool_call_id == "toolu_example_53"
-    assert summarise_human_actions(actions).actions_by_kind["interruption"] == 3
+    assert summarize_human_actions(actions).actions_by_kind["interruption"] == 3
     assert INTERRUPTION_MERGE_WINDOW_SECONDS == 2.0
 
 
@@ -107,7 +107,7 @@ def test_every_kind_any_source_produces_has_a_provisional_category() -> None:
     missing = kinds - set(PROVISIONAL_CATEGORIES)
     assert missing == set()
     # A kind nobody has placed yet still has an answer, not an error.
-    assert category_of("example_future_kind") == "uncategorised"
+    assert category_of("example_future_kind") == "uncategorized"
     assert category_of("typed_prompt") == "directed_the_agent"
 
 
@@ -136,7 +136,7 @@ def test_the_summary_counts_by_kind_category_and_source_listing_zeros() -> None:
         activitywatch_export_paths=[ACTIVITYWATCH_EXPORTS / "one_bucket_python_server.json"],
     )
 
-    summary = summarise_human_actions(actions)
+    summary = summarize_human_actions(actions)
 
     assert isinstance(summary, HumanActionSummary)
     assert summary.total == 10

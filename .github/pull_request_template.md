@@ -17,9 +17,9 @@ change. Keep every heading; write "None" under one that does not apply.
 "None", or for EACH new or upgraded package (runtime, development or build):
 
 - What it is for, and why the standard library or an existing dependency was not enough
-- Maintainer or organisation, and the canonical repository
+- Maintainer or organization, and the canonical repository
 - Advisory history (OSV.dev, GitHub Security Advisories) and how quickly past issues were fixed
-- Licence
+- License
 - Direct and transitive dependency count
 - The date these facts were checked
 - Anything you could not verify

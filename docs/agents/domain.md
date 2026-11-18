@@ -43,4 +43,4 @@ silently overriding:
   context, and the result of a real trade-off. One short paragraph each.
 - **`GLOSSARY.md`**: terms only, with no implementation detail.
 - **Beads memory** (`bd remember`, `bd memories <keyword>`): working notes and
-  spike findings, such as observed behaviour of a tool at a given version.
+  spike findings, such as observed behavior of a tool at a given version.

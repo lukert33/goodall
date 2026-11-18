@@ -18,7 +18,7 @@ from goodall.actor_labels import (
     LabelSummary,
     UnmatchedEntry,
     label_transcript,
-    summarise_labels,
+    summarize_labels,
 )
 from goodall.human_actions import parse_human_actions
 
@@ -80,7 +80,7 @@ def test_every_entry_gets_one_label_and_the_rule_that_decided_it() -> None:
         # A coordinating agent's message names no agent, so no identity.
         EntryLabel(25, "u-0025", "user", "ai", "another_agent_sent_message", False, initiated_by="ai"),
     ]
-    # Line 21 is blank: it holds no entry, so it is neither labelled nor
+    # Line 21 is blank: it holds no entry, so it is neither labeled nor
     # reported. Everything else that no rule decided is reported, not guessed.
     assert result.unmatched == [
         UnmatchedEntry(19, None, None, "line is not valid JSON"),
@@ -208,7 +208,7 @@ def test_a_prompt_a_program_sent_is_left_unmatched_while_that_is_undecided() -> 
 
 
 def test_the_summary_shows_how_a_transcript_divides() -> None:
-    summary = summarise_labels(label_transcript(FIXTURES / "actor_labels.jsonl"))
+    summary = summarize_labels(label_transcript(FIXTURES / "actor_labels.jsonl"))
 
     assert summary == LabelSummary(
         rules_version="2",
@@ -247,7 +247,7 @@ def test_the_summary_shows_how_a_transcript_divides() -> None:
 
 def test_the_summary_lists_every_label_and_rule_even_when_unused() -> None:
     # A zero is information: it says the rule ran and matched nothing.
-    summary = summarise_labels(label_transcript(FIXTURES / "typed_prompts.jsonl"))
+    summary = summarize_labels(label_transcript(FIXTURES / "typed_prompts.jsonl"))
 
     assert summary.entries_by_label["harness"] == 0
     assert summary.entries_by_rule["person_rejected_tool_call"] == 0

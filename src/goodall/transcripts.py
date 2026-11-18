@@ -37,7 +37,7 @@ module is on the hook path, so it imports only the standard library
 Where Claude Code's config folder is: `~/.claude` unless the environment
 variable CLAUDE_CONFIG_DIR names another, with transcripts in `projects`
 inside it. CLAUDE_CONFIG_DIR is Claude Code's own setting, not goodall's;
-goodall honours it so it looks where Claude Code writes, and tests point it
+goodall honors it so it looks where Claude Code writes, and tests point it
 (and HOME) at tmp_path so the real home folder, which holds a person's
 private prompts, stays out of reach. The hooks inherit Claude Code's
 environment, so they always look in the right place, but a terminal may not
@@ -189,7 +189,7 @@ FOLDER_PERMISSIONS = 0o700
 # How much is read and written at a time while copying.
 CHUNK_BYTES = 1024 * 1024
 
-# Temporary files end with this, so a leftover one is easy to recognise.
+# Temporary files end with this, so a leftover one is easy to recognize.
 TEMPORARY_SUFFIX = ".goodall-tmp"
 
 # A temporary file older than this was left by a copy that was killed, and

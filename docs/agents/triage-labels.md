@@ -22,4 +22,4 @@ The two category roles map to Beads issue types, not labels: `bug` is type
 Beads labels need no setup; a label exists as soon as an issue carries it.
 These labels are separate from Beads' own statuses (`open`, `in_progress`,
 `blocked`, `closed`), which keep their usual meaning. A `wontfix` issue is
-labelled and then closed.
+labeled and then closed.
