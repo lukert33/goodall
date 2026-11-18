@@ -41,6 +41,7 @@ a file.
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import datetime
 
 from goodall.env_files import EnvEntry
 from goodall.eval_config import EvalConfig
@@ -58,6 +59,8 @@ class CheckContext:
     another program (goodall.runner), and a test gives a fake one.
     `offline` is given too: True when doctor was asked not to use the
     network, so a check that would ask GitHub reports unverified instead.
+    `now` is the time doctor started, in UTC, so a check can tell which
+    work block is active; it is None only in tests of the machinery itself.
 
     Every other field starts empty. A field is filled by the check that
     learns it, and read only by checks that list that check as a
@@ -84,6 +87,7 @@ class CheckContext:
 
     runner: Runner
     offline: bool = False
+    now: datetime | None = None
     local_settings_reading: LocalSettings | list[Failure] | None = None
     local_settings: LocalSettings | None = None
     eval_config: EvalConfig | None = None
