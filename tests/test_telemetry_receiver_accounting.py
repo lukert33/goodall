@@ -45,7 +45,7 @@ from pathlib import Path
 
 import pytest
 
-from goodall import telemetry_receiver
+from goodall import telemetry_receipts, telemetry_receiver
 from goodall.telemetry_receiver import RunningReceiver
 
 # The size of the original failing test's requests. Large enough that a request
@@ -161,6 +161,11 @@ def assert_every_request_accounted_for(
     # Each whole line carries exactly the padding that was sent, so none is cut short.
     for line in telemetry_file.read_bytes().split(b"\n")[:-1] if telemetry_file.exists() else []:
         assert len(json.loads(line)["padding"]) == expected_padding_bytes
+    # Every stored line has its receipt, whatever the client saw: the receiver
+    # finishes both writes even for a client that has given up (ADR 0013).
+    receipt_check = telemetry_receipts.check_receipts(telemetry_file.parent)
+    assert receipt_check.problems() == [], account
+    assert receipt_check.receipt_count == sum(line_counts.values()), account
 
 
 def run_rounds(tmp_path: Path, rounds: int, clients_per_round: int, client_timeout: float) -> list[BurstResult]:

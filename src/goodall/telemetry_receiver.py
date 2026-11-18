@@ -11,6 +11,13 @@ directory):
     POST /v1/metrics  ->  metrics.jsonl
     POST /v1/traces   ->  traces.jsonl
 
+Beside them it keeps a receipt log, `receipts.jsonl` (ADR 0013): one
+receipt per stored request, giving goodall's own sequence number, the time
+of arrival, the file and byte offset of the line, and the length and
+SHA-256 of the body exactly as received. `goodall.telemetry_receipts`
+describes the format and checks a directory's lines against it, which is
+how a lost line, a torn line or a retried request becomes visible.
+
 Who calls it: code that starts a receiver for a stretch of work, and the
 tests. `start_receiver` returns a `RunningReceiver` whose `stop` method shuts
 it down. Running `python -m goodall.telemetry_receiver DIRECTORY` starts one
@@ -20,10 +27,23 @@ Design decisions a reader might otherwise reverse-engineer:
 
 - Standard library only. This sits on the capture path, beside the hooks
   (ADR 0005), and must start even when goodall's optional extras are broken.
-- Each line is written and forced to disk before Claude Code is told the
-  request succeeded. An acknowledged request therefore survives the receiver
-  being killed. The official Collector buffers for a second without syncing,
-  which is one reason ADR 0002 chose this receiver instead.
+- Each line is written and forced to disk, then its receipt is written and
+  forced to disk, and only then is Claude Code told the request succeeded.
+  An acknowledged request therefore survives the receiver being killed, and
+  so does the proof of it. The official Collector buffers for a second
+  without syncing, which is one reason ADR 0002 chose this receiver instead.
+- Sequence numbers are handed out under the same lock that serialises every
+  write, so under concurrent requests they follow the order lines were
+  written in, with no number used twice. A number is taken before the line
+  is written, so a request that fails after that leaves a gap. On start the
+  receiver reads the receipt log it is given and carries on from its
+  highest number, and it holds an exclusive lock on that log while it runs,
+  so a second receiver cannot number requests into the same directory.
+- A file that does not end with a line break (a line torn short by a
+  receiver that was killed mid-write, or by a full disk) gets one before
+  the next line is appended. The fragment is left exactly as it is, on a
+  line of its own with no receipt, so it is visible instead of merged into
+  the next request's line.
 - Files are opened for appending, never truncated, so restarting the
   receiver against the same directory keeps everything already captured.
 - A body is stored byte for byte, except that a raw line break (which in
@@ -57,23 +77,26 @@ could reach. So the receiver:
   Claude Code to send, so it never runs a decompressor on untrusted input;
 - never prints, logs or echoes a body, and only parses it to check it is a
   JSON object;
-- writes only to the three fixed file names, refuses to follow a symbolic
-  link planted at one of them, and creates them readable by their owner only.
+- writes only to the three fixed file names and its receipt log, refuses to
+  follow a symbolic link planted at any of them, and creates them readable
+  by their owner only.
 """
 
 import argparse
 import fcntl
+import hashlib
 import json
 import os
 import signal
 import sys
 import threading
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import FrameType
 
-from goodall import exit_codes
+from goodall import exit_codes, telemetry_receipts
 
 # The only address the receiver listens on.
 LOOPBACK_ADDRESS = "127.0.0.1"
@@ -208,30 +231,65 @@ def as_one_line(body: bytes) -> bytes:
     return body.replace(b"\r", b" ").replace(b"\n", b" ")
 
 
-def append_line(telemetry_file: Path, line: bytes) -> None:
-    """Append one line to a telemetry file and force it to disk before returning.
+def append_line(telemetry_file: Path, line: bytes) -> int:
+    """Append one line to a telemetry file, force it to disk, and return the offset it starts at.
 
     O_APPEND makes the operating system put every write at the current end
     of the file, so nothing is ever overwritten. O_NOFOLLOW refuses to write
-    through a symbolic link planted at the file name. On macOS, os.fsync
-    only hands data to the drive; F_FULLFSYNC asks the drive to store it, so
-    it is used where it exists.
+    through a symbolic link planted at the file name. The offset is read
+    after any torn line has been ended, and is right because every write to
+    the directory happens under the receiver's one lock.
     """
     file_descriptor = os.open(
-        telemetry_file, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600
+        telemetry_file, os.O_RDWR | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600
     )
     try:
-        remaining_bytes = memoryview(line + b"\n")
-        while remaining_bytes:
-            written_count = os.write(file_descriptor, remaining_bytes)
-            remaining_bytes = remaining_bytes[written_count:]
+        end_torn_line(file_descriptor)
+        offset = os.fstat(file_descriptor).st_size
+        write_line(file_descriptor, line)
         force_to_disk(file_descriptor)
     finally:
         os.close(file_descriptor)
+    return offset
+
+
+def write_receipt(file_descriptor: int, receipt_line: bytes) -> None:
+    """Append one receipt to the open receipt log and force it to disk."""
+    end_torn_line(file_descriptor)
+    write_line(file_descriptor, receipt_line)
+    force_to_disk(file_descriptor)
+
+
+def end_torn_line(file_descriptor: int) -> None:
+    """Add a line break if the file's last byte is not one, so a torn fragment never joins the next line.
+
+    Trap: reading the last byte needs the file open for reading too, which
+    is why both files are opened O_RDWR rather than O_WRONLY.
+    """
+    file_size = os.fstat(file_descriptor).st_size
+    if file_size > 0 and os.pread(file_descriptor, 1, file_size - 1) != b"\n":
+        write_all(file_descriptor, b"\n")
+
+
+def write_line(file_descriptor: int, line: bytes) -> None:
+    """Write a line and its line ending to an open file."""
+    write_all(file_descriptor, line + b"\n")
+
+
+def write_all(file_descriptor: int, data: bytes) -> None:
+    """Write every byte, since os.write may write fewer than asked."""
+    remaining_bytes = memoryview(data)
+    while remaining_bytes:
+        written_count = os.write(file_descriptor, remaining_bytes)
+        remaining_bytes = remaining_bytes[written_count:]
 
 
 def force_to_disk(file_descriptor: int) -> None:
-    """Ask the operating system, and on macOS the drive, to store everything written so far."""
+    """Ask the operating system, and on macOS the drive, to store everything written so far.
+
+    On macOS, os.fsync only hands data to the drive; F_FULLFSYNC asks the
+    drive to store it, so it is used where it exists.
+    """
     # F_FULLFSYNC exists only on macOS; Linux (where CI runs) has no such command.
     full_sync_command = getattr(fcntl, "F_FULLFSYNC", None)
     if full_sync_command is not None:
@@ -242,6 +300,42 @@ def force_to_disk(file_descriptor: int) -> None:
             # Some file systems (network shares) do not support it; fall back.
             pass
     os.fsync(file_descriptor)
+
+
+class ReceiptLog:
+    """The open receipt log of one running receiver, and the next sequence number to hand out.
+
+    Opening it takes an exclusive lock on the file, held until `close`, so
+    two receivers never number requests into one directory. The operating
+    system drops the lock if the receiver is killed, so a restart is never
+    blocked by a dead one.
+    """
+
+    def __init__(self, telemetry_directory: Path) -> None:
+        receipt_file = telemetry_directory / telemetry_receipts.RECEIPT_FILE_NAME
+        self.file_descriptor = os.open(
+            receipt_file, os.O_RDWR | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600
+        )
+        try:
+            fcntl.flock(self.file_descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            os.close(self.file_descriptor)
+            raise OSError(
+                f"Another telemetry receiver is already writing to {telemetry_directory}. "
+                "Stop that receiver first, or give this one a different directory."
+            ) from None
+        # Read only once the lock is held, so no other receiver is adding to it.
+        self.next_sequence_number = telemetry_receipts.next_sequence_number(receipt_file)
+
+    def take_sequence_number(self) -> int:
+        """Hand out the next number. Call only while holding the receiver's write lock."""
+        sequence = self.next_sequence_number
+        self.next_sequence_number += 1
+        return sequence
+
+    def close(self) -> None:
+        """Close the log, which also releases the lock."""
+        os.close(self.file_descriptor)
 
 
 class TelemetryRequestHandler(BaseHTTPRequestHandler):
@@ -256,6 +350,7 @@ class TelemetryRequestHandler(BaseHTTPRequestHandler):
     telemetry_directory: Path
     write_lock: threading.Lock
     own_port: int
+    receipt_log: ReceiptLog
 
     # Applied by http.server to the connection's socket.
     timeout = SOCKET_TIMEOUT_SECONDS
@@ -318,10 +413,11 @@ class TelemetryRequestHandler(BaseHTTPRequestHandler):
             self.refuse(refusal, body_was_read=True)
             return
 
-        telemetry_file = self.telemetry_directory / TELEMETRY_FILE_NAME_FOR_PATH[self.path]
+        received_at = datetime.now(UTC).isoformat(timespec="microseconds")
+        telemetry_file_name = TELEMETRY_FILE_NAME_FOR_PATH[self.path]
         try:
             with self.write_lock:
-                append_line(telemetry_file, as_one_line(body))
+                self.store_with_receipt(telemetry_file_name, body, received_at)
         except OSError:
             # 503 is a status OTLP exporters retry, so a full disk or a
             # moved directory does not silently lose the batch.
@@ -334,6 +430,25 @@ class TelemetryRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(SUCCESS_RESPONSE_BODY)))
         self.end_headers()
         self.wfile.write(SUCCESS_RESPONSE_BODY)
+
+    def store_with_receipt(self, telemetry_file_name: str, body: bytes, received_at: str) -> None:
+        """Number the request, store its line, then its receipt, each forced to disk. Call holding the write lock.
+
+        The number is taken first, so if either write fails the number is
+        never used and the gap shows that something went wrong.
+        """
+        sequence = self.receipt_log.take_sequence_number()
+        offset = append_line(self.telemetry_directory / telemetry_file_name, as_one_line(body))
+        receipt = telemetry_receipts.Receipt(
+            sequence=sequence,
+            received_at=received_at,
+            file=telemetry_file_name,
+            offset=offset,
+            body_length=len(body),
+            body_sha256=hashlib.sha256(body).hexdigest(),
+            line_break_replaced=b"\r" in body or b"\n" in body,
+        )
+        write_receipt(self.receipt_log.file_descriptor, telemetry_receipts.receipt_line(receipt))
 
     def refuse(self, refusal: Refusal, body_was_read: bool = False) -> None:
         """Answer with a plain-text refusal and close the connection.
@@ -408,6 +523,7 @@ class RunningReceiver:
     port: int
     server: LoopbackTelemetryServer = field(repr=False)
     serving_thread: threading.Thread = field(repr=False)
+    receipt_log: ReceiptLog = field(repr=False)
 
     @property
     def endpoint_url(self) -> str:
@@ -419,6 +535,8 @@ class RunningReceiver:
         self.server.shutdown()
         self.server.server_close()
         self.serving_thread.join()
+        # Only now that no request is in progress may the receipt log close.
+        self.receipt_log.close()
 
 
 def start_receiver(telemetry_directory: Path, port: int = 0, bind_address: str = LOOPBACK_ADDRESS) -> RunningReceiver:
@@ -428,7 +546,8 @@ def start_receiver(telemetry_directory: Path, port: int = 0, bind_address: str =
     one from the result. `bind_address` exists only so that asking for any
     address other than 127.0.0.1 fails loudly instead of being ignored.
     The directory must already exist: creating it, and choosing where it is,
-    belongs to the caller.
+    belongs to the caller. Raises OSError if another receiver is already
+    writing to the directory, or if its receipt log cannot be opened.
     """
     if bind_address != LOOPBACK_ADDRESS:
         raise ValueError(
@@ -445,9 +564,15 @@ def start_receiver(telemetry_directory: Path, port: int = 0, bind_address: str =
     class Handler(TelemetryRequestHandler):
         pass
 
+    receipt_log = ReceiptLog(telemetry_directory)
     Handler.telemetry_directory = telemetry_directory
     Handler.write_lock = threading.Lock()
-    server = LoopbackTelemetryServer((LOOPBACK_ADDRESS, port), Handler)
+    Handler.receipt_log = receipt_log
+    try:
+        server = LoopbackTelemetryServer((LOOPBACK_ADDRESS, port), Handler)
+    except OSError:
+        receipt_log.close()
+        raise
     # Known only once the socket is bound, when port 0 has become a real port.
     Handler.own_port = server.server_port
     serving_thread = threading.Thread(
@@ -459,6 +584,7 @@ def start_receiver(telemetry_directory: Path, port: int = 0, bind_address: str =
         port=server.server_port,
         server=server,
         serving_thread=serving_thread,
+        receipt_log=receipt_log,
     )
 
 
