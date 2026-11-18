@@ -1,4 +1,4 @@
-# Actor labelling rules, version 2
+# Actor labelling rules, version 3
 
 These are the rules `goodall.actor_labels` uses to give every entry of one
 Claude Code transcript an actor label: `human` (the person), `ai` (a model) or
@@ -66,7 +66,7 @@ here.
 One entry gets one label: the actor who produced what the entry is for, its
 **primary producer**. When the entry also holds words from another actor, it
 is marked `mixed`. Whether a rule's entries are mixed is fixed by the rule, so
-the list below says it for each. In version 2 the mixed entries are all
+the list below says it for each. In version 3 the mixed entries are all
 `human`: a typed prompt with harness reminders in front, and the person's
 commands, decisions, refusals and interruptions, which the harness writes up
 in its own tags and fixed words.
@@ -89,7 +89,9 @@ synthetic and trimmed to the keys the rule looks at.
 
 3. **`person_rejected_tool_call`** → `human`, mixed. The person refused a tool
    call. The harness wrote the result, but the decision, and any feedback, is
-   the person's.
+   the person's. Since version 3 (human-action rules version 3) this also
+   covers a result whose text is not recognised but whose
+   `permissionDecision` has source `user_reject`.
 
    `{"type":"user","message":{"content":[{"type":"tool_result","is_error":true,"content":"The user doesn't want to proceed with this tool use. ... the user said:\nKeep the file."}]}}`
 
@@ -195,7 +197,7 @@ reported as unmatched before any rule is tried, with the reason "prompt sent
 through the SDK: whether that is the person is undecided". See "Undecided,
 waiting for evidence" in [human-action-rules.md](human-action-rules.md).
 
-## Known to be wrong or unknowable in version 2
+## Known to be wrong or unknowable in version 3
 
 - **`custom-title`** entries are labelled `ai` (rule 4c), but may record a
   name the person typed when renaming a Claude session; the entry does not

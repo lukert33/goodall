@@ -38,7 +38,7 @@ from typing import Any, Literal
 
 # Raise this whenever a detection rule changes, so derived records say which
 # rules produced them (ADR 0004).
-RULES_VERSION = "2"
+RULES_VERSION = "3"
 
 
 @dataclass(frozen=True)
@@ -87,11 +87,12 @@ class ClaudeCodeMarkers:
     slash_command_message_tags: tuple[str, str]
     slash_command_arguments_tags: tuple[str, str]
     # Values of `permissionDecision.source` on a tool result entry. The first
-    # three are the person at Claude Code's permission prompt; the others
+    # four are the person at Claude Code's permission prompt; the others
     # decided without asking them. Any other value is reported as unfamiliar.
     approved_once_source: str
     approved_always_source: str
     dismissed_source: str
+    rejected_source: str
     known_permission_sources: tuple[str, ...]
     # The tool the agent presents a plan with, and how its result begins when
     # the person approved the plan.
@@ -162,7 +163,8 @@ def claude_code_markers() -> ClaudeCodeMarkers:
         approved_once_source="user_temporary",
         approved_always_source="user_permanent",
         dismissed_source="user_abort",
-        known_permission_sources=("user_temporary", "user_permanent", "user_abort", "config", "hook"),
+        rejected_source="user_reject",
+        known_permission_sources=("user_temporary", "user_permanent", "user_abort", "user_reject", "config", "hook"),
         plan_tool_name="ExitPlanMode",
         plan_approved_result_prefix="User has approved your plan",
         queued_command_attachment_type="queued_command",
@@ -256,7 +258,9 @@ class ToolCallRejection:
     `decision` is always "reject", Inspect's ApprovalEvent value. `feedback`
     is what the person typed with the refusal, or None if they typed nothing.
     `tool_name` is the tool the agent asked for, when the call is in the same
-    transcript.
+    transcript. `rule` says which of the two rules found it: the refusal's
+    fixed text (the usual case) or, when the text is not recognised, the
+    permission decision Claude Code wrote on the entry.
     """
 
     line_number: int
@@ -267,10 +271,10 @@ class ToolCallRejection:
     tool_name: str | None
     feedback: str | None
     transcript_path: Path | None = field(default=None, compare=False)
+    rule: Literal["rejection_from_tool_result", "rejection_from_permission_decision"] = "rejection_from_tool_result"
     decision: Literal["reject"] = field(default="reject", init=False)
     source: str = field(default=SOURCE, init=False)
     kind: str = field(default="tool_call_rejection", init=False)
-    rule: str = field(default="rejection_from_tool_result", init=False)
     duration_seconds: float | None = field(default=None, init=False)
 
 
@@ -877,8 +881,9 @@ def actions_from_user_entry(
         # The permission decision is written on the entry, not on a result,
         # so it is read only when the entry answers exactly one call. When the
         # person already acted on that call in another way (answering the
-        # question tool writes a one-off approval too), the decision is part
-        # of that action and is not counted again.
+        # question tool writes a one-off approval too, and a refusal found by
+        # its text carries a "user_reject" decision), the decision is part of
+        # that action and is not counted again.
         if len(content.tool_results) == 1 and not actions:
             decision = permission_decision_from_entry(entry, place, content.tool_results[0], markers, memory)
             if decision is not None:
@@ -1230,15 +1235,16 @@ def permission_decision_from_entry(
     tool_result: dict[str, Any],
     markers: ClaudeCodeMarkers,
     memory: TranscriptMemory,
-) -> ToolCallApproval | PermissionPromptDismissal | None:
-    """Apply the two rules that read the person's permission decision on a tool result entry.
+) -> ToolCallApproval | PermissionPromptDismissal | ToolCallRejection | None:
+    """Apply the three rules that read the person's permission decision on a tool result entry.
 
     Newer Claude Code versions (seen from 2.1.289) write `permissionDecision`
     on every tool result entry, saying who allowed or refused the call. Only
     the sources naming the person count; "config" (settings, the permission
     mode or the auto-mode classifier) and "hook" decided without asking them.
-    A refusal the person chose leaves no decision here and is found by
-    `rejection_from_tool_result` instead.
+    A refusal the person chose is normally found by its text, by
+    `rejection_from_tool_result`, before this is read; older versions wrote
+    no decision for it, and 2.1.326 was seen writing "user_reject".
     """
     permission_decision = entry.get("permissionDecision")
     if not isinstance(permission_decision, dict):
@@ -1246,6 +1252,9 @@ def permission_decision_from_entry(
     dismissal = dismissal_from_permission_decision(permission_decision, place, tool_result, markers, memory)
     if dismissal is not None:
         return dismissal
+    rejection = rejection_from_permission_decision(permission_decision, place, tool_result, markers, memory)
+    if rejection is not None:
+        return rejection
     return approval_from_permission_decision(permission_decision, place, tool_result, markers, memory)
 
 
@@ -1270,6 +1279,38 @@ def dismissal_from_permission_decision(
         transcript_path=place.transcript_path,
         tool_call_id=tool_call_id if isinstance(tool_call_id, str) else None,
         tool_name=tool_name_for(tool_result, memory),
+    )
+
+
+def rejection_from_permission_decision(
+    permission_decision: dict[str, Any],
+    place: EntryPlace,
+    tool_result: dict[str, Any],
+    markers: ClaudeCodeMarkers,
+    memory: TranscriptMemory,
+) -> ToolCallRejection | None:
+    """Rule: a refusal whose source is "user_reject" is the person rejecting the call.
+
+    It is reached only when `rejection_from_tool_result` did not recognise the
+    result's text, so a change in Claude Code's wording does not lose the
+    rejection. Feedback is not looked for: without the known text there is no
+    reliable place where it starts.
+    """
+    if permission_decision.get("source") != markers.rejected_source:
+        return None
+    if permission_decision.get("decision") != "reject":
+        return None
+    tool_call_id = tool_result.get("tool_use_id")
+    return ToolCallRejection(
+        line_number=place.line_number,
+        entry_id=place.entry_id,
+        session_id=place.session_id,
+        timestamp=place.timestamp,
+        transcript_path=place.transcript_path,
+        tool_call_id=tool_call_id if isinstance(tool_call_id, str) else None,
+        tool_name=tool_name_for(tool_result, memory),
+        feedback=None,
+        rule="rejection_from_permission_decision",
     )
 
 

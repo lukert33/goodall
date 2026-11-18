@@ -93,7 +93,7 @@ def test_every_action_says_its_source_the_rule_that_found_it_and_its_file() -> N
         assert action.transcript_path == transcript_path
         # A transcript entry is a moment, not a stretch of time.
         assert action.duration_seconds is None
-    assert result.rules_version == RULES_VERSION == "2"
+    assert result.rules_version == RULES_VERSION == "3"
 
 
 def test_interruptions_say_what_was_interrupted() -> None:
@@ -399,6 +399,45 @@ def test_permission_decisions_keep_apart_approving_once_approving_always_and_dis
             line_number=13, entry_id="u-0013", reason="unknown permission decision source 'example_future_source'"
         ),
     ]
+
+
+def test_a_refusal_with_permission_source_user_reject_is_a_rejection_counted_once() -> None:
+    # Claude Code 2.1.326 writes source "user_reject" when the person refuses
+    # a call at the permission prompt. It is a known source, not unfamiliar.
+    result = parse_human_actions(FIXTURES / "user_reject_decisions.jsonl")
+
+    assert result.actions[0] == ToolCallRejection(
+        line_number=2,
+        entry_id="u-0002",
+        session_id="session-r",
+        timestamp="2026-04-02T10:00:09.000Z",
+        tool_call_id="toolu_example_31",
+        tool_name="Write",
+        feedback="Write it somewhere else.",
+    )
+    # The rejection text found it first, so the decision is not counted again.
+    lines_with_an_action = [action.line_number for action in result.actions]
+    assert lines_with_an_action.count(2) == 1
+    assert result.unfamiliar_entries == []
+
+
+def test_a_user_reject_decision_is_a_rejection_even_when_the_text_is_unfamiliar() -> None:
+    # The decision alone names the person, so a change in the refusal's
+    # wording does not make the rejection disappear.
+    result = parse_human_actions(FIXTURES / "user_reject_decisions.jsonl")
+
+    assert result.actions[1] == ToolCallRejection(
+        line_number=4,
+        entry_id="u-0004",
+        session_id="session-r",
+        timestamp="2026-04-02T10:01:04.000Z",
+        tool_call_id="toolu_example_32",
+        tool_name="Bash",
+        feedback=None,
+        rule="rejection_from_permission_decision",
+    )
+    assert result.actions[1].decision == "reject"
+    assert len(result.actions) == 2
 
 
 def test_answers_to_the_agents_questions_and_plan_approvals_are_found() -> None:
