@@ -15,6 +15,7 @@ import contextlib
 import io
 from pathlib import Path
 
+import goodall
 from goodall import cli, exit_codes
 from goodall.fake_runner import FakeRunner
 from goodall.terminal import Terminal
@@ -239,3 +240,12 @@ def test_unknown_command_is_usage_error() -> None:
     exit_code, output = run_goodall(["no-such-command"])
     assert exit_code == exit_codes.USAGE_ERROR
     assert "invalid choice" in output
+
+
+def test_goodall_version_prints_the_version_and_exits_0() -> None:
+    # goodall doctor runs `goodall --version` to see that the goodall a
+    # Claude Code hook names starts, so it must start nothing and need no setup.
+    exit_code, printed = run_goodall(["--version"])
+
+    assert exit_code == exit_codes.SUCCESS
+    assert printed == f"goodall {goodall.__version__}\n"
