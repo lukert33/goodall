@@ -80,6 +80,14 @@ HEADER_FENCE = "+++"
 # taken from its last heartbeat (the glossary's "inferred end").
 END_STATES = ("clean", "abnormal", "inferred")
 
+# Whether a work block's telemetry was captured (PROVISIONAL, the owner's to
+# confirm): `captured` means requests were stored and goodall never found its
+# receiver down; `incomplete` that requests were stored but the receiver was
+# down for part of the work block; `missing` that no request was stored at
+# all. A record without the field says nothing either way, because it was
+# written before goodall captured telemetry, or goodall never tried to.
+TELEMETRY_STATES = ("captured", "incomplete", "missing")
+
 # The workstream recorded when goodall cannot tell which workstream a work
 # block was for: its marker was damaged and named none it could use. Never a
 # real workstream (the eval config reader refuses it as a name), and allowed
@@ -177,6 +185,9 @@ class WorkBlockRecord:
     running, and both set once it has ended. `claude_sessions` holds the
     Claude Code session ids of the Claude sessions that fell inside it. It is
     a tuple, not a list, so a record cannot be changed after it is built.
+    `telemetry` is one of TELEMETRY_STATES once the work block has ended, or
+    None when goodall does not say (while running, and in records written
+    before goodall captured telemetry).
     """
 
     schema_version: int
@@ -188,6 +199,7 @@ class WorkBlockRecord:
     end_state: str | None
     machine: MachineFacts
     claude_sessions: tuple[str, ...]
+    telemetry: str | None = None
 
 
 @dataclass(frozen=True)
@@ -324,6 +336,7 @@ def build_work_block_record(
     end_state: str | None = None,
     claude_sessions: Collection[str] = (),
     suffix: str | None = None,
+    telemetry: str | None = None,
 ) -> WorkBlockRecord:
     """Build a work block record, giving it an id from the time it started.
 
@@ -343,6 +356,7 @@ def build_work_block_record(
         end_state=end_state,
         machine=machine,
         claude_sessions=tuple(claude_sessions),
+        telemetry=telemetry,
     )
 
 
@@ -447,7 +461,10 @@ def _render_work_block_record(record: WorkBlockRecord) -> str:
     """Write a work block record as indented JSON, one field per line.
 
     Unlike TOML, JSON has null, so an empty optional field is written as null
-    rather than left out: a reader sees every field the schema has.
+    rather than left out: a reader sees every field the schema has. The one
+    exception is `telemetry`, added after records were already being
+    written: it is left out when goodall does not say, so a running work
+    block's marker, and any record without it, look exactly as before.
     """
     ended_at = None
     if record.ended_at is not None:
@@ -469,6 +486,8 @@ def _render_work_block_record(record: WorkBlockRecord) -> str:
         },
         "claude_sessions": list(record.claude_sessions),
     }
+    if record.telemetry is not None:
+        values["telemetry"] = record.telemetry
     return json.dumps(values, indent=2, ensure_ascii=False) + "\n"
 
 
@@ -672,6 +691,7 @@ def parse_work_block_record(text: str) -> ParseResult[WorkBlockRecord]:
     end_state = reader.optional_text("end_state")
     machine = _read_machine_facts(reader)
     claude_sessions = reader.text_list("claude_sessions")
+    telemetry = reader.optional_text("telemetry")
     reader.report_unknown_keys()
 
     required_values = [schema_version, record_id, contributor, workstream, started_at, machine, claude_sessions]
@@ -691,6 +711,7 @@ def parse_work_block_record(text: str) -> ParseResult[WorkBlockRecord]:
         end_state=end_state,
         machine=machine,
         claude_sessions=tuple(claude_sessions),
+        telemetry=telemetry,
     )
     return ParseResult(record=work_block, problems=problems)
 
@@ -991,6 +1012,11 @@ def _validate_work_block_record(
         checker.required_text("machine.claude_code_version", machine.claude_code_version)
     for claude_session in record.claude_sessions:
         checker.claude_session("claude_sessions", claude_session)
+    if record.telemetry is not None and record.telemetry not in TELEMETRY_STATES:
+        checker.add(
+            "telemetry",
+            "telemetry must be captured, incomplete or missing, or left out when goodall does not say; correct it.",
+        )
 
 
 def _validate_work_block_fix(checker: "_Checker", record: WorkBlockFix, workstreams: Collection[str] | None) -> None:
