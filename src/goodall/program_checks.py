@@ -14,8 +14,9 @@ They fall under three headings, each with its own id prefix:
   is required only when a secret exists).
 - "Eval account": this macOS user account is a standard account, not an
   administrator.
-- "Record repo": the record repo folder is a git repository. Later checks
-  on the record repo (its remote and visibility) belong here too.
+- "Record repo": the record repo folder is a git repository. The checks of
+  where it is shared (its remote, and its visibility on GitHub) appear
+  under this heading too, from goodall.remote_checks.
 
 The dependency edges, chosen so one broken thing is one failure:
 

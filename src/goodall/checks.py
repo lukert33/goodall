@@ -45,6 +45,7 @@ from dataclasses import dataclass, field
 from goodall.env_files import EnvEntry
 from goodall.eval_config import EvalConfig
 from goodall.local_settings import LocalSettings
+from goodall.remote_addresses import RecordRepoRemote
 from goodall.runner import Runner
 from goodall.terminal import CheckResult, CheckStatus, Failure
 
@@ -55,6 +56,8 @@ class CheckContext:
 
     `runner` is given when the context is made: it is how a check starts
     another program (goodall.runner), and a test gives a fake one.
+    `offline` is given too: True when doctor was asked not to use the
+    network, so a check that would ask GitHub reports unverified instead.
 
     Every other field starts empty. A field is filled by the check that
     learns it, and read only by checks that list that check as a
@@ -70,14 +73,21 @@ class CheckContext:
       env file.
     - `shared_env_file_entries` is the same for the shared env file, once
       it is known to hold no secrets.
+    - `record_repo_remote` is where the record repo is shared: on GitHub,
+      elsewhere, nowhere, or unclear (goodall.remote_addresses).
+    - `github_signed_in` is True once gh is known to be signed in to
+      GitHub, so the visibility check asks gh only when it can answer.
     """
 
     runner: Runner
+    offline: bool = False
     local_settings_reading: LocalSettings | list[Failure] | None = None
     local_settings: LocalSettings | None = None
     eval_config: EvalConfig | None = None
     env_file_entries: list[EnvEntry] | None = None
     shared_env_file_entries: list[EnvEntry] | None = None
+    record_repo_remote: RecordRepoRemote | None = None
+    github_signed_in: bool = False
 
 
 @dataclass(frozen=True)

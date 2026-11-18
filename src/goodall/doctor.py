@@ -45,6 +45,7 @@ needing attention, and so reads a new one correctly.
 from goodall import exit_codes
 from goodall.checks import Check, CheckContext, run_checks
 from goodall.program_checks import PROGRAM_CHECKS
+from goodall.remote_checks import REMOTE_CHECKS
 from goodall.runner import Runner
 from goodall.secrets_checks import CHECKS_UNVERIFIABLE_WITHOUT_A_SECRET, SECRETS_CHECKS
 from goodall.settings_checks import SETTINGS_CHECKS
@@ -55,19 +56,22 @@ DOCTOR_JSON_SCHEMA_VERSION = 1
 
 # Every check doctor runs, in order. The settings checks come first, because
 # they say which eval this account belongs to; then the checks that run
-# other programs (tools, the eval account, the record repo); then the checks
-# of the env file and the shared env file (secrets). The check that the
-# secrets manager's command is installed is among the secrets checks, since
-# it waits for the env file, though the report shows it under "Tools".
-DOCTOR_CHECKS: list[Check] = [*SETTINGS_CHECKS, *PROGRAM_CHECKS, *SECRETS_CHECKS]
+# other programs (tools, the eval account, the record repo); then where the
+# record repo is shared (its remote, gh's sign-in, its visibility); then the
+# checks of the env file and the shared env file (secrets). A check is shown
+# under its group's heading wherever it runs: gh's sign-in under "Tools",
+# and the secrets manager's command, which waits for the env file, too.
+DOCTOR_CHECKS: list[Check] = [*SETTINGS_CHECKS, *PROGRAM_CHECKS, *REMOTE_CHECKS, *SECRETS_CHECKS]
 
 
-def run_doctor(terminal: Terminal, runner: Runner, as_json: bool) -> int:
+def run_doctor(terminal: Terminal, runner: Runner, as_json: bool, offline: bool = False) -> int:
     """Run every check, show the results, and return the exit code.
 
     `runner` is how the checks start other programs (goodall.runner).
+    `offline` leaves out every question to GitHub: those checks are
+    reported as unverified, which neither passes nor fails them.
     """
-    results = run_checks(DOCTOR_CHECKS, CheckContext(runner=runner))
+    results = run_checks(DOCTOR_CHECKS, CheckContext(runner=runner, offline=offline))
     if as_json:
         terminal.write_json(doctor_document(results))
     else:
