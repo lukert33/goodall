@@ -81,6 +81,15 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="<name>",
         help="The workstream this work block is for. Defaults to your main workstream from local settings.",
     )
+    start.add_argument(
+        "--telemetry-port",
+        metavar="<port>",
+        type=int,
+        help=(
+            "The port goodall's telemetry receiver listens on, which Claude Code's OTEL_EXPORTER_OTLP_ENDPOINT "
+            "must name. Defaults to a free port, which goodall shows."
+        ),
+    )
     start.set_defaults(command_name="start")
 
     stop = commands.add_parser("stop", help="End the current work block, which closes the prompt gate.")
@@ -344,7 +353,9 @@ def main(
     if command_name == "status":
         return run_status(terminal, runner, clock, as_json=arguments.json)
     if command_name == "start":
-        return run_start(terminal, runner, clock, workstream=arguments.workstream)
+        return run_start(
+            terminal, runner, clock, workstream=arguments.workstream, telemetry_port=arguments.telemetry_port
+        )
     if command_name == "stop":
         return run_stop(terminal, runner, clock)
     if command_name == "fixblock":

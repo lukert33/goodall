@@ -34,7 +34,7 @@ from pathlib import Path
 import pytest
 
 from goodall import cli
-from goodall.fake_runner import FakeRunner
+from goodall.fake_runner import FakeRunner, PretendProgram
 from goodall.terminal import Terminal
 
 CLAUDE_SESSION = "0f6c1d2e-3a4b-4c5d-8e9f-a0b1c2d3e4f5"
@@ -496,6 +496,10 @@ def run_goodall(
             monkeypatch.delenv(name)
     runner = FakeRunner()
     runner.answer(["claude", "--version"], standard_output="2.1.274 (Claude Code)\n")
+    # goodall start's telemetry receiver, which these tests do not look at.
+    runner.answer_background(
+        [sys.executable, "-I", "-m", "goodall.telemetry_receiver"], lambda: PretendProgram(ready_line='{"port": 4318}')
+    )
     standard_output = io.StringIO()
     standard_error = io.StringIO()
     terminal = Terminal(standard_output=standard_output, standard_error=standard_error)

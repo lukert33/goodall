@@ -51,7 +51,15 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import goodall
-from goodall import exit_codes, hook_problems, records, transcripts, work_blocks
+from goodall import (
+    exit_codes,
+    hook_problems,
+    records,
+    telemetry_capture,
+    telemetry_receivers,
+    transcripts,
+    work_blocks,
+)
 from goodall.eval_config import EvalForThisAccount, read_eval_for_this_account
 from goodall.folders import describe_folder_problem, log_directory_unreachable_failure, record_repo_missing_failure
 from goodall.local_settings import read_local_settings
@@ -68,8 +76,20 @@ Clock = Callable[[], datetime]
 VERSION_PATTERN = re.compile(r"\d+(\.\d+)+[0-9A-Za-z.+-]*")
 
 
-def run_start(terminal: Terminal, runner: Runner, clock: Clock, workstream: str | None) -> int:
-    """Begin a work block, say what happened, and return the exit code."""
+def run_start(
+    terminal: Terminal, runner: Runner, clock: Clock, workstream: str | None, telemetry_port: int | None = None
+) -> int:
+    """Begin a work block and its telemetry receiver, say what happened, and return the exit code.
+
+    `telemetry_port` is the port the person asked the receiver to listen
+    on, or None for any free port (owner decision Q24). A receiver that
+    does not start is a warning, not a failure: the work block has started
+    and its transcripts are copied (ADR 0002 calls them the record of last
+    resort), and refusing to record at all would lose more.
+    """
+    if telemetry_port is not None and not MINIMUM_PORT <= telemetry_port <= MAXIMUM_PORT:
+        terminal.show_failure(telemetry_port_invalid_failure())
+        return exit_codes.USAGE_ERROR
     eval_reading = find_eval_for_work_blocks()
     if isinstance(eval_reading, list):
         terminal.show_failures(eval_reading)
@@ -86,7 +106,9 @@ def run_start(terminal: Terminal, runner: Runner, clock: Clock, workstream: str 
     show_settling(terminal, settling)
     active = work_blocks.active_work_block(log_directory, now)
     if active is not None:
-        return report_already_active(terminal, active, workstream)
+        exit_code = report_already_active(terminal, active, workstream)
+        make_sure_receiver_runs(terminal, runner, log_directory, active.id, telemetry_port, now)
+        return exit_code
 
     running_record = records.build_work_block_record(
         contributor=eval_reading.contributor.id,
@@ -107,11 +129,86 @@ def run_start(terminal: Terminal, runner: Runner, clock: Clock, workstream: str 
         terminal.show_failure(marker_in_the_way_failure())
         return exit_codes.ERROR
     work_blocks.record_heartbeat(log_directory, now)
+    # Started after the marker, so a receiver never runs without a work
+    # block. Trap: if goodall were killed between the two, the work block
+    # would run with no receiver; the hook does not notice that case (it
+    # checks only a receiver goodall recorded), but status and stop do.
+    receiver_start = telemetry_receivers.start_receiver(
+        runner, log_directory, running_record.id, port_or_any(telemetry_port), now
+    )
     terminal.show_paragraph(
         f"Started a work block on {workstream} at {describe_moment(running_record.started_at)}. "
         "Goodall is recording until you run goodall stop."
     )
+    show_receiver_start(terminal, receiver_start, telemetry_port)
     return exit_codes.SUCCESS
+
+
+# The ports a person may ask the receiver to listen on.
+MINIMUM_PORT = 1
+MAXIMUM_PORT = 65535
+
+
+def port_or_any(telemetry_port: int | None) -> int:
+    """The port asked for, or the receiver's word for any free port."""
+    if telemetry_port is None:
+        return telemetry_receivers.ANY_FREE_PORT
+    return telemetry_port
+
+
+def show_receiver_start(
+    terminal: Terminal, receiver_start: telemetry_receivers.ReceiverStart, telemetry_port: int | None
+) -> None:
+    """Say prominently where the receiver listens, or warn that it did not start."""
+    receiver_record = receiver_start.record
+    if receiver_record is None:
+        assert receiver_start.problem is not None
+        terminal.show_warnings([receiver_not_started_failure(receiver_start.problem, telemetry_port)])
+        return
+    show_receiver_address(terminal, receiver_record)
+
+
+def show_receiver_address(terminal: Terminal, receiver_record: telemetry_capture.ReceiverRecord) -> None:
+    """The receiver's address as a fact of its own, and what Claude Code needs to send there."""
+    terminal.show_facts([("Telemetry receiver", f"{receiver_record.endpoint_url} (port {receiver_record.port})")])
+    terminal.show_paragraph(
+        f"Goodall's telemetry receiver is listening on port {receiver_record.port}. Claude Code sends its "
+        f"telemetry there when OTEL_EXPORTER_OTLP_ENDPOINT is {receiver_record.endpoint_url}."
+    )
+
+
+def make_sure_receiver_runs(
+    terminal: Terminal,
+    runner: Runner,
+    log_directory: Path,
+    work_block_id: str,
+    telemetry_port: int | None,
+    now: datetime,
+) -> None:
+    """For a work block already active: say where its receiver listens, or start it again if it has stopped.
+
+    Restarted on the port it had, unless the person asked for another, so
+    Claude Code, which was told that port, reaches it again. The time it was
+    down is noted, so the work block's record says its telemetry is incomplete.
+    """
+    status = telemetry_receivers.receiver_status(runner, log_directory, work_block_id)
+    if status.running and status.record is not None:
+        message = f"Its telemetry receiver is listening on {status.record.endpoint_url}."
+        if telemetry_port is not None and telemetry_port != status.record.port:
+            message += (
+                f" It keeps that port while it runs; to use port {telemetry_port}, run goodall stop, then goodall "
+                f"start --telemetry-port {telemetry_port}."
+            )
+        terminal.show_paragraph(message)
+        return
+    telemetry_capture.note_receiver_down(log_directory, work_block_id, now, telemetry_capture.NOT_RUNNING)
+    port = telemetry_port
+    if port is None and status.record is not None:
+        port = status.record.port
+    receiver_start = telemetry_receivers.start_receiver(runner, log_directory, work_block_id, port_or_any(port), now)
+    if receiver_start.record is not None:
+        terminal.show_paragraph("Its telemetry receiver was not running, so goodall started it again.")
+    show_receiver_start(terminal, receiver_start, telemetry_port)
 
 
 def report_already_active(terminal: Terminal, active: work_blocks.RunningWorkBlock, workstream_asked_for: str) -> int:
@@ -187,7 +284,8 @@ def run_stop(terminal: Terminal, runner: Runner, clock: Clock) -> int:
         terminal.show_failure(nothing_to_stop_failure())
         return exit_codes.ERROR
 
-    ended_record = end_work_block(log_directory, active, now, "clean")
+    telemetry = telemetry_receivers.finish_telemetry(runner, log_directory, active.id, now)
+    ended_record = end_work_block(log_directory, active, now, "clean", telemetry)
     waiting_file = work_blocks.WorkBlockFiles(log_directory).unrecorded_file(ended_record.id)
     write_of_this_block = write_one_unrecorded_record(runner, eval_reading, waiting_file)
     if not write_of_this_block.committed:
@@ -203,23 +301,46 @@ def run_stop(terminal: Terminal, runner: Runner, clock: Clock) -> int:
         f"{describe_moment(ended_record.started_at)} to {describe_moment(now)} ({describe_length(ended_record)}). "
         + where_the_record_went(write_of_this_block.push_state)
     )
-    terminal.show_facts(
-        [
-            ("Id", ended_record.id),
-            ("File", str(write_of_this_block.path)),
-            ("Claude sessions", str(len(ended_record.claude_sessions))),
-        ]
-    )
+    facts = [
+        ("Id", ended_record.id),
+        ("File", str(write_of_this_block.path)),
+        ("Claude sessions", str(len(ended_record.claude_sessions))),
+    ]
+    telemetry_description = describe_telemetry(log_directory, ended_record)
+    if telemetry_description is not None:
+        facts.append(("Telemetry", telemetry_description))
+    terminal.show_facts(facts)
     terminal.show_warnings(write_of_this_block.failures)
     return exit_codes.SUCCESS
 
 
+def describe_telemetry(log_directory: Path, record: records.WorkBlockRecord) -> str | None:
+    """What an ended work block's record says about its telemetry, for a person; None when it says nothing."""
+    request_count = telemetry_capture.stored_request_count(log_directory, record.id)
+    requests = f"{request_count} requests"
+    if request_count == 1:
+        requests = "1 request"
+    if record.telemetry == "captured":
+        return f"captured, {requests}"
+    if record.telemetry == "incomplete":
+        return f"incomplete: the receiver was not running for part of the work block; {requests} kept"
+    if record.telemetry == "missing":
+        return "missing: no telemetry reached goodall's receiver"
+    return None
+
+
 def end_work_block(
-    log_directory: Path, running: work_blocks.RunningWorkBlock, ended_at: datetime, end_state: str
+    log_directory: Path,
+    running: work_blocks.RunningWorkBlock,
+    ended_at: datetime,
+    end_state: str,
+    telemetry: str | None,
 ) -> records.WorkBlockRecord:
     """End a running work block: save its finished record in the log directory, then remove its marker.
 
-    The record gets every Claude session its heartbeats carried. The order
+    The record gets every Claude session its heartbeats carried, and
+    `telemetry`, which the caller works out once the work block's receiver
+    has stopped (goodall.telemetry_receivers.finish_telemetry). The order
     matters: the record is saved before the marker goes, so the work block
     is never lost in between. Returns the finished record.
     """
@@ -232,6 +353,7 @@ def end_work_block(
         ended_at=ended_at,
         end_state=end_state,
         claude_sessions=work_blocks.read_claude_sessions(log_directory, running.id),
+        telemetry=telemetry,
     )
     work_blocks.save_unrecorded(log_directory, ended_record)
     work_blocks.remove_marker(log_directory, running.id)
@@ -376,6 +498,10 @@ def settle(runner: Runner, eval_reading: EvalForThisAccount, now: datetime) -> S
        hooks copy as Claude works, but a killed Claude Code fires none, so
        this is what guarantees nothing is left behind.
     4. What hooks noted they could not do is taken, to be reported once.
+
+    The telemetry receiver of each work block closed in step 1 is stopped
+    before its record is written, and any other receiver whose work block
+    is not the active one is stopped too (goodall.telemetry_receivers).
     """
     log_directory = eval_reading.local_settings.log_directory.path
     closings = []
@@ -385,13 +511,19 @@ def settle(runner: Runner, eval_reading: EvalForThisAccount, now: datetime) -> S
         if closing is not None:
             closings.append(closing)
     if isinstance(marker, work_blocks.RunningWorkBlock) and marker.is_overdue(now):
-        end_work_block(log_directory, marker, marker.last_heartbeat_at, "inferred")
+        telemetry = telemetry_receivers.finish_telemetry(runner, log_directory, marker.id, now)
+        end_work_block(log_directory, marker, marker.last_heartbeat_at, "inferred", telemetry)
         closings.append(
             f"Your work block on {marker.record.workstream}, started {describe_moment(marker.record.started_at)}, "
             f"was left running: nobody ran goodall stop, and nothing happened in it for more than "
             f"{describe_duration(work_blocks.IDLE_LIMIT)}. Goodall closed it at its last heartbeat, "
             f"{describe_moment(marker.last_heartbeat_at)}, so the time after that is not counted as work."
         )
+    active = work_blocks.active_work_block(log_directory, now)
+    active_work_block_id = None
+    if active is not None:
+        active_work_block_id = active.id
+    telemetry_receivers.stop_receivers_left_running(runner, log_directory, active_work_block_id, now)
     return Settling(
         closings=closings,
         writes=write_unrecorded_records(runner, eval_reading),
@@ -422,6 +554,8 @@ def close_damaged_work_block(
             " Not even when that work block started could be recovered, so no record of it was written. Please tell "
             "the researcher who runs the eval, with the path above."
         )
+    telemetry = telemetry_receivers.finish_telemetry(runner, log_directory, recovered.id, now)
+    recovered = dataclasses.replace(recovered, telemetry=telemetry)
     work_blocks.save_unrecorded(log_directory, recovered)
     if recovered.workstream == records.UNKNOWN_WORKSTREAM:
         return message + (
@@ -612,6 +746,65 @@ def marker_in_the_way_failure() -> Failure:
         what_happened="No work block was started: another goodall command was tidying up the last one just now.",
         why="Goodall keeps one work block at a time, and will not start a new one until the last is closed.",
         what_to_do_next="Run goodall start again. If this keeps happening, run goodall status to see what it says.",
+    )
+
+
+def telemetry_port_invalid_failure() -> Failure:
+    """The failure for a --telemetry-port that no program could listen on."""
+    return Failure(
+        kind="telemetry_port_invalid",
+        what_happened="The --telemetry-port given is not a port. No work block was started.",
+        why=f"A port is a whole number from {MINIMUM_PORT} to {MAXIMUM_PORT}.",
+        what_to_do_next=(
+            "Give a port such as 4318, the usual one for OpenTelemetry over HTTP, or leave --telemetry-port out "
+            "and goodall picks a free one and shows it."
+        ),
+        commands_to_try=("goodall start --telemetry-port 4318",),
+    )
+
+
+def receiver_not_started_failure(problem: str, telemetry_port: int | None) -> Failure:
+    """The warning for a work block that started while its telemetry receiver did not."""
+    what_to_do_next = (
+        "Run goodall start again: with a work block already active it starts only the receiver. If it fails "
+        "again, tell the researcher who runs the eval."
+    )
+    if telemetry_port is not None:
+        what_to_do_next = (
+            f"If another program is using port {telemetry_port}, stop it, or choose another port and tell Claude "
+            "Code, then run goodall start --telemetry-port with that port: with a work block already active it "
+            "starts only the receiver."
+        )
+    return Failure(
+        kind="telemetry_receiver_not_started",
+        what_happened=(
+            f"Your work block is recording, but goodall's telemetry receiver did not start: {problem}. Claude Code's "
+            "telemetry is not being kept."
+        ),
+        why=(
+            "Claude Code drops its telemetry silently when nothing is listening. Your transcripts are still copied, "
+            "so the record of what the agents did is kept."
+        ),
+        what_to_do_next=what_to_do_next,
+    )
+
+
+def receiver_not_running_failure() -> Failure:
+    """The warning for an active work block whose telemetry receiver has stopped."""
+    return Failure(
+        kind="telemetry_receiver_not_running",
+        what_happened=(
+            "Goodall's telemetry receiver for this work block is not running, so Claude Code's telemetry is not "
+            "being kept."
+        ),
+        why=(
+            "Claude Code drops its telemetry silently when nothing is listening. Your work block is still recording "
+            "and your transcripts are still copied; its record will say the telemetry is incomplete."
+        ),
+        what_to_do_next=(
+            "Run goodall start: with a work block already active, it starts only the receiver again, on the same port."
+        ),
+        commands_to_try=("goodall start",),
     )
 
 
