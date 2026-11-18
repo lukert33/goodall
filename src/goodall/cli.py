@@ -8,8 +8,8 @@ exit code, so `main` returns a number instead of calling `sys.exit` itself.
 `goodall status` (goodall.status), `goodall doctor` (goodall.doctor),
 `goodall journal` and `goodall intervene` (goodall.entries),
 `goodall start` and `goodall stop` (goodall.work_block_commands),
-`goodall fixblock` (goodall.fixblock), and
-`goodall hook` (goodall.hook) are built. The `goodall` command itself starts
+`goodall fixblock` (goodall.fixblock), `goodall export scout`
+(goodall.scout_export), and `goodall hook` (goodall.hook) are built. The `goodall` command itself starts
 in goodall.entry_point, which sends `goodall hook` to goodall.hook without
 loading this module, for speed; `main` routes it there too, so both agree.
 Every other subcommand is still a stub: it reports that it is not
@@ -42,6 +42,7 @@ from goodall.entries import DECISION_MEANINGS, EntryRequest, InterventionDetails
 from goodall.fixblock import run_fixblock
 from goodall.hook import run_hook
 from goodall.runner import RealRunner, Runner
+from goodall.scout_export import run_export_scout
 from goodall.status import run_status
 from goodall.terminal import Failure, Terminal
 from goodall.work_block_commands import Clock, run_start, run_stop
@@ -221,7 +222,27 @@ def build_parser() -> argparse.ArgumentParser:
     export.set_defaults(group_parser=export)
     export_commands = export.add_subparsers(title="export commands", metavar="<export command>")
 
-    export_scout = export_commands.add_parser("scout", help="Build an Inspect Scout database from the raw record.")
+    export_scout = export_commands.add_parser(
+        "scout",
+        help="Build an Inspect Scout database from the raw record.",
+        description=(
+            "Build an Inspect Scout database of this eval: the Claude Code transcripts in the log directory, "
+            "imported by Scout's own importer, with goodall's work blocks, journal entries, interventions, human "
+            "actions and actor labels added. The database is derived data: each export rebuilds it. Needs "
+            "goodall's optional scout extra (inspect-ai and inspect-scout)."
+        ),
+    )
+    export_scout.add_argument(
+        "--output",
+        metavar="<folder>",
+        type=Path,
+        help="Where to put the database. Defaults to exports/scout in the log directory.",
+    )
+    export_scout.add_argument(
+        "--json",
+        action="store_true",
+        help="Print the result as one JSON document on standard output, for agents and scripts.",
+    )
     export_scout.set_defaults(command_name="export scout")
 
     dry_run = commands.add_parser("dry-run", help="Rehearse a whole work block without recording a real eval.")
@@ -364,6 +385,9 @@ def main(
             occurred_at=arguments.occurred_at,
         )
         return run_intervene(terminal, runner, entry_request, intervention_details)
+
+    if command_name == "export scout":
+        return run_export_scout(terminal, arguments.output, as_json=arguments.json)
 
     if command_name == "hook":
         return run_hook(arguments.event_name, terminal, clock)
