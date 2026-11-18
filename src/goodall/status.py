@@ -29,7 +29,8 @@ In the order goodall checks:
    workstream `unknown` that no work block fix has settled yet, with one
    whole `goodall fixblock` command per workstream to copy (goodall.fixblock).
    This part only reads the record repo's files.
-6. Goodall reports the active work block, or that there is none.
+6. Goodall reports the active work block, or that there is none and the
+   commands that start one (text only; the JSON shape is unchanged).
 
 Each result is built once as records and then shown either as text (results
 on standard output, failures and warnings on standard error) or as one JSON
@@ -97,6 +98,7 @@ def show_status(
         facts.append(("Workstream", f"{main_workstream}, your main workstream"))
         terminal.show_facts(facts)
         terminal.show_paragraph("No work block is active, so nothing is being recorded.")
+        show_how_to_start(terminal, eval_for_this_account)
         return
     facts.append(("Workstream", active.record.workstream))
     facts.append(("Started", describe_moment(active.record.started_at)))
@@ -106,6 +108,25 @@ def show_status(
         f"A work block is active on {active.record.workstream} since {describe_moment(active.record.started_at)}, "
         "so goodall is recording. Run goodall stop when you finish."
     )
+
+
+def show_how_to_start(terminal: Terminal, eval_for_this_account: EvalForThisAccount) -> None:
+    """Say which command begins a work block, once per reading of "no work block is active".
+
+    Text only: the JSON document keeps its stable shape, and an agent that
+    reads it already knows `goodall start` (the prompt gate names it too).
+    The command and the workstream names are in their own paragraph, with the
+    names last, so a long list wraps after the command, never inside it.
+    """
+    main_workstream = eval_for_this_account.local_settings.main_workstream
+    terminal.show_paragraph(f"To start a work block on {main_workstream}, your main workstream, run goodall start.")
+    other_workstreams = []
+    for workstream in eval_for_this_account.eval_config.workstreams:
+        if workstream != main_workstream:
+            other_workstreams.append(workstream)
+    if other_workstreams:
+        names = ", ".join(other_workstreams)
+        terminal.show_paragraph(f"For another, run goodall start --workstream NAME ({names}).")
 
 
 def status_document(
