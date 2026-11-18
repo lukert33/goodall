@@ -130,6 +130,12 @@ def make_telemetry_directory(log_directory: Path, work_block_id: str) -> Path:
     return files.telemetry_directory
 
 
+def make_bookkeeping_folder(folder: Path) -> None:
+    """Create a folder under `work-blocks/`, and `work-blocks/` itself, owner-only, where missing."""
+    folder.parent.mkdir(mode=work_blocks.FOLDER_PERMISSIONS, exist_ok=True)
+    folder.mkdir(mode=work_blocks.FOLDER_PERMISSIONS, exist_ok=True)
+
+
 def save_receiver_record(log_directory: Path, receiver_record: ReceiverRecord) -> None:
     """Save the record of a receiver that is listening, replacing any earlier one for its work block.
 
@@ -137,7 +143,7 @@ def save_receiver_record(log_directory: Path, receiver_record: ReceiverRecord) -
     old record or the new one, never half of one.
     """
     files = TelemetryFiles(log_directory, receiver_record.work_block)
-    files.receivers_folder.mkdir(mode=work_blocks.FOLDER_PERMISSIONS, exist_ok=True)
+    make_bookkeeping_folder(files.receivers_folder)
     values = {
         "work_block": receiver_record.work_block,
         "port": receiver_record.port,
@@ -220,7 +226,7 @@ def note_receiver_down(log_directory: Path, work_block_id: str, now: datetime, r
     hook and a goodall command can note at the same moment.
     """
     files = TelemetryFiles(log_directory, work_block_id)
-    files.receiver_down_folder.mkdir(mode=work_blocks.FOLDER_PERMISSIONS, exist_ok=True)
+    make_bookkeeping_folder(files.receiver_down_folder)
     first_note = not files.receiver_down_notes.exists()
     line = json.dumps({"at": work_blocks.format_timestamp(now), "reason": reason}) + "\n"
     descriptor = os.open(

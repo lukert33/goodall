@@ -30,7 +30,12 @@ In the order goodall checks:
    whole `goodall fixblock` command per workstream to copy (goodall.fixblock).
    This part only reads the record repo's files.
 6. Goodall reports the active work block, or that there is none and the
-   commands that start one (text only; the JSON shape is unchanged).
+   commands that start one (text only; the JSON shape is unchanged). For
+   an active work block it also reports its telemetry receiver: where it
+   listens, or, when it is not running, a warning, and a note so the work
+   block's record says its telemetry is incomplete
+   (goodall.telemetry_receivers). `work_block.telemetry_receiver` in the
+   JSON holds `running` and `port`.
 
 Each result is built once as records and then shown either as text (results
 on standard output, failures and warnings on standard error) or as one JSON
@@ -46,7 +51,7 @@ The folder checks themselves live in goodall.folders, because
 way.
 """
 
-from goodall import exit_codes, work_blocks
+from goodall import exit_codes, telemetry_capture, telemetry_receivers, work_blocks
 from goodall.eval_config import EvalForThisAccount
 from goodall.fixblock import WaitingWorkBlock, waiting_work_blocks
 from goodall.runner import Runner
@@ -56,6 +61,7 @@ from goodall.work_block_commands import (
     Settling,
     describe_moment,
     find_eval_for_work_blocks,
+    receiver_not_running_failure,
     settle,
     show_settling,
 )
@@ -67,25 +73,37 @@ def run_status(terminal: Terminal, runner: Runner, clock: Clock, as_json: bool) 
     if isinstance(eval_reading, list):
         return report_failures(terminal, eval_reading, as_json)
     now = clock()
+    log_directory = eval_reading.local_settings.log_directory.path
     settling = settle(runner, eval_reading, now)
-    active = work_blocks.active_work_block(eval_reading.local_settings.log_directory.path, now)
+    active = work_blocks.active_work_block(log_directory, now)
+    receiver = None
+    receiver_warnings = []
+    if active is not None:
+        receiver = telemetry_receivers.receiver_status(runner, log_directory, active.id)
+        if not receiver.running:
+            # Noted, so the work block's record says its telemetry is incomplete.
+            telemetry_capture.note_receiver_down(log_directory, active.id, now, telemetry_capture.NOT_RUNNING)
+            receiver_warnings.append(receiver_not_running_failure())
     waiting = waiting_work_blocks(eval_reading)
     if as_json:
-        terminal.write_json(status_document(eval_reading, settling, active, waiting))
+        terminal.write_json(status_document(eval_reading, settling, active, waiting, receiver, receiver_warnings))
     else:
         show_settling(terminal, settling)
-        waiting_warnings = []
+        waiting_warnings = list(receiver_warnings)
         for waiting_work_block in waiting:
             waiting_warnings.append(waiting_work_block.as_warning())
         terminal.show_warnings(waiting_warnings)
-        show_status(terminal, eval_reading, active)
+        show_status(terminal, eval_reading, active, receiver)
     if active is None:
         return exit_codes.ERROR
     return exit_codes.SUCCESS
 
 
 def show_status(
-    terminal: Terminal, eval_for_this_account: EvalForThisAccount, active: work_blocks.RunningWorkBlock | None
+    terminal: Terminal,
+    eval_for_this_account: EvalForThisAccount,
+    active: work_blocks.RunningWorkBlock | None,
+    receiver: telemetry_receivers.ReceiverStatus | None,
 ) -> None:
     """Show the eval, the contributor, and the active work block or that there is none, as text."""
     contributor = eval_for_this_account.contributor
@@ -103,11 +121,27 @@ def show_status(
     facts.append(("Workstream", active.record.workstream))
     facts.append(("Started", describe_moment(active.record.started_at)))
     facts.append(("Last activity", describe_moment(active.last_heartbeat_at)))
+    facts.append(("Telemetry receiver", describe_receiver(receiver)))
     terminal.show_facts(facts)
     terminal.show_paragraph(
         f"A work block is active on {active.record.workstream} since {describe_moment(active.record.started_at)}, "
         "so goodall is recording. Run goodall stop when you finish."
     )
+
+
+def describe_receiver(receiver: telemetry_receivers.ReceiverStatus | None) -> str:
+    """The telemetry receiver's state for a person: where it listens, or that it is not running."""
+    if receiver is not None and receiver.running and receiver.record is not None:
+        return f"listening on {receiver.record.endpoint_url}"
+    return "not running"
+
+
+def receiver_document(receiver: telemetry_receivers.ReceiverStatus | None) -> dict[str, object]:
+    """The telemetry receiver's state in `goodall status --json`: running or not, and its port (null if none)."""
+    port = None
+    if receiver is not None and receiver.record is not None:
+        port = receiver.record.port
+    return {"running": receiver is not None and receiver.running, "port": port}
 
 
 def show_how_to_start(terminal: Terminal, eval_for_this_account: EvalForThisAccount) -> None:
@@ -134,11 +168,15 @@ def status_document(
     settling: Settling,
     active: work_blocks.RunningWorkBlock | None,
     waiting: list[WaitingWorkBlock],
+    receiver: telemetry_receivers.ReceiverStatus | None,
+    receiver_warnings: list[Failure],
 ) -> dict[str, object]:
     """The `goodall status --json` document when the eval was found. Times are UTC, as in records.
 
     Work blocks waiting for their workstream are listed under their own key,
-    not in `warnings`, so an agent can read each one's id and commands.
+    not in `warnings`, so an agent can read each one's id and commands. The
+    active work block's telemetry receiver is under `work_block`, and a
+    receiver not running is one of the `warnings`.
     """
     contributor = eval_for_this_account.contributor
     log_directory = eval_for_this_account.local_settings.log_directory.path
@@ -150,6 +188,7 @@ def status_document(
             "started_at": work_blocks.format_timestamp(active.record.started_at),
             "last_heartbeat_at": work_blocks.format_timestamp(active.last_heartbeat_at),
             "claude_sessions": list(work_blocks.read_claude_sessions(log_directory, active.id)),
+            "telemetry_receiver": receiver_document(receiver),
         }
     ended_work_blocks = []
     for write in settling.writes:
@@ -169,7 +208,7 @@ def status_document(
     for waiting_work_block in waiting:
         waiting_documents.append(waiting_work_block.as_json())
     warning_documents = []
-    for warning in settling.warnings:
+    for warning in settling.warnings + receiver_warnings:
         warning_documents.append(warning.as_json())
     return {
         "work_block_active": active is not None,

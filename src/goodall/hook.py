@@ -74,6 +74,13 @@ owner says otherwise):
   standard output are added to Claude's context, so the hook prints that
   one JSON object and nothing else. Checked against the documentation on
   2026-11-17, not yet by hand in Claude Code.
+- The prompt gate also checks the work block's telemetry receiver, because
+  Claude Code drops telemetry silently when nothing listens (ADR 0002). It
+  tries the lock the receiver holds on its receipt log (no program, no
+  network call; goodall.telemetry_capture). A receiver found down never
+  refuses the prompt: it is noted in the log directory, so `goodall status`
+  warns and the work block record says its telemetry is incomplete, and the
+  first time only the person is told through `systemMessage`.
 - Every other event fails open and silent: any error is swallowed, because
   a broken heartbeat is a gap in evidence, while a broken hook would get in
   the person's way on every tool call. Standard output stays empty, because
@@ -92,7 +99,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from goodall import exit_codes, hook_problems, records, transcripts, work_blocks
+from goodall import exit_codes, hook_problems, records, telemetry_capture, transcripts, work_blocks
 from goodall.folders import describe_folder_problem
 from goodall.local_settings import LocalSettings, read_local_settings
 from goodall.terminal import Terminal
@@ -142,6 +149,13 @@ UNREADABLE_INPUT_NOTICE = (
     "Goodall could not read the details Claude Code sent with this prompt, so it sent the prompt and kept your "
     "work block recording without linking this Claude session to it; please tell your eval's researcher, who may "
     "need to update goodall."
+)
+# Shown inside Claude Code the first time the prompt gate finds the work
+# block's telemetry receiver not running. Once only: status and stop say it
+# again, and a notice on every prompt would teach people to ignore notices.
+RECEIVER_DOWN_NOTICE = (
+    "Goodall's telemetry receiver has stopped, so Claude Code's telemetry is not being kept; your prompt was sent "
+    "and your transcripts are still recorded. Run goodall start in a terminal to start the receiver again."
 )
 UNEXPECTED_PROBLEM_REFUSAL = (
     "Goodall hit an unexpected problem while checking this prompt, so it was not sent. "
@@ -361,6 +375,7 @@ def check_prompt(hook_input_text: str | None, now: datetime) -> GateDecision:
     work_block = work_blocks.record_heartbeat(log_directory, now, claude_session)
     if work_block is None:
         return GateDecision(refusal=NO_WORK_BLOCK_REFUSAL)
+    notices = []
     if hook_input is None:
         problem = unreadable_input_category(hook_input_text)
         if problem is None:
@@ -368,8 +383,26 @@ def check_prompt(hook_input_text: str | None, now: datetime) -> GateDecision:
             # today; noted under the broadest word rather than not at all.
             problem = "not_json"
         hook_problems.record_hook_problem(log_directory, now, PROMPT_GATE_EVENT, work_block.id, problem)
-        return GateDecision(notice=UNREADABLE_INPUT_NOTICE)
+        notices.append(UNREADABLE_INPUT_NOTICE)
+    if receiver_newly_down(log_directory, work_block.id, now):
+        notices.append(RECEIVER_DOWN_NOTICE)
+    if notices:
+        return GateDecision(notice=" ".join(notices))
     return GateDecision()
+
+
+def receiver_newly_down(log_directory: Path, work_block_id: str, now: datetime) -> bool:
+    """Note the work block's telemetry receiver down if it is; True only the first time.
+
+    Cheap enough for every prompt: one file opened and a lock tried, no
+    program and no network call (goodall.telemetry_capture). Any error is
+    swallowed, because telemetry must never decide whether a prompt goes
+    through: the gate is about recording the work, and transcripts still are.
+    """
+    try:
+        return telemetry_capture.notice_receiver_down(log_directory, work_block_id, now)
+    except Exception:
+        return False
 
 
 def record_activity(event_name: str, hook_input_text: str | None, now: datetime) -> None:
