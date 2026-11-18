@@ -27,9 +27,10 @@ These commands work today:
 | `goodall journal` | Adds a **journal entry**: your written note about what was decided or done. |
 | `goodall intervene` | Records an **intervention**: a moment you overrode, corrected or rescued an agent. |
 | `goodall doctor` | Checks the account and setup, and changes nothing. |
+| `goodall logs` | Browses work blocks and their raw records in the terminal, and changes nothing. `goodall logs <work block id>` shows one; `--raw <path>` prints one raw file as stored; `--json` for scripts. |
 | `goodall hook` | Called by Claude Code, not by people. It is the prompt gate, and it copies transcripts. |
 
-These commands exist but are not built yet: `onboard` (setup), `sync`, `logs`,
+These commands exist but are not built yet: `onboard` (setup), `sync`,
 `export scout`, `dry-run`, `teardown` and `release`. Each tells you so when you
 run it, and `goodall onboard` says how to do its job by hand.
 
