@@ -86,6 +86,7 @@ goodall writes, so it is JSON. Folder: `work-blocks/`.
 | `machine.goodall_version` | yes | The goodall that wrote the record. |
 | `machine.claude_code_version` | no | `null` if Claude Code was not found. |
 | `claude_sessions` | yes | The Claude Code session ids of the Claude sessions that fell inside the work block; `[]` if none. |
+| `telemetry` | no | Whether the work block's telemetry was captured: `captured` (telemetry requests were stored and goodall never found its receiver down), `incomplete` (requests were stored, but the receiver was down for part of the work block), or `missing` (no request was stored at all). Left out while running, and in records written before goodall captured telemetry, which say nothing either way. PROVISIONAL. |
 
 The machine facts are observed, never configured (ADR 0009). There is no
 billing field: goodall does not track billing.
@@ -110,7 +111,8 @@ billing field: goodall does not track billing.
   "claude_sessions": [
     "0f6c1d2e-3a4b-4c5d-8e9f-a0b1c2d3e4f5",
     "5b8e2a71-9c04-4d3f-b6a2-17e0c9d4f8a3"
-  ]
+  ],
+  "telemetry": "captured"
 }
 ```
 
@@ -289,7 +291,7 @@ does not import Inspect. Checked against the `inspect_ai` source
 | `workstream` | `SpanBeginEvent.name` | |
 | `started_at` | `SpanBeginEvent.timestamp` | |
 | `ended_at` | `SpanEndEvent.timestamp` | No `SpanEndEvent` while the work block is running. |
-| `end_state`, `contributor`, `machine`, `claude_sessions` | `metadata` | Inspect has no field for these. `claude_sessions` says which transcripts (Inspect samples) the span covers. |
+| `end_state`, `contributor`, `machine`, `claude_sessions`, `telemetry` | `metadata` | Inspect has no field for these. `claude_sessions` says which transcripts (Inspect samples) the span covers. |
 | **Journal entry** | `InfoEvent` | |
 | `record_type` | `InfoEvent.source` = `"goodall/journal_entry"` | |
 | `written_at` | `InfoEvent.timestamp` | |

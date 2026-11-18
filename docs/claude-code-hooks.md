@@ -105,13 +105,36 @@ With no work block active, unreadable details change nothing: the prompt is
 refused as usual. An unexpected error inside the hook still refuses the
 prompt.
 
+## When goodall's telemetry receiver has stopped
+
+`goodall start` also starts goodall's telemetry receiver for the work block,
+and shows the port it listens on (choose one with `--telemetry-port`).
+Claude Code drops its telemetry silently when nothing is listening, so the
+prompt gate checks, before each prompt, that the receiver is still running.
+It does so without running any program or making any network call: the
+receiver holds a lock on its receipt log for as long as it runs, and the
+hook only tries that lock. When the receiver has stopped, the prompt still
+goes through, and goodall:
+
+- notes the moment in `work-blocks/receiver-down/<work block id>.jsonl` in
+  the log directory;
+- the first time only, shows you one sentence inside Claude Code, through
+  `systemMessage`, saying to run `goodall start`, which starts the receiver
+  again on the same port without starting a new work block;
+- warns in `goodall status`; and
+- records the work block's telemetry as `incomplete` (or `missing`, if none
+  arrived at all) when it ends.
+
+Transcripts are copied as usual throughout.
+
 ## Exit codes Claude Code sees
 
 - `0`: carry on. Every event except `UserPromptSubmit` always exits 0, even
   when goodall finds something wrong, so a problem in goodall never gets in
   the way of a tool call or keeps Claude from finishing a reply.
   `UserPromptSubmit` exits 0 when it lets a prompt through; if it could not
-  read what Claude Code sent, it also prints one JSON object,
+  read what Claude Code sent, or has just found the telemetry receiver
+  stopped, it also prints one JSON object,
   `{"systemMessage": "..."}`, on standard output and nothing else, because
   Claude Code adds any other text there to Claude's context.
 - `2`: refuse this prompt, with the reason on standard error. Only

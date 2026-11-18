@@ -83,6 +83,10 @@ _Avoid_: Log, conversation log, chat history
 The stream of events, metrics and traces Claude Code emits about a session as it runs.
 _Avoid_: Metrics, OTel data, logs
 
+**Telemetry receiver**:
+Goodall's own program that listens on 127.0.0.1 for Claude Code's telemetry and keeps each request as one line, from `goodall start` to `goodall stop`, one per work block (ADR 0002).
+_Avoid_: Collector, OTel server, listener
+
 **Receipt log**:
 The file `receipts.jsonl` beside the telemetry files, where goodall's receiver records each request it stored: a sequence number, when it arrived, where its line is, and the length and hash of the body as sent (ADR 0013). A raw record, because none of it can be regenerated.
 _Avoid_: Index, manifest, audit log

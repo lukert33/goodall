@@ -12,11 +12,16 @@ it, and a log directory. git runs for real through the fake runner; every
 other program (only `claude --version` here) is scripted.
 """
 
+import http.client
 import io
 import json
 import os
+import re
+import signal
+import socket
 import stat
 import subprocess
+import sys
 import threading
 import time
 from collections.abc import Iterator
@@ -27,8 +32,24 @@ from typing import Any
 
 import pytest
 
-from goodall import cli, exit_codes, records, work_block_commands, work_blocks
-from goodall.fake_runner import FakeRunner
+from goodall import (
+    cli,
+    exit_codes,
+    records,
+    telemetry_capture,
+    telemetry_receipts,
+    work_block_commands,
+    work_blocks,
+)
+from goodall.fake_runner import (
+    SIMULATED_START_TIME,
+    FakeBackgroundPrograms,
+    FakeRunner,
+    InProcessTelemetryReceiver,
+    PretendProgram,
+    SimulatedProgram,
+)
+from goodall.runner import BackgroundProgram, RealRunner
 from goodall.terminal import Terminal
 
 EVAL_CONFIG_TEXT = """\
@@ -53,6 +74,9 @@ MONDAY_MORNING = datetime(2026, 11, 16, 9, 30, tzinfo=UTC)
 
 CLAUDE_SESSION = "0f6c1d2e-3a4b-4c5d-8e9f-a0b1c2d3e4f5"
 OTHER_CLAUDE_SESSION = "5b8e2a71-9c04-4d3f-b6a2-17e0c9d4f8a3"
+
+# How every command that goodall runs to start its telemetry receiver begins.
+RECEIVER_COMMAND_START = [sys.executable, "-I", "-m", "goodall.telemetry_receiver"]
 
 
 def git(working_directory: Path, *arguments: str) -> str:
@@ -90,6 +114,16 @@ class EvalAccount:
     log_directory: Path
     clock: HandSetClock = field(default_factory=HandSetClock)
     claude_code_version_output: str | None = "2.3.4 (Claude Code)\n"
+    # The telemetry receivers goodall starts, simulated in this process
+    # unless a test asks for real ones; shared by every command's runner.
+    background: FakeBackgroundPrograms = field(default_factory=FakeBackgroundPrograms)
+    # What the next simulated receiver does: None for a working one, or a
+    # pretend program that exits at once, as a receiver whose port is taken does.
+    failing_receiver: PretendProgram | None = None
+
+    def simulated_receivers(self) -> list[SimulatedProgram]:
+        """Every simulated receiver goodall started, oldest first."""
+        return list(self.background.started.values())
 
     def work_block_files(self) -> list[Path]:
         return sorted((self.record_repo / "work-blocks").glob("*.json"))
@@ -139,9 +173,23 @@ def eval_account(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Ev
     (record_repo / "eval.toml").write_text(EVAL_CONFIG_TEXT)
     git(record_repo, "add", "eval.toml")
     git(record_repo, "commit", "--quiet", "-m", "Start the record repo")
-    yield EvalAccount(home_folder, config_directory, record_repo, log_directory)
+    eval_account = EvalAccount(home_folder, config_directory, record_repo, log_directory)
+    yield eval_account
+    stop_every_receiver(eval_account)
     monkeypatch.undo()
     time.tzset()
+
+
+def stop_every_receiver(eval_account: EvalAccount) -> None:
+    """Stop every receiver a test left running, simulated or real, so none outlives its test."""
+    eval_account.background.stop_all()
+    for record_file in telemetry_capture.receiver_record_files(eval_account.log_directory):
+        receiver_record = telemetry_capture.read_receiver_record(record_file)
+        if receiver_record is None:
+            continue
+        program = BackgroundProgram.from_json(receiver_record.program)
+        if program is not None and program.process_started_at != SIMULATED_START_TIME:
+            RealRunner().stop_background(program, timeout_seconds=2)
 
 
 @dataclass
@@ -159,9 +207,22 @@ class GoodallRun:
         return " ".join((self.standard_output + "\n" + self.standard_error).split())
 
 
-def run_goodall(eval_account: EvalAccount, arguments: list[str]) -> GoodallRun:
-    """Run goodall in this eval account, with a captured terminal, the fake runner and the test's clock."""
-    runner = FakeRunner()
+def run_goodall(eval_account: EvalAccount, arguments: list[str], real_receiver: bool = False) -> GoodallRun:
+    """Run goodall in this eval account, with a captured terminal, the fake runner and the test's clock.
+
+    With `real_receiver`, the telemetry receiver `goodall start` runs is a
+    real background process: this test interpreter running
+    `python -m goodall.telemetry_receiver`.
+    """
+    real_programs = ["git"]
+    if real_receiver:
+        real_programs.append(sys.executable)
+    runner = FakeRunner(real_programs=real_programs, background=eval_account.background)
+    failing_receiver = eval_account.failing_receiver
+    if failing_receiver is None:
+        runner.answer_background(RECEIVER_COMMAND_START, InProcessTelemetryReceiver)
+    else:
+        runner.answer_background(RECEIVER_COMMAND_START, lambda: failing_receiver)
     if eval_account.claude_code_version_output is None:
         runner.answer_not_found(["claude", "--version"])
     else:
@@ -959,7 +1020,7 @@ def test_an_end_interrupted_after_its_record_was_saved_is_finished_by_the_next_c
 
 
 def test_status_json_while_a_work_block_is_active_describes_it(eval_account: EvalAccount) -> None:
-    run_goodall(eval_account, ["start", "--workstream", "engineering"])
+    start = run_goodall(eval_account, ["start", "--workstream", "engineering"])
     work_blocks.record_heartbeat(eval_account.log_directory, MONDAY_MORNING + timedelta(minutes=25), CLAUDE_SESSION)
     eval_account.clock.advance(timedelta(minutes=30))
 
@@ -980,6 +1041,7 @@ def test_status_json_while_a_work_block_is_active_describes_it(eval_account: Eva
             "started_at": "2026-11-16T09:30:00Z",
             "last_heartbeat_at": "2026-11-16T09:55:00Z",
             "claude_sessions": [CLAUDE_SESSION],
+            "telemetry_receiver": {"running": True, "port": receiver_port_shown(start)},
         },
         "ended_work_blocks": [],
         "work_blocks_waiting_for_workstream": [],
@@ -1047,3 +1109,269 @@ def test_an_intervention_that_happened_before_the_active_work_block_began_names_
     assert intervene.exit_code == exit_codes.SUCCESS, intervene.standard_error
     [intervention_file] = (eval_account.record_repo / "interventions").glob("*.md")
     assert "work_block" not in intervention_file.read_text()
+
+
+# ---------------------------------------------------------------------------
+# Telemetry during a work block
+# ---------------------------------------------------------------------------
+
+# A compact OTLP logs export, in the shape Claude Code sends; synthetic.
+CLAUDE_CODE_LOGS_BODY = (
+    b'{"resourceLogs":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"claude-code"}}]},'
+    b'"scopeLogs":[{"logRecords":[{"timeUnixNano":"1763285400000000000","body":{"stringValue":'
+    b'"claude_code.user_prompt"},"attributes":[{"key":"session.id","value":{"stringValue":'
+    b'"0f6c1d2e-3a4b-4c5d-8e9f-a0b1c2d3e4f5"}}]}]}]}]}'
+)
+
+RECEIVER_ADDRESS_PATTERN = re.compile(r"http://127\.0\.0\.1:(\d+)")
+
+
+def post_like_claude_code(port: int, path: str, body: bytes) -> int:
+    """Send one OTLP http/json export as Claude Code's exporter does, and return the HTTP status."""
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+    try:
+        connection.request("POST", path, body=body, headers={"Content-Type": "application/json"})
+        response = connection.getresponse()
+        response.read()
+        return response.status
+    finally:
+        connection.close()
+
+
+def receiver_port_shown(run: GoodallRun) -> int:
+    """The port goodall said its telemetry receiver listens on."""
+    address_match = RECEIVER_ADDRESS_PATTERN.search(run.everything_printed)
+    assert address_match is not None, run.everything_printed
+    return int(address_match.group(1))
+
+
+def telemetry_directory(eval_account: EvalAccount, work_block_id: str) -> Path:
+    return eval_account.log_directory / "telemetry" / work_block_id
+
+
+def running_work_block_id(eval_account: EvalAccount) -> str:
+    running = work_blocks.read_marker(eval_account.log_directory)
+    assert isinstance(running, work_blocks.RunningWorkBlock)
+    return running.id
+
+
+def test_a_telemetry_request_sent_during_a_work_block_is_kept_as_one_verbatim_line_with_its_receipt(
+    eval_account: EvalAccount,
+) -> None:
+    start = run_goodall(eval_account, ["start"], real_receiver=True)
+    assert start.exit_code == exit_codes.SUCCESS, start.standard_error
+    work_block_id = running_work_block_id(eval_account)
+    port = receiver_port_shown(start)
+
+    assert post_like_claude_code(port, "/v1/logs", CLAUDE_CODE_LOGS_BODY) == 200
+
+    eval_account.clock.advance(timedelta(minutes=30))
+    stop = run_goodall(eval_account, ["stop"], real_receiver=True)
+    assert stop.exit_code == exit_codes.SUCCESS, stop.standard_error
+    directory = telemetry_directory(eval_account, work_block_id)
+    assert (directory / "logs.jsonl").read_bytes() == CLAUDE_CODE_LOGS_BODY + b"\n"
+    receipt_check = telemetry_receipts.check_receipts(directory)
+    assert receipt_check.receipt_count == 1
+    assert receipt_check.problems() == []
+    [record] = eval_account.work_block_records()
+    assert record["telemetry"] == "captured"
+    assert "Telemetry captured, 1 request" in stop.everything_printed
+    # The receiver is gone, and so is goodall's record of it.
+    assert telemetry_capture.receiver_record_files(eval_account.log_directory) == []
+
+
+def send_prompt(eval_account: EvalAccount) -> GoodallRun:
+    """Run the prompt gate as Claude Code does before a prompt, with readable input."""
+    standard_output = io.StringIO()
+    standard_error = io.StringIO()
+    hook_input = json.dumps({"session_id": CLAUDE_SESSION, "hook_event_name": "UserPromptSubmit", "prompt": "Go on."})
+    terminal = Terminal(
+        standard_output=standard_output, standard_error=standard_error, standard_input=io.StringIO(hook_input)
+    )
+    exit_code = cli.main(["hook", "UserPromptSubmit"], terminal=terminal, runner=FakeRunner(), clock=eval_account.clock)
+    return GoodallRun(exit_code, standard_output.getvalue(), standard_error.getvalue(), FakeRunner())
+
+
+def receiver_process_id(eval_account: EvalAccount, work_block_id: str) -> int:
+    receiver_record = telemetry_capture.receiver_record_for(eval_account.log_directory, work_block_id)
+    assert receiver_record is not None
+    process_id = receiver_record.program["process_id"]
+    assert isinstance(process_id, int)
+    return process_id
+
+
+def test_killing_the_receiver_during_a_work_block_loses_no_acknowledged_line_and_is_noticed(
+    eval_account: EvalAccount,
+) -> None:
+    start = run_goodall(eval_account, ["start"], real_receiver=True)
+    work_block_id = running_work_block_id(eval_account)
+    port = receiver_port_shown(start)
+    bodies = []
+    for number in range(3):
+        body = CLAUDE_CODE_LOGS_BODY.replace(b"1763285400000000000", f"176328540000000000{number}".encode())
+        assert post_like_claude_code(port, "/v1/logs", body) == 200
+        bodies.append(body)
+
+    os.kill(receiver_process_id(eval_account, work_block_id), signal.SIGKILL)
+    eval_account.clock.advance(timedelta(minutes=5))
+
+    # The next prompt still goes through, and the person is told once.
+    first_prompt = send_prompt(eval_account)
+    second_prompt = send_prompt(eval_account)
+    assert first_prompt.exit_code == second_prompt.exit_code == exit_codes.SUCCESS
+    notice = json.loads(first_prompt.standard_output)["systemMessage"]
+    assert "telemetry receiver has stopped" in notice
+    assert "goodall start" in notice
+    assert second_prompt.standard_output == ""
+
+    status = run_goodall(eval_account, ["status", "--json"], real_receiver=True)
+    document = json.loads(status.standard_output)
+    assert status.exit_code == exit_codes.SUCCESS
+    assert document["work_block"]["telemetry_receiver"] == {"running": False, "port": port}
+    assert [warning["kind"] for warning in document["warnings"]] == ["telemetry_receiver_not_running"]
+
+    stop = run_goodall(eval_account, ["stop"], real_receiver=True)
+    assert stop.exit_code == exit_codes.SUCCESS, stop.standard_error
+    directory = telemetry_directory(eval_account, work_block_id)
+    assert (directory / "logs.jsonl").read_bytes() == b"".join(body + b"\n" for body in bodies)
+    receipt_check = telemetry_receipts.check_receipts(directory)
+    assert receipt_check.receipt_count == 3
+    assert receipt_check.problems() == []
+    [record] = eval_account.work_block_records()
+    assert record["telemetry"] == "incomplete"
+    assert record["claude_sessions"] == [CLAUDE_SESSION]
+
+
+def write_synthetic_transcript() -> Path:
+    """A one-line Claude Code transcript in this test's Claude config folder, as Claude Code would leave it."""
+    project_folder = Path(os.environ["CLAUDE_CONFIG_DIR"]) / "projects" / "-Users-ada-work"
+    project_folder.mkdir(parents=True)
+    transcript = project_folder / f"{CLAUDE_SESSION}.jsonl"
+    transcript.write_bytes(b'{"type":"user","message":"synthetic"}\n')
+    return transcript
+
+
+def test_a_work_block_whose_receiver_cannot_start_still_captures_transcripts_and_records_telemetry_missing(
+    eval_account: EvalAccount,
+) -> None:
+    # Another program already listens on the port asked for.
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as other_program:
+        other_program.bind(("127.0.0.1", 0))
+        other_program.listen()
+        taken_port = other_program.getsockname()[1]
+
+        start = run_goodall(eval_account, ["start", "--telemetry-port", str(taken_port)], real_receiver=True)
+
+    assert start.exit_code == exit_codes.SUCCESS
+    assert "Started a work block on research" in start.everything_printed
+    assert start.standard_error.startswith("WARN")
+    assert "telemetry receiver did not start" in start.everything_printed
+    assert f"another program is using port {taken_port}" in start.everything_printed
+    assert str(eval_account.log_directory) not in start.everything_printed
+    # Transcripts are still copied as Claude works.
+    transcript = write_synthetic_transcript()
+    standard_input = io.StringIO(json.dumps({"session_id": CLAUDE_SESSION, "transcript_path": str(transcript)}))
+    terminal = Terminal(standard_output=io.StringIO(), standard_error=io.StringIO(), standard_input=standard_input)
+    assert cli.main(["hook", "PostToolUse"], terminal=terminal, clock=eval_account.clock) == exit_codes.SUCCESS
+    assert send_prompt(eval_account).exit_code == exit_codes.SUCCESS
+
+    eval_account.clock.advance(timedelta(minutes=30))
+    stop = run_goodall(eval_account, ["stop"], real_receiver=True)
+
+    assert stop.exit_code == exit_codes.SUCCESS
+    [record] = eval_account.work_block_records()
+    assert record["telemetry"] == "missing"
+    copied = eval_account.log_directory / "transcripts" / "-Users-ada-work" / transcript.name
+    assert copied.read_bytes() == transcript.read_bytes()
+
+
+def test_status_shows_where_the_receiver_listens_while_a_work_block_is_active(eval_account: EvalAccount) -> None:
+    start = run_goodall(eval_account, ["start"])
+    port = receiver_port_shown(start)
+
+    status = run_goodall(eval_account, ["status"])
+    status_json = run_goodall(eval_account, ["status", "--json"])
+
+    assert status.standard_error == ""
+    assert f"Telemetry receiver  listening on http://127.0.0.1:{port}" in status.standard_output
+    document = json.loads(status_json.standard_output)
+    assert document["work_block"]["telemetry_receiver"] == {"running": True, "port": port}
+    assert document["warnings"] == []
+
+
+def test_start_shows_the_receivers_port_prominently_and_uses_the_port_asked_for(eval_account: EvalAccount) -> None:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.bind(("127.0.0.1", 0))
+        free_port = probe.getsockname()[1]
+
+    start = run_goodall(eval_account, ["start", "--telemetry-port", str(free_port)])
+
+    assert start.exit_code == exit_codes.SUCCESS, start.standard_error
+    assert f"Telemetry receiver  http://127.0.0.1:{free_port} (port {free_port})" in start.standard_output
+    assert f"OTEL_EXPORTER_OTLP_ENDPOINT is http://127.0.0.1:{free_port}" in start.everything_printed
+    assert post_like_claude_code(free_port, "/v1/metrics", b'{"resourceMetrics":[]}') == 200
+    directory = telemetry_directory(eval_account, running_work_block_id(eval_account))
+    assert stat.S_IMODE(directory.stat().st_mode) == 0o700
+    assert stat.S_IMODE(directory.parent.stat().st_mode) == 0o700
+
+
+@pytest.mark.parametrize("port", ["0", "70000"])
+def test_start_with_a_telemetry_port_that_is_not_a_port_starts_nothing_and_exits_2(
+    eval_account: EvalAccount, port: str
+) -> None:
+    start = run_goodall(eval_account, ["start", "--telemetry-port", port])
+
+    assert start.exit_code == exit_codes.USAGE_ERROR
+    assert start.standard_error.startswith("FAIL  The --telemetry-port given is not a port.")
+    assert eval_account.files_in_log_directory() == []
+
+
+def test_the_receiver_of_a_forgotten_work_block_is_stopped_by_the_next_start(eval_account: EvalAccount) -> None:
+    run_goodall(eval_account, ["start"])
+    [forgotten_receiver] = eval_account.simulated_receivers()
+    eval_account.clock.now = datetime(2026, 11, 17, 9, 0, tzinfo=UTC)
+
+    start = run_goodall(eval_account, ["start"])
+
+    assert start.exit_code == exit_codes.SUCCESS
+    assert not forgotten_receiver.is_running()
+    [forgotten, new] = eval_account.simulated_receivers()
+    assert new.is_running()
+    [record] = eval_account.work_block_records()
+    assert record["end_state"] == "inferred"
+    assert record["telemetry"] == "missing"
+
+
+def test_a_receiver_left_by_an_interrupted_end_is_stopped_by_the_next_command(eval_account: EvalAccount) -> None:
+    # goodall stop was killed after the marker went but before the receiver
+    # was stopped: the receiver's record remains, for a work block no longer active.
+    run_goodall(eval_account, ["start"])
+    work_block_id = running_work_block_id(eval_account)
+    work_blocks.WorkBlockFiles(eval_account.log_directory).marker.unlink()
+
+    run_goodall(eval_account, ["status"])
+
+    [receiver] = eval_account.simulated_receivers()
+    assert not receiver.is_running()
+    assert telemetry_capture.receiver_record_for(eval_account.log_directory, work_block_id) is None
+
+
+def test_start_while_a_work_block_is_active_restarts_a_stopped_receiver_on_the_same_port(
+    eval_account: EvalAccount,
+) -> None:
+    first = run_goodall(eval_account, ["start"])
+    port = receiver_port_shown(first)
+    [crashed] = eval_account.simulated_receivers()
+    assert isinstance(crashed, InProcessTelemetryReceiver)
+    crashed.crash()
+
+    again = run_goodall(eval_account, ["start"])
+
+    assert again.exit_code == exit_codes.SUCCESS, again.standard_error
+    assert "A work block is already active" in again.everything_printed
+    assert "telemetry receiver was not running, so goodall started it again" in again.everything_printed
+    assert receiver_port_shown(again) == port
+    assert post_like_claude_code(port, "/v1/logs", CLAUDE_CODE_LOGS_BODY) == 200
+    run_goodall(eval_account, ["stop"])
+    [record] = eval_account.work_block_records()
+    assert record["telemetry"] == "incomplete"

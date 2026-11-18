@@ -51,11 +51,12 @@ Design decisions a reader might otherwise reverse-engineer:
   request stays on one line. `as_one_line` explains why that keeps the raw
   record verbatim in every sense a reader can observe.
 
-What it does not do: choose a port for Claude Code, start with a work
-block, or notice that Claude Code has nobody to send to. A receiver that is
-not running loses telemetry silently (spike goodall-fs9.2), and another
-program already listening on a fixed port would receive it instead, so the
-code that starts the receiver must check it is the one listening.
+What it does not do: start with a work block, or notice that Claude Code
+has nobody to send to. A receiver that is not running loses telemetry
+silently (spike goodall-fs9.2). goodall.telemetry_receivers starts and
+stops it with each work block and checks it is the one listening on its
+port; goodall.telemetry_capture says where its directory is and lets the
+hook notice when it has stopped.
 
 Security. The receiver runs on a machine that holds credentials, and the
 telemetry it receives carries the person's email address on every record
@@ -588,6 +589,26 @@ def start_receiver(telemetry_directory: Path, port: int = 0, bind_address: str =
     )
 
 
+def parse_arguments(arguments: list[str] | None) -> argparse.Namespace:
+    """Read the receiver's command line: a directory and, optionally, --port.
+
+    Shared with goodall.fake_runner's in-process receiver, so a test's
+    simulated receiver reads goodall's command exactly as the real one does.
+    """
+    parser = argparse.ArgumentParser(
+        prog="python -m goodall.telemetry_receiver",
+        description="Receive Claude Code's OTLP http/json telemetry on 127.0.0.1 and append it to JSON Lines files.",
+    )
+    parser.add_argument("telemetry_directory", type=Path, help="Existing directory to write the telemetry files in.")
+    parser.add_argument("--port", type=int, default=0, help="Port to listen on; 0 (the default) picks a free one.")
+    return parser.parse_args(arguments)
+
+
+def ready_line(running_receiver: RunningReceiver) -> str:
+    """The one line the receiver prints once it is listening, such as {"port": 49152}."""
+    return json.dumps({"port": running_receiver.port})
+
+
 def main(arguments: list[str] | None = None) -> int:
     """Run a receiver as its own process until it receives SIGTERM or SIGINT.
 
@@ -598,15 +619,9 @@ def main(arguments: list[str] | None = None) -> int:
 
     Output goes straight to standard output and error here rather than
     through a UI module (AGENTS.md invariant 9) because this process is
-    driven by programs, not people, and no UI module exists yet.
+    driven by programs, not people.
     """
-    parser = argparse.ArgumentParser(
-        prog="python -m goodall.telemetry_receiver",
-        description="Receive Claude Code's OTLP http/json telemetry on 127.0.0.1 and append it to JSON Lines files.",
-    )
-    parser.add_argument("telemetry_directory", type=Path, help="Existing directory to write the telemetry files in.")
-    parser.add_argument("--port", type=int, default=0, help="Port to listen on; 0 (the default) picks a free one.")
-    parsed_arguments = parser.parse_args(arguments)
+    parsed_arguments = parse_arguments(arguments)
 
     stop_requested = threading.Event()
 
@@ -622,7 +637,7 @@ def main(arguments: list[str] | None = None) -> int:
         print(f"The telemetry receiver did not start: {start_error}", file=sys.stderr)
         return exit_codes.ERROR
 
-    print(json.dumps({"port": running_receiver.port}), flush=True)
+    print(ready_line(running_receiver), flush=True)
     # Waiting in short steps lets the signal handler's flag be seen promptly.
     while not stop_requested.wait(timeout=0.5):
         pass

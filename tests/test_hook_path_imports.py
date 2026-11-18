@@ -45,6 +45,14 @@ HOOK_PATH_MODULES = [
     "goodall.transcripts",
     # The prompt gate notes input it could not read through it.
     "goodall.hook_problems",
+    # The prompt gate checks the work block's telemetry receiver through it,
+    # and it counts stored requests with goodall.telemetry_receipts.
+    "goodall.telemetry_capture",
+    "goodall.telemetry_receipts",
+    # Not imported by `goodall hook`. The receiver itself is capture code
+    # too (ADR 0002), started as its own process, so it must start even
+    # when goodall's optional extras are broken.
+    "goodall.telemetry_receiver",
 ]
 
 # Runs inside the fresh interpreter: import the modules, then print every

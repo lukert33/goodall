@@ -286,6 +286,53 @@ def test_a_work_block_file_that_is_not_json_is_reported_with_its_line() -> None:
     assert "line 3" in only_problem(parsed.problems).message
 
 
+def ended_work_block_with_telemetry(telemetry: str | None) -> records.WorkBlockRecord:
+    return records.build_work_block_record(
+        ADA,
+        "research",
+        MORNING,
+        records.MachineFacts("eval-mac-01", "26.1", "0.0.1", None),
+        ended_at=LATER,
+        end_state="clean",
+        telemetry=telemetry,
+        suffix="0a1b2c3d",
+    )
+
+
+@pytest.mark.parametrize("telemetry", ["captured", "incomplete", "missing"])
+def test_a_work_block_says_whether_its_telemetry_was_captured(telemetry: str) -> None:
+    work_block = ended_work_block_with_telemetry(telemetry)
+
+    text = records.render_record(work_block)
+    parsed = records.parse_work_block_record(text)
+
+    assert f'"telemetry": "{telemetry}"' in text
+    assert parsed.problems == []
+    assert parsed.record == work_block
+
+
+def test_a_work_block_record_written_before_telemetry_was_captured_still_reads() -> None:
+    # Records already in record repos have no telemetry field; they read as
+    # not saying, never as a problem.
+    text = records.render_record(ended_work_block_with_telemetry(None))
+    assert '"telemetry"' not in text
+
+    parsed = records.parse_work_block_record(text)
+
+    assert parsed.problems == []
+    assert parsed.record is not None
+    assert parsed.record.telemetry is None
+
+
+def test_a_work_block_with_an_unknown_telemetry_value_is_refused() -> None:
+    work_block = ended_work_block_with_telemetry("partly")
+
+    [problem] = records.validate_record(work_block)
+
+    assert problem.field == "telemetry"
+    assert "captured, incomplete or missing" in problem.message
+
+
 def test_a_problem_inside_machine_facts_names_the_nested_field() -> None:
     work_block = records.build_work_block_record(
         ADA, "research", MORNING, records.MachineFacts("eval-mac-01", "26.1", "0.0.1", None), suffix="0a1b2c3d"
