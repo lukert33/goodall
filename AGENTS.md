@@ -112,6 +112,8 @@ understand why each function exists.
   decision a reader would otherwise reverse-engineer.
 - Docstrings and comments give the reason and the trap, and are updated in the
   same edit as the behaviour they describe.
+- Spell in American English everywhere: code, docs, messages, issues
+  (`analyze`, `labeled`, `license`, `behavior`).
 - Type hints on every signature, `@dataclass` for records, `pathlib.Path` for
   paths, `yaml.safe_load` for YAML.
 - One obvious path: add an abstraction when a second real case exists.
