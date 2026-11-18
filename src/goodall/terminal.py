@@ -418,13 +418,16 @@ class Terminal:
             self.labelled_paragraph("Next", failure.what_to_do_next, BOLD),
         ]
         if failure.commands_to_try:
-            paragraphs.append(self.commands_paragraph(failure.commands_to_try))
+            paragraphs.append(self.commands_paragraph(failure.commands_to_try, self.error_colour))
         self.standard_error.write("\n\n".join(paragraphs) + "\n")
 
-    def commands_paragraph(self, commands: tuple[str, ...]) -> str:
-        """Commands to copy, labelled "Try", one per line and never wrapped, so each pastes as it stands."""
+    def commands_paragraph(self, commands: tuple[str, ...], colour: bool) -> str:
+        """Commands to copy, labelled "Try", one per line and never wrapped, so each pastes as it stands.
+
+        `colour` says whether the stream it goes to shows colour.
+        """
         label = "Try".ljust(LABEL_COLUMN_WIDTH)
-        if self.error_colour:
+        if colour:
             label = BOLD + "Try" + RESET + label[len("Try") :]
         lines = []
         for position, command in enumerate(commands):
@@ -433,6 +436,15 @@ class Terminal:
             else:
                 lines.append(" " * LABEL_COLUMN_WIDTH + command)
         return "\n".join(lines)
+
+    def show_commands(self, commands: tuple[str, ...]) -> None:
+        """Write commands to copy to standard output under a "Try" label, one per line and never wrapped.
+
+        The same layout as a failure's commands, for a command that succeeded
+        and has a next step to suggest, such as opening what it made.
+        """
+        self.start_output_block()
+        self.standard_output.write(self.commands_paragraph(commands, self.output_colour) + "\n")
 
     def show_hook_message(self, message: str) -> None:
         """Write a message for Claude Code to show the person, as one unwrapped line on standard error.

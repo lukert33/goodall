@@ -28,7 +28,7 @@ sections give the reasons and the checks behind each row.
 | [Claude Code](#programs-goodall-runs-or-works-alongside) | Required | Not yet checked: see the note below | The AI agent tool whose work goodall records. |
 | [GitHub's `gh`](#programs-goodall-runs-or-works-alongside) | Required by `goodall doctor` | Administrator | Lets `goodall doctor` check the GitHub sign-in, so goodall never handles the token itself. |
 | [1Password's `op`](#programs-goodall-runs-or-works-alongside) | Required only when the eval uses secrets | Administrator | Looks up secrets the eval needs, without goodall storing them. |
-| [`inspect-ai` and `inspect-scout`](#approved-not-yet-used) | Optional, only for the export | Whoever installed goodall | Turns records into a form the Inspect analysis tools read. Brings 95 packages, so only those who export install them. |
+| [`inspect-ai` and `inspect-scout`](#adopted-optional-extra-for-the-export) | Optional, only for `goodall export scout` | Whoever installed goodall, as the `scout` extra | Turns records into a database the Inspect analysis tools read. Brings about 95 packages, so only those who export install them. |
 | [ActivityWatch](#activitywatch-the-highest-risk-recommendation) | Optional, recommended | Administrator | Notes which app and window were in use, to back up what the human did. |
 
 Signing in is separate from installing, and always happens inside the eval
@@ -125,17 +125,12 @@ release that day.
 ### Approved, not yet used
 
 No goodall code uses these yet. They are approved so the builds that need them
-are not held up. Each still gets its row in `uv.lock`, or its install
-instructions, in the change that first uses it.
+are not held up. Each still gets its install instructions in the change that
+first uses it.
 
 | Program or package | What it would give | Provenance (checked 2026-11-17) | Decision |
 |---|---|---|---|
-| **inspect-ai** 0.3.290 | The transcript and event format goodall exports to (AGENTS.md invariant 8: an optional extra, imported only by export code) | UK AI Security Institute; `UKGovernmentBEIS/inspect_ai`, ~3,300 stars; MIT; Python 3.11 or newer. 40 direct dependencies; installing it alone resolves to 80 packages. No GitHub advisories and no OSV results. Releases several times a week, and the version number is still below 1.0. | **adopt** as an optional extra (owner approved 2026-11-17, on the basis that it comes from the UK AI Security Institute's ecosystem) |
-| **inspect-scout** 0.6.2 | Analysis of agent transcripts; the target of the planned `goodall export scout` | Meridian Labs; `meridianlabs-ai/inspect_scout`, 90 stars, created 2025-09; MIT. Most commits come from two people who are also core Inspect maintainers. 30 direct dependencies including `inspect-ai`, `duckdb`, `pandas` and `pyarrow`; installed together with `inspect-ai` the total is 95 packages. No GitHub advisories and no OSV results. Young, with few outside users so far. | **adopt** as an optional extra, together with `inspect-ai` (owner approved 2026-11-17) |
 | **ActivityWatch** v0.14.3 | A record of which application and window had focus, as corroboration of what the human did. Optional for an eval. | `ActivityWatch/activitywatch`, ~19,700 stars; MPL-2.0. Two advisories, both high and both old: a DNS rebinding attack on its local server (2022) and shell execution from a website on macOS (2021). It runs a local web server and records window titles, which can contain private text. See "ActivityWatch: the highest-risk recommendation" below. | **adopt** as an optional, recommended program (owner approved 2026-11-17, knowing it is largely one maintainer's project) |
-
-The 95 packages would be installed only by someone who asks for the export
-extra. A researcher who only records an eval would not get them.
 
 ### ActivityWatch: the highest-risk recommendation
 
@@ -175,6 +170,28 @@ and his AI agent. If Erik Bjäreholt stepped away, it is not clear who would
 publish security fixes. That is the risk being accepted. Goodall keeps it
 optional so that an eval can run without it, and revisits this row if a year
 passes without a release.
+
+## Adopted: optional extra for the export
+
+`goodall export scout` is the only code that imports these (AGENTS.md
+invariant 8). They are the `scout` extra in `pyproject.toml`, so a plain
+install of goodall, and everything it records, never brings them in. From
+inside a copy of this repository, install them with `uv tool install '.[scout]'`
+(goodall as a command) or `uv sync --extra scout` (for development). `uv.lock` pins the versions below; the ranges in
+`pyproject.toml` stop below the next minor version, because both packages are
+still below 1.0 and change their formats between minor versions.
+
+| Package | Purpose | Provenance (checked 2026-11-18) | Decision |
+|---|---|---|---|
+| **inspect-ai** 0.3.290 | The event and transcript types the export writes (ApprovalEvent, InfoEvent, InputEvent, InterruptEvent) | UK AI Security Institute; `UKGovernmentBEIS/inspect_ai`, 3,281 stars, not archived; MIT; Python 3.11 or newer. 40 direct dependencies. No GitHub advisories (repository and global advisory database) and no OSV results. Releases several times a week: 0.3.291 was uploaded 2026-11-17, a day before this check, and is deliberately not used yet. | **adopt** as an optional extra (owner approved 2026-11-17) |
+| **inspect-scout** 0.6.2 | The transcript database and its `claude_code` importer, which the export runs on the copied transcripts | Meridian Labs; `meridianlabs-ai/inspect_scout`, 91 stars, not archived; MIT; Python 3.11 or newer. 30 direct dependencies, including `inspect-ai`, `inspect-swe` (0.3.1, same maintainers, which holds the Claude Code transcript conversion), `duckdb`, `pandas` and `pyarrow`. No GitHub advisories and no OSV results. 0.6.3 was uploaded 2026-11-18, the day of this check, and is deliberately not used yet. With `inspect-ai`, `uv.lock` holds 97 packages for the extra across every platform it resolves for (95 were counted for one install on 2026-11-17). | **adopt** as an optional extra, together with `inspect-ai` (owner approved 2026-11-17) |
+
+The lock holds the versions checked on 2026-11-17 by the importer test
+recorded in Beads (`bd memories scout-importer-check-2026-11-17`) rather
+than the releases from the day before and the day of this check. Raise them
+with `uv lock --upgrade-package inspect-ai --upgrade-package inspect-scout`
+once a release is a couple of weeks old, re-run the export tests, and update
+this table.
 
 ## Adopted: development and build tools
 
@@ -258,8 +275,11 @@ Recorded so that "not stated" is never mistaken for "confirmed safe".
 - Git's licence and Claude Code's licence terms were not read today.
 - Whether GHSA-vp2w-7xxj-jvxr in git has been patched since it was published.
 - Who else maintains ActivityWatch day to day, beyond commit counts.
-- The 80 and 95 package totals come from one resolution for Python 3.12 on
-  2026-11-17 and will drift.
+- The 80, 95 and 97 package totals come from resolutions for Python 3.12 on
+  2026-11-17 and 2026-11-18 and will drift.
+- Whether `inspect-ai`, `inspect-scout` or `inspect-swe` make network calls
+  while importing transcripts. The `claude_code` importer's source was read
+  for the parts the export uses and none was seen; the rest was not read.
 - Whether goodall installs and runs correctly through pipx or through pip in
   a virtual environment. Only uv has been used.
 - That uv 0.13.4 and later actually ship without the `emSign ECC Root CA -

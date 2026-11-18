@@ -61,8 +61,11 @@ jobs:
           echo "$RUNNER_TEMP/uv-tool/bin" >> "$GITHUB_PATH"
 
       - name: Install dependencies from the lockfile
-        # --locked fails if uv.lock does not match pyproject.toml.
-        run: uv sync --locked
+        # --locked fails if uv.lock does not match pyproject.toml. --extra
+        # scout installs inspect-ai and inspect-scout, so the export tests
+        # run instead of skipping; the tests that prove capture works without
+        # them hide them from a fresh interpreter instead.
+        run: uv sync --locked --extra scout
 
       - name: Tests
         run: uv run pytest
