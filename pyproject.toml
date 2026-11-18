@@ -93,3 +93,12 @@ select = ["E", "F", "I", "B", "UP", "TID251"]
 [tool.mypy]
 strict = true
 files = ["src", "tests", ".claude/hooks"]
+
+# inspect-ai and inspect-scout are the optional scout extra (AGENTS.md
+# invariant 8), so mypy must pass in a checkout without them. Where they are
+# missing, their imports are treated as untyped; where they are installed,
+# this setting does nothing and mypy checks against their own type hints
+# (both ship py.typed). inspect_swe comes with inspect-scout.
+[[tool.mypy.overrides]]
+module = ["inspect_ai", "inspect_ai.*", "inspect_scout", "inspect_scout.*", "inspect_swe", "inspect_swe.*"]
+ignore_missing_imports = true

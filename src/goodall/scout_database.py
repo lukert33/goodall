@@ -146,9 +146,7 @@ def sessions_of(transcript: Transcript) -> list[str]:
 
 def start_of(transcript: Transcript) -> datetime | None:
     """When a transcript's first event happened, or None for one with no events."""
-    if not transcript.events:
-        return None
-    return transcript.events[0].timestamp
+    return start_of_events(transcript.events)
 
 
 def place_session_events(
@@ -275,7 +273,10 @@ def start_of_events(events: list[Event]) -> datetime | None:
     """When the first of `events` happened, or None when there are none."""
     if not events:
         return None
-    return events[0].timestamp
+    # Named with its type so mypy checks the same way whether or not the
+    # scout extra is installed (without it, Inspect's types are unknown).
+    first_timestamp: datetime = events[0].timestamp
+    return first_timestamp
 
 
 def position_by_time(scout_events: list[Event], moment: datetime | None) -> int:
