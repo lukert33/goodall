@@ -163,11 +163,11 @@ is what git pushes to the record repo you set up.
   Code later rewrites a source, goodall keeps the earlier copy beside the new
   one, and nothing is deleted.
 - **Everything computed is derived and can be remade.** Labels and any
-  analysis database are made from the raw records, never the other way round.
-- **Labels come from versioned rules.** Each entry in a record is labelled
+  analysis database are made from the raw records, never the other way around.
+- **Labels come from versioned rules.** Each entry in a record is labeled
   `human`, `ai` or `harness` (the software around the model, producing tool
   results and injected instructions) after the fact, by documented rules
-  with a version number. A better rule later means relabelling the same data.
+  with a version number. A better rule later means relabeling the same data.
 - **Capture does not depend on analysis.** Recording works with none of the
   Inspect packages installed.
 
@@ -185,7 +185,7 @@ is what git pushes to the record repo you set up.
   not versioned, and changes between Claude Code releases. Goodall keeps
   copies exactly as written because a copy can then always be checked against
   its original, but what the copies contain will change as Claude Code does.
-  Labelling rules were drawn from Claude Code 2.1.x transcripts and are
+  Labeling rules were drawn from Claude Code 2.1.x transcripts and are
   provisional.
 - **Telemetry can be lost silently.** Claude Code drops telemetry when nothing
   is listening. Transcripts are copied regardless, and are the record of
@@ -214,4 +214,4 @@ Decisions and their reasons are in [docs/adr/](docs/adr/). Dependencies are
 added only after a recorded check, as [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md)
 describes.
 
-Goodall is released under the licence in [LICENSE](LICENSE).
+Goodall is released under the license in [LICENSE](LICENSE).
