@@ -31,7 +31,7 @@ there are never read.
 A Claude Code that is killed fires no hook, so `goodall start`, `goodall stop`
 and `goodall status` also copy any transcript that changed since it was last
 copied. A copy that fails inside a hook is silent in Claude Code and noted in
-`transcript-sync/failed-copies.jsonl` in the log directory, and
+`transcript-sync/failed-copies.ndjson` in the log directory, and
 `goodall status` reports it.
 
 Goodall finds Claude Code's transcripts wherever Claude Code keeps them, with
