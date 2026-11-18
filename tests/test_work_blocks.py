@@ -827,6 +827,23 @@ def test_status_warns_once_about_prompts_whose_hook_input_could_not_be_read(eval
     assert len(filed.read_text().splitlines()) == 2
 
 
+def test_status_warns_about_a_hook_that_ran_without_being_told_its_event(eval_account: EvalAccount) -> None:
+    run_goodall(eval_account, ["start"])
+    terminal = Terminal(
+        standard_output=io.StringIO(), standard_error=io.StringIO(), standard_input=io.StringIO("{cut short")
+    )
+    exit_code = cli.main(["hook"], terminal=terminal, runner=FakeRunner(), clock=eval_account.clock)
+    assert exit_code == exit_codes.ERROR
+
+    status = run_goodall(eval_account, ["status", "--json"])
+
+    [warning] = json.loads(status.standard_output)["warnings"]
+    assert warning["kind"] == "hook_event_unknown"
+    text = " ".join(f"{warning['what_happened']} {warning['why']} {warning['what_to_do_next']}".split())
+    assert "ran 1 time since Mon 16 Nov 2026, 09:30 GMT without being told which Claude Code event" in text
+    assert "docs/claude-code-hooks.md" in text
+
+
 def test_status_json_includes_the_warning_about_unreadable_hook_input(eval_account: EvalAccount) -> None:
     run_goodall(eval_account, ["start"])
     send_prompt_goodall_cannot_read(eval_account)

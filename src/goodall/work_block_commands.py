@@ -341,6 +341,8 @@ class Settling:
             warnings.append(transcripts_not_copied_failure(self.transcript_sweep))
         if self.noted_hook_problems is not None and self.noted_hook_problems.unreadable_inputs > 0:
             warnings.append(hook_input_unreadable_failure(self.noted_hook_problems))
+        if self.noted_hook_problems is not None and self.noted_hook_problems.unknown_events > 0:
+            warnings.append(hook_event_unknown_failure(self.noted_hook_problems))
         return warnings
 
     @property
@@ -693,8 +695,8 @@ def hook_input_unreadable_failure(problems: hook_problems.HookProblems) -> Failu
     Shown once: settling has already filed the note away (goodall.hook_problems).
     """
     since = ""
-    if problems.first_at is not None:
-        since = f" since {describe_moment(problems.first_at)}"
+    if problems.unreadable_inputs_since is not None:
+        since = f" since {describe_moment(problems.unreadable_inputs_since)}"
     return Failure(
         kind="hook_input_unreadable",
         what_happened=(
@@ -711,6 +713,33 @@ def hook_input_unreadable_failure(problems: hook_problems.HookProblems) -> Failu
         what_to_do_next=(
             "Tell the researcher who runs the eval: goodall may need updating for this version of Claude Code. "
             "Nothing needs to be run again."
+        ),
+    )
+
+
+def hook_event_unknown_failure(problems: hook_problems.HookProblems) -> Failure:
+    """The warning for goodall hooks that ran without knowing which Claude Code event they were for.
+
+    Shown once: settling has already filed the note away (goodall.hook_problems).
+    """
+    since = ""
+    if problems.unknown_events_since is not None:
+        since = f" since {describe_moment(problems.unknown_events_since)}"
+    return Failure(
+        kind="hook_event_unknown",
+        what_happened=(
+            f"A goodall hook ran {describe_times(problems.unknown_events)}{since} without being told which Claude "
+            "Code event it was for, or for an event goodall does not handle."
+        ),
+        why=(
+            "Each goodall hook in Claude Code's settings names its event, such as goodall hook UserPromptSubmit. "
+            "One that does not may leave prompts ungated or unrecorded. The moments are kept in "
+            f"{problems.filed_at}."
+        ),
+        what_to_do_next=(
+            "Check the hooks in this account's Claude Code settings, ~/.claude/settings.json, against "
+            "docs/claude-code-hooks.md in goodall, and correct any command that does not end in one of the events "
+            "listed there. If you did not set them up, tell the researcher who runs the eval."
         ),
     )
 

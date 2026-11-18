@@ -16,6 +16,7 @@ import io
 
 from goodall import cli, exit_codes
 from goodall.fake_runner import FakeRunner
+from goodall.terminal import Terminal
 
 # Each entry is the words a user types after `goodall`. The hook command also
 # needs an event name, which `arguments_for` supplies.
@@ -171,13 +172,35 @@ def test_onboard_stub_says_how_to_set_up_an_eval_account_by_hand() -> None:
     assert "~/.config/goodall/" in one_line
 
 
-def test_hook_without_event_name_is_an_error_not_a_usage_error() -> None:
+class KeyboardInput(io.StringIO):
+    """Standard input that says it is a terminal: a person typing, nothing piped."""
+
+    def isatty(self) -> bool:
+        return True
+
+
+def test_hook_without_event_name_run_by_a_person_is_an_error_that_shows_the_fix() -> None:
     # Claude Code reads exit 2 as "refuse the prompt" or "do not stop", so a
     # hook command missing its event name must exit 1, which Claude Code
     # shows as a hook error and otherwise ignores.
-    exit_code, output = run_goodall(["hook"])
+    standard_error = io.StringIO()
+    terminal = Terminal(standard_output=io.StringIO(), standard_error=standard_error, standard_input=KeyboardInput())
+
+    exit_code = cli.main(["hook"], terminal=terminal, runner=FakeRunner())
+
     assert exit_code == exit_codes.ERROR
-    assert "goodall hook UserPromptSubmit" in output
+    assert "goodall hook UserPromptSubmit" in standard_error.getvalue()
+
+
+def test_hook_without_event_name_from_claude_code_is_an_error_that_prints_nothing() -> None:
+    standard_output = io.StringIO()
+    standard_error = io.StringIO()
+    terminal = Terminal(standard_output, standard_error, standard_input=io.StringIO("{cut short"))
+
+    exit_code = cli.main(["hook"], terminal=terminal, runner=FakeRunner())
+
+    assert exit_code == exit_codes.ERROR
+    assert standard_output.getvalue() == standard_error.getvalue() == ""
 
 
 def test_unknown_command_is_usage_error() -> None:

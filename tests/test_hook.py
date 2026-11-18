@@ -326,13 +326,94 @@ def test_an_event_with_unreadable_input_still_leaves_a_heartbeat(tmp_path: Path)
     assert heartbeat_sessions(eval_account.log_directory, work_block) == [None]
 
 
-def test_a_hook_command_missing_its_event_name_says_how_to_fix_it_without_blocking(tmp_path: Path) -> None:
+# ---------------------------------------------------------------------------
+# A hook command that does not name its event
+# ---------------------------------------------------------------------------
+
+
+def test_a_bare_hook_command_on_user_prompt_submit_is_still_a_working_prompt_gate(tmp_path: Path) -> None:
     eval_account = make_eval_account(tmp_path)
 
-    completed = run_hook(eval_account.config_directory, [], prompt_input())
+    # The event comes from hook_event_name in what Claude Code sends.
+    refused = run_hook(eval_account.config_directory, [], prompt_input())
+    work_block = start_work_block(eval_account.log_directory)
+    let_through = run_hook(eval_account.config_directory, [], prompt_input())
 
-    # 1, not 2: Claude Code shows the message but neither refuses a prompt
-    # nor keeps Claude from stopping, since which event fired is unknown.
+    assert refused.returncode == 2
+    assert refused.stderr.startswith("Goodall is not recording, so this prompt was not sent.")
+    assert let_through.returncode == 0, let_through.stderr
+    assert let_through.stdout == ""
+    assert heartbeat_sessions(eval_account.log_directory, work_block) == [CLAUDE_SESSION]
+    assert noted_hook_problems(eval_account.log_directory) == []
+
+
+def test_a_bare_hook_command_on_any_other_event_leaves_its_heartbeat(tmp_path: Path) -> None:
+    eval_account = make_eval_account(tmp_path)
+    work_block = start_work_block(eval_account.log_directory)
+
+    for event_input in RECORDING_EVENTS.values():
+        completed = run_hook(eval_account.config_directory, [], event_input)
+
+        assert completed.returncode == 0
+        assert completed.stdout == completed.stderr == ""
+    assert heartbeat_sessions(eval_account.log_directory, work_block) == [CLAUDE_SESSION] * len(RECORDING_EVENTS)
+
+
+def test_the_event_on_the_command_line_wins_over_the_one_in_the_input(tmp_path: Path) -> None:
+    eval_account = make_eval_account(tmp_path)
+
+    # No work block: as the prompt gate this would be refused, but a Stop
+    # hook must never refuse anything.
+    completed = run_hook(eval_account.config_directory, ["Stop"], prompt_input())
+
+    assert completed.returncode == 0
+    assert completed.stdout == completed.stderr == ""
+
+
+def test_a_bare_hook_command_whose_input_names_no_event_exits_1_silently_and_is_noted(tmp_path: Path) -> None:
+    eval_account = make_eval_account(tmp_path)
+    work_block = start_work_block(eval_account.log_directory)
+    no_event_name = json.dumps({"session_id": CLAUDE_SESSION, "prompt": "Private words"})
+
+    for event_input, problem in [
+        ("{cut short", "no_event_name"),
+        (no_event_name, "no_event_name"),
+        (hook_input("Notification", message="Private words"), "event_not_known"),
+    ]:
+        completed = run_hook(eval_account.config_directory, [], event_input)
+
+        # 1, not 2: which event fired is unknown, and 2 would refuse a prompt
+        # or keep Claude from stopping. Nothing printed can reach Claude.
+        assert completed.returncode == 1, event_input
+        assert completed.stdout == completed.stderr == ""
+        [noted] = noted_hook_problems(eval_account.log_directory)[-1:]
+        assert noted["problem"] == problem
+        assert noted["event"] is None
+        assert noted["work_block"] == work_block.id
+    problems_file = eval_account.log_directory / "hook-problems" / "hook-problems.jsonl"
+    assert "Private" not in problems_file.read_text()
+
+
+def test_a_bare_hook_command_with_no_settings_exits_1_and_writes_nothing(tmp_path: Path) -> None:
+    not_set_up = tmp_path / "not-set-up"
+    not_set_up.mkdir()
+
+    completed = run_hook(not_set_up, [], "{cut short")
+
     assert completed.returncode == 1
-    assert completed.stdout == ""
-    assert "goodall hook UserPromptSubmit" in completed.stderr
+    assert completed.stdout == completed.stderr == ""
+
+
+def test_an_event_goodall_does_not_handle_named_on_the_command_line_leaves_a_heartbeat_and_is_noted(
+    tmp_path: Path,
+) -> None:
+    eval_account = make_eval_account(tmp_path)
+    work_block = start_work_block(eval_account.log_directory)
+
+    completed = run_hook(eval_account.config_directory, ["PreToolUse"], hook_input("PreToolUse", tool_name="Bash"))
+
+    assert completed.returncode == 0
+    assert completed.stdout == completed.stderr == ""
+    assert heartbeat_sessions(eval_account.log_directory, work_block) == [CLAUDE_SESSION]
+    [noted] = noted_hook_problems(eval_account.log_directory)
+    assert noted["problem"] == "event_not_known"
