@@ -17,6 +17,7 @@ import asyncio
 import importlib.util
 import io
 import json
+import subprocess
 import sys
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -602,3 +603,20 @@ def test_export_without_the_scout_extra_says_how_to_install_it(
     assert failure["kind"] == "scout_extra_missing"
     assert "uv sync --extra scout" in failure["commands_to_try"]
     assert not pretend_eval.default_database.exists()
+
+
+@needs_scout
+def test_scouts_own_validator_accepts_the_exported_database(pretend_eval: PretendEval) -> None:
+    run_goodall(["export", "scout"])
+
+    # Scout's command-line tool, run as a person would, beside this Python.
+    scout = Path(sys.executable).parent / "scout"
+    completed = subprocess.run(
+        [str(scout), "db", "validate", str(pretend_eval.default_database)],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=60,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert "Schema validation passed." in completed.stdout
