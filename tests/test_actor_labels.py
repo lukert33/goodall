@@ -93,7 +93,7 @@ def test_the_result_says_which_rules_version_produced_it() -> None:
     result = label_transcript(FIXTURES / "actor_labels.jsonl")
 
     assert result.rules_version == ACTOR_LABEL_RULES_VERSION
-    assert result.rules_version == "2"
+    assert result.rules_version == "3"
 
 
 def test_the_module_loads_nothing_outside_the_standard_library() -> None:
@@ -211,7 +211,7 @@ def test_the_summary_shows_how_a_transcript_divides() -> None:
     summary = summarise_labels(label_transcript(FIXTURES / "actor_labels.jsonl"))
 
     assert summary == LabelSummary(
-        rules_version="2",
+        rules_version="3",
         entries_by_label={"human": 5, "ai": 8, "harness": 8},
         entries_by_rule={
             "person_typed_prompt": 1,

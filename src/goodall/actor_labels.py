@@ -48,7 +48,7 @@ from goodall.human_actions import (
 # Raise this whenever a rule below changes, or when the human-action rules it
 # relies on change, so labels made by different rules can be told apart and
 # regenerated (ADR 0004).
-ACTOR_LABEL_RULES_VERSION = "2"
+ACTOR_LABEL_RULES_VERSION = "3"
 
 ActorLabel = Literal["human", "ai", "harness"]
 Initiator = Literal["human", "ai", "harness"] | None
