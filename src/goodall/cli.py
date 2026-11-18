@@ -8,7 +8,7 @@ exit code, so `main` returns a number instead of calling `sys.exit` itself.
 `goodall status` (goodall.status), `goodall doctor` (goodall.doctor),
 `goodall journal` and `goodall intervene` (goodall.entries),
 `goodall start` and `goodall stop` (goodall.work_block_commands),
-`goodall fixblock` (goodall.fixblock), `goodall export scout`
+`goodall fixblock` (goodall.fixblock), `goodall logs` (goodall.logs), `goodall export scout`
 (goodall.scout_export), and `goodall hook` (goodall.hook) are built. The `goodall` command itself starts
 in goodall.entry_point, which sends `goodall hook` to goodall.hook without
 loading this module, for speed; `main` routes it there too, so both agree.
@@ -43,6 +43,7 @@ from goodall.doctor import run_doctor
 from goodall.entries import DECISION_MEANINGS, EntryRequest, InterventionDetails, run_intervene, run_journal
 from goodall.fixblock import run_fixblock
 from goodall.hook import run_hook
+from goodall.logs import run_logs
 from goodall.runner import RealRunner, Runner
 from goodall.scout_export import run_export_scout
 from goodall.status import run_status
@@ -232,7 +233,42 @@ def build_parser() -> argparse.ArgumentParser:
     sync = commands.add_parser("sync", help="Copy any Claude Code transcripts not yet captured into the log directory.")
     sync.set_defaults(command_name="sync")
 
-    logs = commands.add_parser("logs", help="Show where this eval's raw logs are and what they contain.")
+    logs = commands.add_parser(
+        "logs",
+        help="Browse this eval's work blocks and their raw records, read-only.",
+        description=(
+            "List this eval's work blocks, newest first, with what raw records exist for each, or show one work "
+            "block in detail: its record, fixes, journal entries, interventions and the path of each raw record, "
+            "flagged readable or unparseable. Only reads: nothing is written, committed or sent, and a forgotten "
+            "work block is shown as it is, not closed (goodall status does that)."
+        ),
+        epilog=(
+            "examples:\n"
+            "  goodall logs\n"
+            f"  goodall logs {records.EXAMPLE_RECORD_ID}\n"
+            "  goodall logs --raw transcripts/<project folder>/<session id>.jsonl\n"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    logs.add_argument(
+        "work_block_id",
+        nargs="?",
+        metavar="<work block id>",
+        help="Show this work block in detail. Without it, list them all.",
+    )
+    logs.add_argument(
+        "--raw",
+        metavar="<path>",
+        help=(
+            "Print one raw record exactly as stored, byte for byte. The path is inside the log directory, "
+            "absolute or relative to it, as goodall logs <work block id> shows it."
+        ),
+    )
+    logs.add_argument(
+        "--json",
+        action="store_true",
+        help="Print the result as one JSON document on standard output, for agents and scripts.",
+    )
     logs.set_defaults(command_name="logs")
 
     export = commands.add_parser("export", help="Export the record for analysis.")
@@ -404,6 +440,9 @@ def main(
             occurred_at=arguments.occurred_at,
         )
         return run_intervene(terminal, runner, entry_request, intervention_details)
+
+    if command_name == "logs":
+        return run_logs(terminal, clock, arguments.work_block_id, arguments.raw, as_json=arguments.json)
 
     if command_name == "export scout":
         return run_export_scout(terminal, arguments.output, as_json=arguments.json)
