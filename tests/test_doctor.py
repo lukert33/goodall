@@ -288,6 +288,8 @@ Settings
   pass        The eval config is found and valid
   pass        This eval account's contributor is in the roster
   pass        The main workstream is one of the eval's workstreams
+  pass        ActivityWatch's port and identifier are recorded, if the eval
+              includes it
 
 Tools
   pass        git is installed
@@ -330,7 +332,7 @@ Claude Code
   pass        The goodall that the hooks run starts
 
 All checks passed. One thing goodall cannot check without reading a secret.
-23 passed, 0 warned, 0 failed, 0 skipped, 1 unverified
+24 passed, 0 warned, 0 failed, 0 skipped, 1 unverified
 """
 
 
@@ -367,6 +369,9 @@ Settings
   skip        This eval account's contributor is in the roster
               Waiting for: Local settings are found
   skip        The main workstream is one of the eval's workstreams
+              Waiting for: Local settings are found
+  skip        ActivityWatch's port and identifier are recorded, if the eval
+              includes it
               Waiting for: Local settings are found
 
 Tools
@@ -411,7 +416,7 @@ Claude Code
   skip        The goodall that the hooks run starts
               Waiting for: Local settings are found
 
-3 passed, 0 warned, 1 failed, 20 skipped, 0 unverified
+3 passed, 0 warned, 1 failed, 21 skipped, 0 unverified
 """
 
 
@@ -459,6 +464,7 @@ ALL_CHECK_IDS = [
     "settings.eval_config_valid",
     "settings.contributor_in_roster",
     "settings.main_workstream_known",
+    "settings.activitywatch_settings_recorded",
     "tools.git_installed",
     "tools.gh_installed",
     "eval_account.standard_account",
@@ -486,7 +492,7 @@ def test_healthy_setup_as_json_gives_the_same_results(healthy_account: EvalAccou
 
     assert exit_code == exit_codes.SUCCESS
     assert document["schema_version"] == 1
-    assert document["summary"] == {"passed": 23, "warned": 0, "failed": 0, "skipped": 0, "unverified": 1}
+    assert document["summary"] == {"passed": 24, "warned": 0, "failed": 0, "skipped": 0, "unverified": 1}
     checks = document["checks"]
     assert isinstance(checks, list)
     assert checks[0] == {
@@ -512,7 +518,7 @@ def test_missing_local_settings_as_json_names_what_each_skip_waited_for(settings
     exit_code, document = doctor_json()
 
     assert exit_code == exit_codes.ERROR
-    assert document["summary"] == {"passed": 3, "warned": 0, "failed": 1, "skipped": 20, "unverified": 0}
+    assert document["summary"] == {"passed": 3, "warned": 0, "failed": 1, "skipped": 21, "unverified": 0}
     checks = document["checks"]
     assert isinstance(checks, list)
     failed_check = checks[0]
@@ -546,7 +552,7 @@ def test_invalid_local_settings_fail_once_and_name_every_problem(healthy_account
     assert "favorite_color" in standard_output
     assert standard_output.count("        Next: ") == 2
     assert "Waiting for: Local settings are valid" in standard_output
-    assert standard_output.endswith("4 passed, 0 warned, 1 failed, 19 skipped, 0 unverified\n")
+    assert standard_output.endswith("4 passed, 0 warned, 1 failed, 20 skipped, 0 unverified\n")
 
 
 def test_relative_settings_folder_override_fails_the_found_check(
@@ -596,6 +602,7 @@ def test_missing_record_repo_skips_the_eval_config_but_still_checks_the_log_dire
         "settings.eval_config_valid": "skip",
         "settings.contributor_in_roster": "skip",
         "settings.main_workstream_known": "skip",
+        "settings.activitywatch_settings_recorded": "skip",
         "tools.git_installed": "pass",
         "tools.gh_installed": "pass",
         "tools.secrets_manager_installed": "pass",
@@ -634,7 +641,7 @@ def test_unreachable_log_directory_is_a_warning_with_a_next_step_and_exits_0(hea
     assert exit_code == exit_codes.SUCCESS
     assert "  warn        The log directory can be written to\n              Not recording:" in standard_output
     assert "        Next: If the log directory is on an external drive, connect it." in standard_output
-    assert standard_output.endswith("22 passed, 1 warned, 0 failed, 0 skipped, 1 unverified\n")
+    assert standard_output.endswith("23 passed, 1 warned, 0 failed, 0 skipped, 1 unverified\n")
 
     json_exit_code, document = doctor_json()
     assert json_exit_code == exit_code
@@ -661,7 +668,7 @@ def test_contributor_and_main_workstream_are_reported_as_separate_checks(healthy
     exit_code, document = doctor_json()
 
     assert exit_code == exit_codes.ERROR
-    assert document["summary"] == {"passed": 21, "warned": 0, "failed": 2, "skipped": 0, "unverified": 1}
+    assert document["summary"] == {"passed": 22, "warned": 0, "failed": 2, "skipped": 0, "unverified": 1}
     checks = document["checks"]
     assert isinstance(checks, list)
     assert [failure["kind"] for failure in checks[5]["failures"]] == ["contributor_not_in_roster"]
@@ -687,6 +694,7 @@ def test_contributor_and_main_workstream_are_reported_as_separate_checks(healthy
         "remove Claude Code's settings",
         "leave a hook out",
         "name goodall without its path in the hooks",
+        "include ActivityWatch without recording its port",
     ],
 )
 def test_every_failure_and_warning_has_a_next_step_and_exit_codes_agree(
@@ -729,6 +737,8 @@ def test_every_failure_and_warning_has_a_next_step_and_exit_codes_agree(
         healthy_account.write_claude_settings(settings)
     elif break_setup == "name goodall without its path in the hooks":
         healthy_account.write_claude_settings(claude_code_settings(goodall_program="goodall"))
+    elif break_setup == "include ActivityWatch without recording its port":
+        healthy_account.eval_config_file.write_text(EVAL_CONFIG_WITH_ACTIVITYWATCH_TEXT)
     else:
         healthy_account.eval_config_file.write_text(VALID_EVAL_CONFIG_TEXT.replace("ada-lovelace", "grace-hopper"))
 
@@ -833,7 +843,7 @@ def test_missing_gh_is_one_failure_naming_it_and_saying_an_administrator_account
 
     assert exit_code == exit_codes.ERROR
     document = json.loads(standard_output)
-    assert document["summary"] == {"passed": 20, "warned": 0, "failed": 1, "skipped": 2, "unverified": 1}
+    assert document["summary"] == {"passed": 21, "warned": 0, "failed": 1, "skipped": 2, "unverified": 1}
     gh_check = check_document(document, "tools.gh_installed")
     assert gh_check["status"] == "fail"
     assert isinstance(gh_check["detail"], str)
@@ -853,7 +863,7 @@ def test_missing_git_is_one_failure_and_the_record_repo_check_waits_for_it(healt
 
     assert exit_code == exit_codes.ERROR
     document = json.loads(standard_output)
-    assert document["summary"] == {"passed": 18, "warned": 0, "failed": 1, "skipped": 4, "unverified": 1}
+    assert document["summary"] == {"passed": 19, "warned": 0, "failed": 1, "skipped": 4, "unverified": 1}
     git_check = check_document(document, "tools.git_installed")
     assert git_check["status"] == "fail"
     assert isinstance(git_check["next_step"], str)
@@ -869,7 +879,7 @@ def test_missing_op_fails_the_secrets_manager_check_naming_1password(healthy_acc
 
     assert exit_code == exit_codes.ERROR
     document = json.loads(standard_output)
-    assert document["summary"] == {"passed": 20, "warned": 0, "failed": 1, "skipped": 3, "unverified": 0}
+    assert document["summary"] == {"passed": 21, "warned": 0, "failed": 1, "skipped": 3, "unverified": 0}
     secrets_manager_check = check_document(document, "tools.secrets_manager_installed")
     assert secrets_manager_check["status"] == "fail"
     assert isinstance(secrets_manager_check["detail"], str)
@@ -946,7 +956,7 @@ def test_an_administrator_account_fails_with_why_a_standard_account_is_required(
     # The reason, so a researcher does not wave it away as fussiness.
     assert "cannot reach other accounts' files or install software" in report_text
     assert "safe to hand to an agent" in report_text
-    assert standard_output.endswith("22 passed, 0 warned, 1 failed, 0 skipped, 1 unverified\n")
+    assert standard_output.endswith("23 passed, 0 warned, 1 failed, 0 skipped, 1 unverified\n")
 
 
 @pytest.mark.parametrize(
@@ -980,7 +990,7 @@ def test_a_record_repo_folder_that_is_not_a_git_repository_fails(healthy_account
 
     assert exit_code == exit_codes.ERROR
     document = json.loads(standard_output)
-    assert document["summary"] == {"passed": 19, "warned": 0, "failed": 1, "skipped": 3, "unverified": 1}
+    assert document["summary"] == {"passed": 20, "warned": 0, "failed": 1, "skipped": 3, "unverified": 1}
     git_repository_check = check_document(document, "record_repo.is_git_repository")
     assert git_repository_check["status"] == "fail"
     assert isinstance(git_repository_check["detail"], str)
@@ -1052,7 +1062,7 @@ def test_an_account_check_that_never_finishes_is_reported_as_timed_out_and_docto
     assert isinstance(account_check["detail"], str)
     assert "`/usr/bin/id -Gn` timed out after 10 s" in account_check["detail"]
     # Every other check still ran.
-    assert document["summary"] == {"passed": 22, "warned": 0, "failed": 1, "skipped": 0, "unverified": 1}
+    assert document["summary"] == {"passed": 23, "warned": 0, "failed": 1, "skipped": 0, "unverified": 1}
 
 
 # A recognisable fake key. If any part of it shows up in goodall's output,
@@ -1644,7 +1654,7 @@ def test_a_report_whose_only_unverified_check_needs_a_secret_reads_as_healthy(he
     last_lines = standard_output.splitlines()[-2:]
     assert last_lines == [
         "All checks passed. One thing goodall cannot check without reading a secret.",
-        "23 passed, 0 warned, 0 failed, 0 skipped, 1 unverified",
+        "24 passed, 0 warned, 0 failed, 0 skipped, 1 unverified",
     ]
     # The check itself keeps its status and says when a wrong field shows up.
     assert "  unverified  Each secret reference names a field that exists\n" in standard_output
@@ -1653,7 +1663,7 @@ def test_a_report_whose_only_unverified_check_needs_a_secret_reads_as_healthy(he
         report_text
     )
     # --json is unchanged: the count is still there, and nothing calls it a pass.
-    assert document["summary"] == {"passed": 23, "warned": 0, "failed": 0, "skipped": 0, "unverified": 1}
+    assert document["summary"] == {"passed": 24, "warned": 0, "failed": 0, "skipped": 0, "unverified": 1}
     assert check_document(document, "secrets.referenced_fields_exist")["status"] == "unverified"
 
 
@@ -1678,7 +1688,7 @@ def test_a_report_with_a_warning_has_no_all_passed_line(healthy_account: EvalAcc
 
     assert exit_code == exit_codes.SUCCESS
     assert "All checks passed" not in standard_output
-    assert standard_output.splitlines()[-1] == "22 passed, 1 warned, 0 failed, 0 skipped, 1 unverified"
+    assert standard_output.splitlines()[-1] == "23 passed, 1 warned, 0 failed, 0 skipped, 1 unverified"
 
 
 def test_an_env_file_with_no_references_has_no_field_to_leave_unverified(healthy_account: EvalAccount) -> None:
@@ -2716,3 +2726,111 @@ def test_no_value_from_claude_code_s_settings_is_ever_shown(healthy_account: Eva
 
     for printed in [standard_output, standard_error, json_output]:
         assert SYNTHETIC_SETTINGS_KEY not in printed
+
+
+# ActivityWatch (ADR 0016). When the eval config includes it, local settings
+# must hold the eval account's ActivityWatch port and the identifier its
+# server reported. Whether ActivityWatch answers is a later check
+# (goodall-ayy.6); this one reads the two files only. The identifier is
+# synthetic.
+EVAL_CONFIG_WITH_ACTIVITYWATCH_TEXT = VALID_EVAL_CONFIG_TEXT.replace(
+    "schema_version = 1\n", "schema_version = 1\nactivitywatch = true\n"
+)
+ACTIVITYWATCH_PORT_LINE = "activitywatch_port = 5610\n"
+ACTIVITYWATCH_DEVICE_ID_LINE = 'activitywatch_device_id = "8d3f2c1e-4b5a-4c6d-9e7f-0a1b2c3d4e5f"\n'
+ACTIVITYWATCH_CHECK = "settings.activitywatch_settings_recorded"
+
+
+def test_an_eval_with_activitywatch_and_both_settings_recorded_passes(healthy_account: EvalAccount) -> None:
+    healthy_account.eval_config_file.write_text(EVAL_CONFIG_WITH_ACTIVITYWATCH_TEXT)
+    healthy_account.settings_file.write_text(
+        healthy_account.settings_text() + ACTIVITYWATCH_PORT_LINE + ACTIVITYWATCH_DEVICE_ID_LINE
+    )
+
+    exit_code, document = doctor_json()
+
+    assert exit_code == exit_codes.SUCCESS
+    assert statuses(document)[ACTIVITYWATCH_CHECK] == "pass"
+
+
+def test_an_eval_with_activitywatch_fails_doctor_naming_each_missing_setting_and_how_to_find_it(
+    healthy_account: EvalAccount,
+) -> None:
+    healthy_account.eval_config_file.write_text(EVAL_CONFIG_WITH_ACTIVITYWATCH_TEXT)
+
+    exit_code, standard_output, _ = run_goodall(["doctor"])
+    json_exit_code, document = doctor_json()
+
+    assert exit_code == exit_codes.ERROR
+    assert json_exit_code == exit_codes.ERROR
+    assert statuses(document)[ACTIVITYWATCH_CHECK] == "fail"
+    assert failure_kinds(document, ACTIVITYWATCH_CHECK) == ["activitywatch_settings_missing"]
+    report = " ".join(standard_output.split())
+    assert "activitywatch_port" in report
+    assert "activitywatch_device_id" in report
+    assert "/api/0/info" in report
+    assert str(healthy_account.settings_file) in report
+
+
+def test_an_eval_with_activitywatch_names_only_the_setting_that_is_missing(healthy_account: EvalAccount) -> None:
+    healthy_account.eval_config_file.write_text(EVAL_CONFIG_WITH_ACTIVITYWATCH_TEXT)
+    healthy_account.settings_file.write_text(healthy_account.settings_text() + ACTIVITYWATCH_PORT_LINE)
+
+    _, document = doctor_json()
+
+    failures = check_document(document, ACTIVITYWATCH_CHECK)["failures"]
+    assert isinstance(failures, list)
+    assert "activitywatch_device_id" in failures[0]["what_happened"]
+    assert "activitywatch_port" not in failures[0]["what_happened"]
+
+
+def test_activitywatch_settings_in_an_eval_without_activitywatch_are_ignored(healthy_account: EvalAccount) -> None:
+    # A contributor whose eval stops using ActivityWatch, or who set it up
+    # early, is not asked to edit a file for a setting that has no effect.
+    healthy_account.settings_file.write_text(
+        healthy_account.settings_text() + ACTIVITYWATCH_PORT_LINE + ACTIVITYWATCH_DEVICE_ID_LINE
+    )
+
+    exit_code, document = doctor_json()
+
+    assert exit_code == exit_codes.SUCCESS
+    assert statuses(document)[ACTIVITYWATCH_CHECK] == "pass"
+
+
+def test_a_broken_eval_config_skips_the_activitywatch_settings_check(healthy_account: EvalAccount) -> None:
+    healthy_account.eval_config_file.write_text("schema_version = 1\n")
+
+    _, document = doctor_json()
+
+    assert statuses(document)[ACTIVITYWATCH_CHECK] == "skip"
+
+
+def test_the_default_activitywatch_port_fails_the_local_settings_check_with_the_reason(
+    healthy_account: EvalAccount,
+) -> None:
+    healthy_account.eval_config_file.write_text(EVAL_CONFIG_WITH_ACTIVITYWATCH_TEXT)
+    healthy_account.settings_file.write_text(
+        healthy_account.settings_text() + "activitywatch_port = 5600\n" + ACTIVITYWATCH_DEVICE_ID_LINE
+    )
+
+    exit_code, document = doctor_json()
+
+    assert exit_code == exit_codes.ERROR
+    assert failure_kinds(document, "settings.local_settings_valid") == ["local_settings_activitywatch_default_port"]
+    failures = check_document(document, "settings.local_settings_valid")["failures"]
+    assert isinstance(failures, list)
+    assert "every macOS user account" in failures[0]["why"]
+    assert "such as 5610" in failures[0]["what_to_do_next"]
+
+
+def test_an_activitywatch_identifier_pasted_in_the_wrong_shape_is_never_shown(healthy_account: EvalAccount) -> None:
+    pasted_secret = "sk-ant-api03-SYNTHETICsyntheticSYNTHETIC"
+    healthy_account.settings_file.write_text(
+        healthy_account.settings_text() + ACTIVITYWATCH_PORT_LINE + f'activitywatch_device_id = "{pasted_secret}"\n'
+    )
+
+    _, standard_output, standard_error = run_goodall(["doctor"])
+    _, json_output, json_error = run_goodall(["doctor", "--json"])
+
+    for printed in [standard_output, standard_error, json_output, json_error]:
+        assert "SYNTHETICsynthetic" not in printed

@@ -1127,7 +1127,16 @@ SECRET_POSITIONS = {
         '"research"',
         f'"{PASTED_HEX_TOKEN}"',
     ),
+    "settings activitywatch_port": (PASTED_KEY, "settings", "", f'activitywatch_port = "{PASTED_KEY}"\n'),
+    "settings activitywatch_device_id": (PASTED_KEY, "settings", "", f'activitywatch_device_id = "{PASTED_KEY}"\n'),
+    "settings activitywatch_device_id shaped like a name": (
+        PASTED_HEX_TOKEN,
+        "settings",
+        "",
+        f'activitywatch_device_id = "{PASTED_HEX_TOKEN}"\n',
+    ),
     "eval config unknown key": (PASTED_KEY, "eval_config", "", f'{PASTED_KEY} = "x"\n'),
+    "eval config activitywatch": (PASTED_KEY, "eval_config", "", f'activitywatch = "{PASTED_KEY}"\n'),
     "eval config unknown key in a block": (
         PASTED_KEY,
         "eval_config",
@@ -1201,3 +1210,130 @@ def test_a_secret_pasted_anywhere_in_settings_or_eval_config_is_never_shown_by_s
     for printed in [text_output, text_error, json_output, json_error]:
         assert secret not in printed
     assert json.loads(json_output)["failures"] != []
+
+
+# ActivityWatch (ADR 0016). The eval config says whether the eval includes it;
+# local settings hold the eval account's own ActivityWatch port and the
+# identifier its server reported. The identifier below is synthetic.
+ACTIVITYWATCH_SETTINGS_TEXT = (
+    'activitywatch_port = 5610\nactivitywatch_device_id = "8d3f2c1e-4b5a-4c6d-9e7f-0a1b2c3d4e5f"\n'
+)
+
+
+def test_an_eval_config_without_activitywatch_is_read_as_not_including_it(eval_account: EvalAccount) -> None:
+    # Every eval config written before ActivityWatch existed has no such key,
+    # and must keep working unchanged.
+    eval_account.make_valid()
+    assert failure_kinds() == []
+
+
+@pytest.mark.parametrize("activitywatch_line", ["activitywatch = true", "activitywatch = false"])
+def test_an_eval_config_saying_whether_it_includes_activitywatch_is_valid(
+    eval_account: EvalAccount, activitywatch_line: str
+) -> None:
+    break_eval_config(eval_account, "schema_version = 1\n", f"schema_version = 1\n{activitywatch_line}\n")
+    assert failure_kinds() == []
+
+
+@pytest.mark.parametrize("activitywatch_line", ['activitywatch = "yes"', "activitywatch = 1", 'activitywatch = "true"'])
+def test_activitywatch_in_the_eval_config_must_be_true_or_false(
+    eval_account: EvalAccount, activitywatch_line: str
+) -> None:
+    break_eval_config(eval_account, "schema_version = 1\n", f"schema_version = 1\n{activitywatch_line}\n")
+
+    _, _, standard_error = run_goodall(["status"])
+
+    assert "activitywatch" in standard_error
+    assert "activitywatch = true" in standard_error
+    assert failure_kinds() == ["eval_config_value_invalid"]
+
+
+def test_local_settings_with_activitywatch_port_and_identifier_are_valid(eval_account: EvalAccount) -> None:
+    eval_account.make_valid()
+    eval_account.write_settings(eval_account.valid_settings_text() + ACTIVITYWATCH_SETTINGS_TEXT)
+    assert failure_kinds() == []
+
+
+def test_activitywatch_settings_missing_do_not_stop_status_even_when_the_eval_includes_it(
+    eval_account: EvalAccount,
+) -> None:
+    # Commands keep working, so a contributor can still record agent work;
+    # goodall doctor is where the missing settings fail (ADR 0016).
+    break_eval_config(eval_account, "schema_version = 1\n", "schema_version = 1\nactivitywatch = true\n")
+    assert failure_kinds() == []
+
+
+def test_the_default_activitywatch_port_is_refused_with_the_reason(eval_account: EvalAccount) -> None:
+    eval_account.make_valid()
+    eval_account.write_settings(
+        eval_account.valid_settings_text() + ACTIVITYWATCH_SETTINGS_TEXT.replace("5610", "5600")
+    )
+
+    exit_code, _, standard_error = run_goodall(["status"])
+
+    assert exit_code == exit_codes.ERROR
+    assert "activitywatch_port" in standard_error
+    assert "5600" in standard_error
+    assert "every macOS user account" in standard_error
+    assert failure_kinds() == ["local_settings_activitywatch_default_port"]
+
+
+@pytest.mark.parametrize(
+    "port_line",
+    [
+        "activitywatch_port = 0",
+        "activitywatch_port = 65536",
+        'activitywatch_port = "5610"',
+        "activitywatch_port = true",
+    ],
+)
+def test_an_activitywatch_port_that_is_not_a_port_number_is_reported(eval_account: EvalAccount, port_line: str) -> None:
+    eval_account.make_valid()
+    eval_account.write_settings(
+        eval_account.valid_settings_text() + ACTIVITYWATCH_SETTINGS_TEXT.replace("activitywatch_port = 5610", port_line)
+    )
+
+    _, _, standard_error = run_goodall(["status"])
+
+    assert "activitywatch_port" in standard_error
+    assert "1 to 65535" in standard_error
+    assert failure_kinds() == ["local_settings_value_invalid"]
+
+
+@pytest.mark.parametrize(
+    "device_id_line",
+    [
+        'activitywatch_device_id = "my-laptop"',
+        'activitywatch_device_id = "8d3f2c1e4b5a4c6d9e7f0a1b2c3d4e5f"',
+        'activitywatch_device_id = "8d3f2c1e-4b5a-4c6d-9e7f-0a1b2c3d4e5"',
+        'activitywatch_device_id = ""',
+        "activitywatch_device_id = 5",
+    ],
+)
+def test_an_activitywatch_identifier_that_is_not_a_uuid_is_reported(
+    eval_account: EvalAccount, device_id_line: str
+) -> None:
+    eval_account.make_valid()
+    eval_account.write_settings(
+        eval_account.valid_settings_text()
+        + ACTIVITYWATCH_SETTINGS_TEXT.replace(
+            'activitywatch_device_id = "8d3f2c1e-4b5a-4c6d-9e7f-0a1b2c3d4e5f"', device_id_line
+        )
+    )
+
+    _, _, standard_error = run_goodall(["status"])
+
+    assert "activitywatch_device_id" in standard_error
+    assert "/api/0/info" in standard_error
+    assert failure_kinds() == ["local_settings_value_invalid"]
+
+
+def test_an_activitywatch_identifier_in_capitals_is_accepted(eval_account: EvalAccount) -> None:
+    eval_account.make_valid()
+    eval_account.write_settings(
+        eval_account.valid_settings_text()
+        + ACTIVITYWATCH_SETTINGS_TEXT.replace(
+            "8d3f2c1e-4b5a-4c6d-9e7f-0a1b2c3d4e5f", "8D3F2C1E-4B5A-4C6D-9E7F-0A1B2C3D4E5F"
+        )
+    )
+    assert failure_kinds() == []
