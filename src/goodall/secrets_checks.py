@@ -21,14 +21,14 @@ decision:
   the one secret that can never be one, and in a file it is a secret any
   reader of the file can take (goodall.secrets_manager).
 
-Two further judgements, beyond what ADR 0010 settles:
+Two further judgments, beyond what ADR 0010 settles:
 
 - Another account being able to reach the env file is a failure
   (`check_env_file_private`). The file holds references, not secrets, but
   it names the vaults and items an eval's secrets are kept in, and an
   account that could change it could point a program at another secret.
 - In the shared env file, a value that is a secret reference fails, because
-  nothing would resolve it. A value in a recognised key format, such as
+  nothing would resolve it. A value in a recognized key format, such as
   Anthropic's `sk-ant-`, fails too, because that is close to certain
   (goodall.quoting.key_format_in). A value merely shaped like a long random
   token only warns, because UUIDs and git commit ids share that shape
@@ -469,10 +469,10 @@ def shared_env_file_secret_name_failure(
 def shared_env_file_key_failure(
     shared_env_file: Path, entry: EnvEntry, key_format: KeyFormat, local_settings: LocalSettings, in_name: bool
 ) -> Failure:
-    """The failure for a key in a recognised format in the shared env file, in a value or pasted as a name.
+    """The failure for a key in a recognized format in the shared env file, in a value or pasted as a name.
 
     A failure, not a warning like an anonymous token shape, because a
-    recognised prefix is close to certain. Nothing of the key is shown,
+    recognized prefix is close to certain. Nothing of the key is shown,
     only what kind of key it is; when the key is the name, the variable is
     referred to by its line alone. The shared env file is committed, so
     the next step assumes the key may already be public.

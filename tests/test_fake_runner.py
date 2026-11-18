@@ -62,7 +62,7 @@ def test_a_command_can_be_scripted_as_missing_or_as_never_finishing() -> None:
     assert timed_out.problem == "`/usr/bin/id -Gn` timed out after 3 s"
 
 
-def test_git_runs_for_real_so_tests_verify_gits_actual_behaviour(tmp_path: Path) -> None:
+def test_git_runs_for_real_so_tests_verify_gits_actual_behavior(tmp_path: Path) -> None:
     runner = FakeRunner()
 
     result = runner.run(Command(["git", "init", "--quiet"], working_directory=tmp_path))

@@ -22,10 +22,10 @@ Design decisions a reader would otherwise reverse-engineer:
   whether a line is the person's.
 - One entry, one label. When an entry holds more than one actor's words (a
   typed prompt with a reminder in front, a refusal the harness wrote up around
-  the person's decision), it is labelled by its primary producer and marked
+  the person's decision), it is labeled by its primary producer and marked
   `mixed`. The rule decides both, so a mixed entry is never a surprise.
 - Nothing is guessed. An entry no rule matches, and a line that cannot be read,
-  goes into `unmatched` with a reason that names no content, and labelling
+  goes into `unmatched` with a reason that names no content, and labeling
   carries on with the next line.
 """
 
@@ -102,7 +102,7 @@ class EntryFacts:
 
 @dataclass(frozen=True)
 class Rule:
-    """One actor labelling rule: if `test` is true, the entry gets `label`.
+    """One actor labeling rule: if `test` is true, the entry gets `label`.
 
     `initiated_by` says who asked for the entry to be written, when that is
     clear from the rule: "human", "ai" or "harness", or None when the raw
@@ -191,7 +191,7 @@ ACTOR_LABEL_RULES: tuple[Rule, ...] = (
     ),
     Rule(
         name="person_interrupted",
-        description="The person stopped the agent; the harness wrote a fixed marker or a cancelled tool result.",
+        description="The person stopped the agent; the harness wrote a fixed marker or a canceled tool result.",
         label="human",
         mixed=True,
         initiated_by="human",
@@ -275,7 +275,7 @@ ACTOR_LABEL_RULES: tuple[Rule, ...] = (
     # which would otherwise claim a summary (it is marked isCompactSummary).
     Rule(
         name="model_summarised_conversation_when_asked",
-        description="A model summarised the conversation because the person asked with /compact.",
+        description="A model summarized the conversation because the person asked with /compact.",
         label="ai",
         mixed=False,
         initiated_by="human",
@@ -283,7 +283,7 @@ ACTOR_LABEL_RULES: tuple[Rule, ...] = (
     ),
     Rule(
         name="model_summarised_conversation_unprompted",
-        description="A model summarised the conversation because Claude Code compacted it on its own.",
+        description="A model summarized the conversation because Claude Code compacted it on its own.",
         label="ai",
         mixed=False,
         initiated_by="harness",
@@ -291,7 +291,7 @@ ACTOR_LABEL_RULES: tuple[Rule, ...] = (
     ),
     Rule(
         name="model_summarised_conversation",
-        description="A model summarised the conversation; nothing in the record says what started it.",
+        description="A model summarized the conversation; nothing in the record says what started it.",
         label="ai",
         mixed=False,
         initiated_by=None,
@@ -412,7 +412,7 @@ class LabelledTranscript:
 
     Every non-blank line is in exactly one of `labels` and `unmatched`, in
     transcript order. Both versions are recorded, because a label depends on
-    the human-action rules as well as on the actor labelling rules.
+    the human-action rules as well as on the actor labeling rules.
     """
 
     labels: list[EntryLabel]
@@ -502,7 +502,7 @@ def compaction_trigger_of(boundary_entry: dict[str, Any]) -> str | None:
 
 @dataclass(frozen=True)
 class LabelSummary:
-    """How one labelled transcript divides, for a researcher to see at a glance.
+    """How one labeled transcript divides, for a researcher to see at a glance.
 
     Every label and every rule appears, with zero when unused, so a rule that
     stopped matching after a Claude Code update shows up as a zero rather than
@@ -516,24 +516,24 @@ class LabelSummary:
     unmatched_entries: int
 
 
-def summarise_labels(labelled_transcript: LabelledTranscript) -> LabelSummary:
+def summarize_labels(labeled_transcript: LabelledTranscript) -> LabelSummary:
     """Count the labels, the rules that decided them, mixed and unmatched entries."""
     entries_by_label = {"human": 0, "ai": 0, "harness": 0}
     entries_by_rule: dict[str, int] = {}
     for rule in ACTOR_LABEL_RULES:
         entries_by_rule[rule.name] = 0
     mixed_entries = 0
-    for label in labelled_transcript.labels:
+    for label in labeled_transcript.labels:
         entries_by_label[label.actor_label] += 1
         entries_by_rule[label.rule_name] += 1
         if label.mixed:
             mixed_entries += 1
     return LabelSummary(
-        rules_version=labelled_transcript.rules_version,
+        rules_version=labeled_transcript.rules_version,
         entries_by_label=entries_by_label,
         entries_by_rule=entries_by_rule,
         mixed_entries=mixed_entries,
-        unmatched_entries=len(labelled_transcript.unmatched),
+        unmatched_entries=len(labeled_transcript.unmatched),
     )
 
 

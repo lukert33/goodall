@@ -617,7 +617,7 @@ def record_commit_failed_failure(record_repo: Path, path: Path, result: CommandR
         what_happened=f"The record was written to {path}, but git did not commit it: {result.problem}.",
         why=(
             "A record reaches other contributors only once it is committed and pushed. Your own git settings, "
-            "such as a hook or commit signing, can refuse a commit; goodall does not get round them."
+            "such as a hook or commit signing, can refuse a commit; goodall does not get around them."
         ),
         what_to_do_next=(
             f"Fix what git complained about, then commit the file yourself: in {record_repo}, run git commit "
@@ -691,7 +691,7 @@ def run_git(
     - Nothing may ask for a password or passphrase: goodall never asks
       questions in the terminal, and a prompt nobody sees hangs until the
       timeout. `GIT_TERMINAL_PROMPT=0` stops git's own prompts;
-      `credential.interactive=never` asks credential helpers that honour it
+      `credential.interactive=never` asks credential helpers that honor it
       (Git Credential Manager does) not to open a window; `SSH_ASKPASS` is
       left out so ssh has no program to ask with. ssh cannot ask in the
       terminal either, because the runner starts git with no terminal

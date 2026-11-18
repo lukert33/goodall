@@ -14,7 +14,7 @@ not equally sure:
 - `looks_like_a_random_token` is a guess from shape alone: a long run of
   letters and digits. UUIDs and git commit ids have the same shape, so
   where it raises a warning, the warning says it may be wrong.
-- `key_format_in` recognises the published formats of well-known issuers'
+- `key_format_in` recognizes the published formats of well-known issuers'
   keys (`KEY_FORMATS`), such as Anthropic's `sk-ant-`. A match is close to
   certain, so a caller may fail on it, and it names the issuer, so the
   next step can say who replaces the key. It never says anything about the
@@ -103,7 +103,7 @@ class KeyFormat:
 # No letter or digit straight before a key's prefix.
 KEY_START = r"(?<![A-Za-z0-9])"
 
-# The key formats goodall recognises, checked in this order, so a more
+# The key formats goodall recognizes, checked in this order, so a more
 # specific prefix (sk-ant-) is tried before a general one (sk-). A format
 # belongs here only when its prefix is published or widely documented and
 # rare outside keys. Add one with a line naming its issuer and a test in
@@ -194,7 +194,7 @@ def can_show_name(name: str) -> bool:
 
     Only such a name may appear in a message. Anything else is referred to
     by where it is, never by what it says. Both key rules apply: a key in a
-    recognised format can have no digit in it, which the random-token rule
+    recognized format can have no digit in it, which the random-token rule
     needs.
     """
     if len(name) > LONGEST_NAME_SHOWN:

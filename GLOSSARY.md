@@ -1,6 +1,6 @@
 # Goodall
 
-Goodall records what a person and their AI agents each did while doing real work together, so that the record can be analysed and published. These are the terms it uses for that record and the setup around it.
+Goodall records what a person and their AI agents each did while doing real work together, so that the record can be analyzed and published. These are the terms it uses for that record and the setup around it.
 
 ## Language
 

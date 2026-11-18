@@ -49,7 +49,7 @@ Mac.
    use it. An exception needs a stated reason in the table below.
 2. **Few direct dependencies.** Goodall has **zero** runtime dependencies today.
 3. **Checked facts, not recommendations.** A package is added only after its
-   maintainer, repository, advisory history, licence and dependency count have
+   maintainer, repository, advisory history, license and dependency count have
    been looked up and written here. A suggestion from a person or a model is a
    lead to check.
 4. **Single-maintainer packages are a first-class risk.** They can be adopted
@@ -75,7 +75,7 @@ with macOS's developer tools is older than 3.12 (3.9.6 on the machine this
 was checked on, 2026-11-17), so most researchers' Macs will need both.
 
 Which installer to use is up to the preferences or policy of whoever installs
-goodall: the person or organisation that owns the Mac. An eval account is a
+goodall: the person or organization that owns the Mac. An eval account is a
 standard macOS user account and cannot install software itself. Goodall's own
 instructions use uv, and that is the only route tested.
 
@@ -92,8 +92,8 @@ party's own decision:
   does, but does not fetch Python.
 - **pip in a virtual environment** (`python -m venv`), again with a Python
   3.12 or newer installed separately. Nothing beyond Python itself is added.
-- **A Python from python.org, Homebrew or an organisation's managed software
-  catalogue**, to supply the interpreter for either of the two routes above.
+- **A Python from python.org, Homebrew or an organization's managed software
+  catalog**, to supply the interpreter for either of the two routes above.
 
 Goodall is not published to a package index yet, so today every route
 installs from a copy of this repository and builds it with `uv_build` (below),
@@ -111,8 +111,8 @@ security advisories, the PyPI JSON API, OSV.dev and 1Password's release notes.
 
 | Program | Needed when | Provenance (checked 2026-11-17) | Decision |
 |---|---|---|---|
-| **git** | Always. Goodall commits and pushes records with it (ADR 0001). | The Git project, maintained by Junio C Hamano with a large contributor base; `git/git` is a mirror of the mailing-list repository, ~64,400 stars; GPL-2.0 (from the project's own licence file, not re-read today; GitHub's detector reports none). Newest release v2.56.1. 33 published advisories, most fixed promptly. One is open: GHSA-vp2w-7xxj-jvxr (high, 2026-11-10), code execution when cloning an attacker's repository with `--recurse-submodules`, no patch yet. Goodall never clones, so it does not take that path; a researcher cloning a record repo by hand should not use that option on a repository they do not trust. | **adopt** |
-| **Claude Code** | Always. It is the agent tool goodall records (ADR 0002). | Anthropic; `anthropics/claude-code`, ~156,000 stars; no open-source licence in the repository, so treat it as proprietary. Newest release v2.1.326 (2026-11-16), with releases most days. 36 published advisories between 2025-06 and 2026-10 (29 high, 4 medium, 3 low), covering sandbox escapes, writes outside the workspace and plugin pinning; each names a fixed release. Goodall depends on its hook input and transcript layout, which Anthropic does not promise to keep stable. | **adopt**: it is the subject of the eval, so there is no alternative to weigh. Keep it updated. |
+| **git** | Always. Goodall commits and pushes records with it (ADR 0001). | The Git project, maintained by Junio C Hamano with a large contributor base; `git/git` is a mirror of the mailing-list repository, ~64,400 stars; GPL-2.0 (from the project's own license file, not re-read today; GitHub's detector reports none). Newest release v2.56.1. 33 published advisories, most fixed promptly. One is open: GHSA-vp2w-7xxj-jvxr (high, 2026-11-10), code execution when cloning an attacker's repository with `--recurse-submodules`, no patch yet. Goodall never clones, so it does not take that path; a researcher cloning a record repo by hand should not use that option on a repository they do not trust. | **adopt** |
+| **Claude Code** | Always. It is the agent tool goodall records (ADR 0002). | Anthropic; `anthropics/claude-code`, ~156,000 stars; no open-source license in the repository, so treat it as proprietary. Newest release v2.1.326 (2026-11-16), with releases most days. 36 published advisories between 2025-06 and 2026-10 (29 high, 4 medium, 3 low), covering sandbox escapes, writes outside the workspace and plugin pinning; each names a fixed release. Goodall depends on its hook input and transcript layout, which Anthropic does not promise to keep stable. | **adopt**: it is the subject of the eval, so there is no alternative to weigh. Keep it updated. |
 | **1Password's command-line tool, `op`** | Only when the env file holds a secret reference (ADR 0006). | 1Password (AgileBits Inc.); closed source, proprietary, so the code cannot be reviewed. Newest stable release 2.42.0 (2026-11-03). Known issues: CVE-2022-32550 (medium, fixed in 2.3.0); CVE-2024-42219 (2024-08, a local process on macOS could impersonate a trusted 1Password integration such as the command-line tool; fixed in the 1Password app 8.10.36). An independent researcher's 2023 disclosure about `op` on shared machines was not given a CVE or a fix. Goodall runs only `op whoami`, `op vault list` and `op item list`, and never a command that returns a secret value. | **adopt**, conditional. "Or an equivalent secrets manager" remains the intent; `op` is the only one supported. |
 | **GitHub's command-line tool, `gh`** | Always: `goodall doctor` requires it. No goodall code runs it yet. | GitHub; `cli/cli`, ~47,100 stars; MIT. Newest release v2.104.0 (2026-11-12). 17 published advisories, two high (GHSA-8xvp-7hj6-mcj9, 2026-05; GHSA-p2h2-3vg9-4p87, 2024-11), the rest low or medium, each fixed in a release. It holds a GitHub token with whatever access the account granted it. | **adopt** (owner approved 2026-11-17, on the basis that GitHub publishes it) |
 
@@ -147,7 +147,7 @@ project's age and the activity around it, set out here as checked on
   second long-term author, mostly on the Rust server (266 commits there to
   Erik's 386).
 - **Size of the community.** ~19,700 stars, 1,078 forks, 37 contributors to
-  the main repository, and 61 repositories in the organisation (server,
+  the main repository, and 61 repositories in the organization (server,
   web interface, watchers for windows, input and browsers, an Android app).
   Twelve of those repositories were pushed to in the three days before the
   check. It takes donations through GitHub Sponsors, Open Collective, Patreon
@@ -228,7 +228,7 @@ chose pytest anyway, for reasons specific to this project:
   and Inspect Scout test with pytest. Code and fixture tests meant for upstream
   have to be written in that style regardless.
 - The project works test-first and outside-in (AGENTS.md, "Testing"). Plain
-  `assert`, fixtures such as `tmp_path`, and parametrised cases keep that loop
+  `assert`, fixtures such as `tmp_path`, and parametrized cases keep that loop
   short to write and easy to read for researchers.
 - It is the most widely used Python test style, so more contributors already
   know it.
@@ -250,9 +250,9 @@ governance or release practice changes.
 |---|---|---|
 | **hatchling** 1.33.0 | Build backend | Five direct dependencies and effectively one maintainer (Ofek Lev). `uv_build` does the same job with no dependencies and no new maintainer to trust. |
 | **setuptools** 84.2.1 | Build backend | Several advisories since 2024 (path traversal, command injection) and more dependencies than `uv_build`. |
-| **ty** 0.0.104 | Type checker | Its README calls it beta with no stable interface. High-severity advisory GHSA-vxvm-j4xq-q7m4 (2026-09-24): code execution from analysing a crafted project. Revisit when stable. |
+| **ty** 0.0.104 | Type checker | Its README calls it beta with no stable interface. High-severity advisory GHSA-vxvm-j4xq-q7m4 (2026-09-24): code execution from analyzing a crafted project. Revisit when stable. |
 | **pyright** (PyPI package) | Type checker | The PyPI package is a third-party wrapper around Microsoft's checker and downloads Node at run time when Node is absent. Unacceptable on a credential-holding machine. |
-| **pyrefly** 1.4.1 | Type checker | A credible runner-up: zero dependencies, MIT, marked production-stable. Younger than mypy, and its move from Meta's organisation to `pyrefly-org` could not be fully traced. Revisit if mypy becomes a burden. |
+| **pyrefly** 1.4.1 | Type checker | A credible runner-up: zero dependencies, MIT, marked production-stable. Younger than mypy, and its move from Meta's organization to `pyrefly-org` could not be fully traced. Revisit if mypy becomes a burden. |
 | **black + flake8** | Formatter and linter | Two tools with several dependencies between them; `ruff` covers both with none. |
 | **OpenTelemetry Collector** v0.165.0 | Receives Claude Code's telemetry and writes it to files | `open-telemetry/opentelemetry-collector`, ~7,800 stars; Apache-2.0; a CNCF project. Four advisories, two of them published 2026-11-12. Rejected in ADR 0002: a separately downloaded binary and its configuration would have to be installed and kept running in every eval account, where a small standard-library receiver inside goodall does the one job needed. Goodall's output stays convertible to the Collector's format. |
 
@@ -272,7 +272,7 @@ Recorded so that "not stated" is never mistaken for "confirmed safe".
 - 1Password's own list of security advisories. The search returned news
   reports and vulnerability databases, not 1Password's advisory pages, so the
   `op` row may be incomplete.
-- Git's licence and Claude Code's licence terms were not read today.
+- Git's license and Claude Code's license terms were not read today.
 - Whether GHSA-vp2w-7xxj-jvxr in git has been patched since it was published.
 - Who else maintains ActivityWatch day to day, beyond commit counts.
 - The 80, 95 and 97 package totals come from resolutions for Python 3.12 on
@@ -292,7 +292,7 @@ Recorded so that "not stated" is never mistaken for "confirmed safe".
 
 1. Can the standard library or an existing dependency do it acceptably? If so,
    stop.
-2. Identify the maintainer or organisation, the canonical repository and where
+2. Identify the maintainer or organization, the canonical repository and where
    it is hosted. One maintainer, or hosting that cannot be reviewed commit by
    commit, raises the bar.
 3. Check the advisory history (OSV.dev, GitHub Security Advisories) and how

@@ -111,7 +111,7 @@ def test_interruptions_say_what_was_interrupted() -> None:
             interrupted="generate",
             interrupted_tool_call_id=None,
         ),
-        # Stopped a running tool; the cancelled tool result names the call.
+        # Stopped a running tool; the canceled tool result names the call.
         Interruption(
             line_number=6,
             entry_id="u-0006",

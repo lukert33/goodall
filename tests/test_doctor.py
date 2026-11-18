@@ -7,7 +7,7 @@ the screen, the JSON document and the files on disk.
 The whole-screen tests (`EXPECTED_HEALTHY_SCREEN` and
 `EXPECTED_SETTINGS_MISSING_SCREEN`) are a contract: a future replacement of
 the terminal module would have to produce the same screens at the fixed width
-with colour off.
+with color off.
 """
 
 import io
@@ -533,7 +533,7 @@ def test_missing_local_settings_as_json_names_what_each_skip_waited_for(settings
 
 def test_invalid_local_settings_fail_once_and_name_every_problem(healthy_account: EvalAccount) -> None:
     healthy_account.settings_file.write_text(
-        healthy_account.settings_text().replace('contributor = "ada-lovelace"\n', "") + 'favourite_colour = "green"\n'
+        healthy_account.settings_text().replace('contributor = "ada-lovelace"\n', "") + 'favorite_color = "green"\n'
     )
 
     exit_code, standard_output, _ = run_goodall(["doctor"])
@@ -543,7 +543,7 @@ def test_invalid_local_settings_fail_once_and_name_every_problem(healthy_account
     assert "  FAIL        Local settings are valid\n" in standard_output
     # Both problems are shown, each with its own next step.
     assert "have no contributor" in standard_output
-    assert "favourite_colour" in standard_output
+    assert "favorite_color" in standard_output
     assert standard_output.count("        Next: ") == 2
     assert "Waiting for: Local settings are valid" in standard_output
     assert standard_output.endswith("4 passed, 0 warned, 1 failed, 19 skipped, 0 unverified\n")
@@ -959,7 +959,7 @@ def test_an_administrator_account_fails_with_why_a_standard_account_is_required(
         ("ada docker users\n", "pass"),
     ],
 )
-def test_the_account_check_also_recognises_administrators_on_linux(
+def test_the_account_check_also_recognizes_administrators_on_linux(
     healthy_account: EvalAccount, groups: str, expected_status: str
 ) -> None:
     runner = healthy_runner()
@@ -1324,7 +1324,7 @@ def test_a_secret_reference_in_the_shared_env_file_fails_because_it_would_not_be
     assert "move this to the env file as a reference" in next_step
 
 
-# Synthetic values in each recognised key format (goodall.quoting.KEY_FORMATS),
+# Synthetic values in each recognized key format (goodall.quoting.KEY_FORMATS),
 # with the issuer the failure names. Each is built from two pieces, so a
 # secret scanner reading this file does not mistake it for a leaked key.
 KEYS_IN_RECOGNISED_FORMATS = {
@@ -1351,7 +1351,7 @@ KEYS_IN_RECOGNISED_FORMATS = {
 
 
 @pytest.mark.parametrize("key_format", list(KEYS_IN_RECOGNISED_FORMATS))
-def test_a_value_in_a_recognised_key_format_in_the_shared_env_file_fails_without_showing_it(
+def test_a_value_in_a_recognized_key_format_in_the_shared_env_file_fails_without_showing_it(
     healthy_account: EvalAccount, key_format: str
 ) -> None:
     key = KEYS_IN_RECOGNISED_FORMATS[key_format]

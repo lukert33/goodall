@@ -170,9 +170,9 @@ ActivityWatchAction = ApplicationFocus | BrowserPageFocus | EditorFileFocus | Aw
 
 @dataclass(frozen=True)
 class UnfamiliarRecord:
-    """A bucket or event the parser did not recognise. The reason names no value.
+    """A bucket or event the parser did not recognize. The reason names no value.
 
-    `event_index` is None when the whole bucket was not recognised.
+    `event_index` is None when the whole bucket was not recognized.
     """
 
     bucket_id: str

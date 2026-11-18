@@ -60,7 +60,7 @@ class HumanAction(Protocol):
 
 # PROVISIONAL. A first grouping of every kind into a higher-level category,
 # for looking at real results quickly. Nothing depends on it but
-# `category_of` and `summarise_human_actions`; expect it to change once real
+# `category_of` and `summarize_human_actions`; expect it to change once real
 # results have been reviewed. Docs: docs/human-action-categories.md.
 PROVISIONAL_CATEGORIES: dict[str, str] = {
     # Claude Code transcripts.
@@ -87,12 +87,12 @@ PROVISIONAL_CATEGORIES: dict[str, str] = {
 }
 
 # The category of a kind not in the table yet.
-UNCATEGORISED = "uncategorised"
+UNCATEGORIZED = "uncategorized"
 
 
 def category_of(kind: str) -> str:
-    """Return the provisional category of a kind, or "uncategorised" for a kind not in the table."""
-    return PROVISIONAL_CATEGORIES.get(kind, UNCATEGORISED)
+    """Return the provisional category of a kind, or "uncategorized" for a kind not in the table."""
+    return PROVISIONAL_CATEGORIES.get(kind, UNCATEGORIZED)
 
 
 def human_actions_in_time_range(
@@ -268,7 +268,7 @@ class HumanActionSummary:
     Every kind and category in `PROVISIONAL_CATEGORIES` is listed, with zero
     when unused, so a rule that stopped matching shows as a zero rather than
     as a missing line. A kind not in the table is counted under its own name
-    and under "uncategorised".
+    and under "uncategorized".
     """
 
     total: int
@@ -277,10 +277,10 @@ class HumanActionSummary:
     actions_by_source: dict[str, int]
 
 
-def summarise_human_actions(actions: Sequence[HumanAction]) -> HumanActionSummary:
+def summarize_human_actions(actions: Sequence[HumanAction]) -> HumanActionSummary:
     """Count actions by kind, by provisional category and by source.
 
-    Pass it the result of `human_actions_in_time_range` to summarise a time
+    Pass it the result of `human_actions_in_time_range` to summarize a time
     range.
     """
     actions_by_kind: dict[str, int] = {}

@@ -78,7 +78,7 @@ class EntryResult:
       such as "journal_entry"; `record_type_name` is the same in words.
     - `record_id` and `path` are None when goodall stopped before it had a
       record to write.
-    - `facts` are the labelled lines shown under the summary on success.
+    - `facts` are the labeled lines shown under the summary on success.
     - `warnings` are problems that did not stop the record being kept
       safely, such as a push that is still pending; `failures` are problems
       that did.
@@ -306,7 +306,7 @@ def intervene_command(details: InterventionDetails) -> str:
     """The start of a `goodall intervene` command for a failure to offer, without the text.
 
     It carries the person's own --category and --decision when they are
-    well formed, so the example is theirs to copy, and plain capitalised
+    well formed, so the example is theirs to copy, and plain capitalized
     words where not. Trap: a placeholder like `<category>` must never be
     offered, because a shell reads `<` as "read from this file", so pasting
     it would fail confusingly or worse.

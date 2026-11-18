@@ -191,7 +191,7 @@ def test_status_json_is_exactly_one_document(empty_config_directory: Path) -> No
     assert json_output.endswith("}\n")
 
 
-def test_status_without_local_settings_uses_no_colour_when_not_a_terminal(empty_config_directory: Path) -> None:
+def test_status_without_local_settings_uses_no_color_when_not_a_terminal(empty_config_directory: Path) -> None:
     _, _, standard_error = run_goodall(["status"])
     assert "\x1b[" not in standard_error
 
@@ -397,17 +397,17 @@ def test_unknown_key_is_named_and_a_close_match_suggested(eval_account: EvalAcco
 
 
 def test_unknown_key_is_reported_even_when_everything_else_is_valid(eval_account: EvalAccount) -> None:
-    eval_account.write_settings(eval_account.valid_settings_text() + 'favourite_colour = "green"\n')
+    eval_account.write_settings(eval_account.valid_settings_text() + 'favorite_color = "green"\n')
 
     _, _, standard_error = run_goodall(["status"])
 
-    assert "favourite_colour" in standard_error
+    assert "favorite_color" in standard_error
     assert failure_kinds() == ["local_settings_key_unknown"]
 
 
 def test_several_problems_are_all_shown_one_after_another(eval_account: EvalAccount) -> None:
     # Five required keys missing, plus one unknown key.
-    eval_account.write_settings('schema_version = 1\nfavourite_colour = "green"\n')
+    eval_account.write_settings('schema_version = 1\nfavorite_color = "green"\n')
 
     _, standard_output, standard_error = run_goodall(["status"])
 

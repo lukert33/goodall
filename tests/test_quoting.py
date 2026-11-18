@@ -68,7 +68,7 @@ def test_a_token_inside_a_longer_value_is_found() -> None:
     assert not looks_like_a_random_token("http/json")
 
 
-# One synthetic example of each recognised key format, and the issuer goodall
+# One synthetic example of each recognized key format, and the issuer goodall
 # should name for it. Built from two pieces, so a secret scanner reading this
 # file does not mistake it for a leaked key.
 KEYS_BY_ISSUER = [
@@ -96,7 +96,7 @@ KEYS_BY_ISSUER = [
 
 
 @pytest.mark.parametrize(("key", "issuer"), KEYS_BY_ISSUER)
-def test_each_recognised_key_format_is_found_and_names_its_issuer(key: str, issuer: str) -> None:
+def test_each_recognized_key_format_is_found_and_names_its_issuer(key: str, issuer: str) -> None:
     key_format = key_format_in(key)
 
     assert key_format is not None
@@ -104,7 +104,7 @@ def test_each_recognised_key_format_is_found_and_names_its_issuer(key: str, issu
 
 
 @pytest.mark.parametrize(("key", "issuer"), KEYS_BY_ISSUER)
-def test_a_recognised_key_inside_a_longer_value_is_found(key: str, issuer: str) -> None:
+def test_a_recognized_key_inside_a_longer_value_is_found(key: str, issuer: str) -> None:
     assert key_format_in(f"Authorization=Bearer {key}") is not None
 
 
@@ -137,10 +137,10 @@ def test_a_recognised_key_inside_a_longer_value_is_found(key: str, issuer: str) 
         "eyJhbGciOiJIUzI1NiJ9",
     ],
 )
-def test_identifiers_ordinary_words_and_short_prefixes_are_not_recognised_as_keys(text: str) -> None:
+def test_identifiers_ordinary_words_and_short_prefixes_are_not_recognized_as_keys(text: str) -> None:
     assert key_format_in(text) is None
 
 
-def test_a_name_in_a_recognised_key_format_is_not_shown() -> None:
+def test_a_name_in_a_recognized_key_format_is_not_shown() -> None:
     # No digit in it, so the random-token rule alone would let it through.
     assert not can_show_name("ghp_" + "SYNTHETICsyntheticSYNTHETICsynthetic")

@@ -26,7 +26,7 @@ Design decisions a reader would otherwise reverse-engineer:
   RULES_VERSION (ADR 0004).
 - Field values borrow Inspect's vocabulary (InterruptEvent, ApprovalEvent) so
   the same rules could later be offered to Inspect's transcript importer.
-- Anything the parser does not recognise is reported in `unfamiliar_entries`,
+- Anything the parser does not recognize is reported in `unfamiliar_entries`,
   never dropped silently: Claude Code's transcript format is internal and
   changes between versions, and a silent gap would undercount the person.
 """
@@ -572,7 +572,7 @@ def place_of_entry(entry: dict[str, Any], line_number: int, transcript_path: Pat
 
 @dataclass(frozen=True)
 class UnfamiliarEntry:
-    """An entry whose type or shape the parser does not recognise."""
+    """An entry whose type or shape the parser does not recognize."""
 
     line_number: int
     entry_id: str | None
@@ -668,7 +668,7 @@ class TranscriptMemory:
     """
 
     # Ids of entries that held a rejection, so the interruption marker Claude
-    # Code writes straight after one can be recognised as part of it.
+    # Code writes straight after one can be recognized as part of it.
     rejection_entry_ids: set[str] = field(default_factory=set)
     # The tool each tool call asked for, by call id, read from the assistant
     # entries that made the calls. Only names are kept, never tool inputs.
@@ -777,7 +777,7 @@ class UserContent:
     """The parts of a "user" entry that the rules look at.
 
     `unfamiliar_reasons` lists anything in the entry the parser did not
-    recognise. The recognised parts are still used, so a new kind of block
+    recognize. The recognized parts are still used, so a new kind of block
     beside a typed prompt does not hide the prompt.
     """
 
