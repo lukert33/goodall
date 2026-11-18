@@ -21,12 +21,14 @@ Design decisions a reader might otherwise reverse-engineer:
 - The parser is built with plain `argparse` calls, one block per command, so
   the whole command surface can be read top to bottom in `build_parser`. There
   is deliberately no registry or plugin mechanism.
-- argparse normally calls `sys.exit` on a usage error (and after `--help`).
-  `main` catches that `SystemExit` and returns its code, so callers always get
-  a number back.
+- argparse normally calls `sys.exit` on a usage error (and after `--help`
+  or `--version`). `main` catches that `SystemExit` and returns its code, so
+  callers always get a number back.
 - Everything goodall says goes through the `Terminal` passed to `main`
-  (goodall.terminal). The one exception is argparse's own help and usage
-  messages, which argparse prints itself.
+  (goodall.terminal). The one exception is argparse's own help, usage and
+  `--version` messages, which argparse prints itself. `goodall --version`
+  exists so that `goodall doctor` can check that the goodall a Claude Code
+  hook names really starts, without it doing anything else.
 - Every program goodall starts goes through the runner passed to `main`
   (goodall.runner, ADR 0011), which defaults to the real one. A test passes
   `goodall.fake_runner.FakeRunner` instead.
@@ -36,7 +38,7 @@ import argparse
 from datetime import UTC, datetime
 from pathlib import Path
 
-from goodall import exit_codes, records
+from goodall import __version__, exit_codes, records
 from goodall.doctor import run_doctor
 from goodall.entries import DECISION_MEANINGS, EntryRequest, InterventionDetails, run_intervene, run_journal
 from goodall.fixblock import run_fixblock
@@ -60,6 +62,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="goodall",
         description="Record what a human and their AI agents each did during an open-world eval.",
     )
+    parser.add_argument("--version", action="version", version=f"goodall {__version__}")
     commands = parser.add_subparsers(title="commands", metavar="<command>")
 
     onboard = commands.add_parser("onboard", help="Set up this eval account and its record repo for a new eval.")
@@ -70,6 +73,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--json",
         action="store_true",
         help="Print the results as one JSON document on standard output, for agents and scripts.",
+    )
+    doctor.add_argument(
+        "--offline",
+        action="store_true",
+        help="Ask nothing over the network: the checks that would ask GitHub are reported as unverified.",
     )
     doctor.set_defaults(command_name="doctor")
 
@@ -350,7 +358,7 @@ def main(
     if command_name == "fixblock":
         return run_fixblock(terminal, runner, clock, arguments.work_block_id, arguments.workstream)
     if command_name == "doctor":
-        return run_doctor(terminal, runner, as_json=arguments.json)
+        return run_doctor(terminal, runner, as_json=arguments.json, offline=arguments.offline)
     if command_name == "journal":
         entry_request = EntryRequest(text=arguments.text, as_json=arguments.json, text_file=arguments.file)
         return run_journal(terminal, runner, entry_request)

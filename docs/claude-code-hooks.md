@@ -135,6 +135,14 @@ is noted the same way.
 
 ## Checking it works
 
+`goodall doctor` checks the user settings above: that each of the five
+events has a `goodall hook <event>` command, that hooks are not turned off
+with `disableAllHooks`, and that the goodall each command names starts
+(it runs `goodall --version`). It reads only `hooks` and `disableAllHooks`
+from the file and never shows anything written there. Hooks in a project's
+own `.claude` folder do not count, because they apply only inside that
+project.
+
 In the eval account, with no work block active, send Claude Code any prompt.
 It should be refused with a message telling you to run `goodall start`. Run
 `goodall start`, send the prompt again, and it should go through.
