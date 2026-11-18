@@ -22,7 +22,7 @@ from pathlib import Path
 
 import pytest
 
-from goodall import telemetry_receiver
+from goodall import telemetry_receipts, telemetry_receiver
 from goodall.telemetry_receiver import RunningReceiver
 
 # A trimmed copy of a real Claude Code log export, in the shape spike
@@ -97,7 +97,8 @@ def test_each_signal_is_stored_in_its_own_file(
     assert status == 200
     assert stored_lines(tmp_path / telemetry_file_name) == [body]
     other_files = sorted(entry.name for entry in tmp_path.iterdir() if entry.name != telemetry_file_name)
-    assert other_files == []
+    # The receipt log is the only other file (ADR 0013).
+    assert other_files == ["receipts.jsonl"]
 
 
 def test_two_requests_become_two_lines_in_the_order_received(receiver: RunningReceiver, tmp_path: Path) -> None:
@@ -182,8 +183,13 @@ def replace_header(headers: list[tuple[str, str]], header_name: str, header_valu
 
 
 def assert_nothing_stored(telemetry_directory: Path) -> None:
-    """A refused request must leave no telemetry file behind."""
-    assert sorted(entry.name for entry in telemetry_directory.iterdir()) == []
+    """A refused request must leave no telemetry file behind, and no receipt.
+
+    The receipt log itself exists from the moment the receiver starts,
+    because the receiver locks it then.
+    """
+    assert sorted(entry.name for entry in telemetry_directory.iterdir()) == ["receipts.jsonl"]
+    assert (telemetry_directory / "receipts.jsonl").read_bytes() == b""
 
 
 SMALL_BODY = b'{"resourceLogs":[]}'
@@ -530,6 +536,10 @@ def test_killed_receiver_keeps_every_acknowledged_line(receiver_process: Receive
     receiver_process.process.wait(timeout=10)
 
     assert stored_lines(tmp_path / "logs.jsonl") == acknowledged_bodies
+    # Every acknowledged request's receipt survives the kill as well.
+    check = telemetry_receipts.check_receipts(tmp_path)
+    assert check.receipt_count == 25
+    assert check.problems() == []
 
 
 def test_receiver_process_stops_cleanly_on_sigterm(receiver_process: ReceiverProcess, tmp_path: Path) -> None:
@@ -606,3 +616,12 @@ def test_concurrent_requests_each_become_one_whole_line(receiver: RunningReceive
     stored = stored_lines(tmp_path / "logs.jsonl")
     assert len(stored) == len(sent_bodies)
     assert sorted(stored) == sorted(sent_bodies)
+    # Forty receipts, numbered 1 to 40 with none skipped or repeated, each
+    # naming one of the forty lines (ADR 0013).
+    sequence_numbers = []
+    for receipt_line in stored_lines(tmp_path / "receipts.jsonl"):
+        sequence_numbers.append(json.loads(receipt_line)["sequence"])
+    assert sequence_numbers == list(range(1, 41))
+    check = telemetry_receipts.check_receipts(tmp_path)
+    assert (check.receipt_count, check.line_count) == (40, 40)
+    assert check.problems() == []
