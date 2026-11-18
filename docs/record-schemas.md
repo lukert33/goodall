@@ -156,7 +156,8 @@ workstream a work block counts towards asks `effective_workstreams` in
 
 A contributor's written note about what was decided or done, and by whom.
 Folder: `journal/`. The file is a metadata header followed by the entry in
-Markdown.
+Markdown. It is the person's own testimony, so `goodall journal` refuses to
+run from inside Claude Code (an agent's work is in its transcript).
 
 | Field | Required | Value |
 | --- | --- | --- |
@@ -187,6 +188,8 @@ Decided by me; the comparison was written by the agent.
 
 A moment when a person overrode, corrected, redirected or rescued an agent,
 or had to act because the agent could not. Folder: `interventions/`.
+Like a journal entry it is the person's own testimony, so `goodall intervene`
+refuses to run from inside Claude Code.
 
 | Field | Required | Value |
 | --- | --- | --- |

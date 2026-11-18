@@ -129,7 +129,11 @@ def build_parser() -> argparse.ArgumentParser:
     journal = commands.add_parser(
         "journal",
         help="Add an entry to the eval journal in the record repo.",
-        description="Add a journal entry: a note about what was decided or done, and by whom.",
+        description=(
+            "Add a journal entry: a note about what was decided or done, and by whom. "
+            "Run it yourself in the Terminal app: it refuses to run from inside Claude Code, "
+            "because an entry is your own account."
+        ),
         epilog=(
             "examples:\n"
             '  goodall journal "Chose Postgres over SQLite; I decided, the agent wrote the comparison."\n'
@@ -151,7 +155,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Add an intervention to the record repo: a moment you stepped in for or over an agent.",
         description=(
             "Add an intervention: a moment when you overrode, corrected, redirected or rescued an agent, "
-            "or had to act because the agent could not."
+            "or had to act because the agent could not. Run it yourself in the Terminal app: it refuses to "
+            "run from inside Claude Code, because an intervention is your own account."
         ),
         epilog=(
             "examples:\n"

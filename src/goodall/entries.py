@@ -1,9 +1,10 @@
 """`goodall journal` and `goodall intervene`: a contributor adds to the eval's own record.
 
-Called by `cli.main`. A contributor, or an agent working for one, runs
+Called by `cli.main`. A contributor runs
 `goodall journal "..."` to add a journal entry, or `goodall intervene
 --category ... --decision ... "..."` to add an intervention. Both commands
-do the same five things, in this order:
+do the same five things, in this order, once the refusal described below
+has been passed:
 
 1. Get the text: from the argument, from a plain text file (`--file`, for
    someone who would rather write in TextEdit), or from standard input when
@@ -28,17 +29,25 @@ safe, even if the push is still pending (that is shown as a warning); 1 when
 it was not committed; 2 for a mistake in how the command was run, including
 the text and every option, so nothing was attempted.
 
-Open question, deliberately not settled here: an agent can run these
-commands too, and the record then names the contributor with nothing saying
-an agent wrote the words. Every choice in this module is provisional.
+A journal entry or an intervention is the person's own testimony; what an
+agent does is already in its transcript. So both commands refuse, before
+reading any text, settings or files, when Claude Code started them
+(goodall.caller): nothing is read, written, committed or pushed, and they
+exit 1, because the command line was fine but the entry did not happen and
+running it again the same way will not help. The refusal is not recorded
+anywhere, and records have no field for how an entry was made: the agent's
+transcript already shows the attempt. The check is honest, not a lock: a
+person can unset the variable.
 """
 
+import os
 import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from goodall import exit_codes, records, work_blocks
+from goodall.caller import was_started_by_claude_code
 from goodall.eval_config import EvalForThisAccount, read_eval_for_this_account
 from goodall.folders import describe_folder_problem, where_goodall_looked
 from goodall.local_settings import LocalSettings, read_local_settings
@@ -89,6 +98,10 @@ class EntryResult:
 
 def run_journal(terminal: Terminal, runner: Runner, request: EntryRequest) -> int:
     """Add a journal entry to the record repo, say what happened, and return the exit code."""
+    if was_started_by_claude_code(os.environ):
+        result = stopped(records.JOURNAL_ENTRY_RECORD_TYPE, exit_codes.ERROR, [must_be_run_by_a_person_failure()])
+        show_result(terminal, result, request.as_json)
+        return result.exit_code
     result = add_journal_entry(terminal, runner, request)
     show_result(terminal, result, request.as_json)
     return result.exit_code
@@ -113,6 +126,26 @@ def add_journal_entry(terminal: Terminal, runner: Runner, request: EntryRequest)
     return check_and_write(runner, eval_reading, entry, facts=[])
 
 
+def must_be_run_by_a_person_failure() -> Failure:
+    """The refusal shown when Claude Code started the command, for a person and an agent at once.
+
+    It never repeats the text that was passed, and nothing records that the
+    attempt happened (the agent's own transcript already shows it).
+    """
+    return Failure(
+        kind="must_be_run_by_a_person",
+        what_happened="This was not recorded, because the command was run from inside Claude Code.",
+        why=(
+            "Journal entries and interventions are the contributor's own account of the eval, so goodall only "
+            "takes them from a person at a terminal. What an agent does is already in its transcript."
+        ),
+        what_to_do_next=(
+            "Open the Terminal app and run the same command there. To an agent reading this: do not try again or "
+            "work around this; ask the person to record it, and tell them what you would have written."
+        ),
+    )
+
+
 @dataclass(frozen=True)
 class InterventionDetails:
     """What `goodall intervene` needs beyond the text, as typed on the command line.
@@ -133,6 +166,10 @@ class InterventionDetails:
 
 def run_intervene(terminal: Terminal, runner: Runner, request: EntryRequest, details: InterventionDetails) -> int:
     """Add an intervention to the record repo, say what happened, and return the exit code."""
+    if was_started_by_claude_code(os.environ):
+        result = stopped(records.INTERVENTION_RECORD_TYPE, exit_codes.ERROR, [must_be_run_by_a_person_failure()])
+        show_result(terminal, result, request.as_json)
+        return result.exit_code
     result = add_intervention(terminal, runner, request, details)
     show_result(terminal, result, request.as_json)
     return result.exit_code

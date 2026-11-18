@@ -46,6 +46,7 @@ provisional, chosen while the project owner was away):
   without writing a record.
 """
 
+import re
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
@@ -424,47 +425,49 @@ def local_changes_block_merge_failure(record_repo: Path, target: PushTarget) -> 
     return Failure(
         kind="record_push_blocked_by_local_changes",
         what_happened=(
-            f"The record is saved and committed in {record_repo}, but not pushed: another contributor pushed to "
-            f"{target.remote} first, and goodall will not combine their records with yours while files in the "
-            "record repo have changes that are not committed."
+            f"The record is saved on this Mac in {record_repo}, but not yet sent to the shared record repo: "
+            "another contributor sent records there first, and goodall will not combine their records with yours "
+            "while files in the record repo have changes that are not committed."
         ),
         why=(
-            "Combining the two histories changes files in the record repo. Goodall does that only when it can "
-            "always put everything back as it was, which uncommitted changes would prevent."
+            "Combining the two sets of records changes files in the record repo. Goodall does that only when it "
+            "can always put everything back as it was, which uncommitted changes would prevent. Nothing is lost."
         ),
         what_to_do_next=(
             f"Run git status in {record_repo} to see the changed files, then commit them or put them back as "
-            "they were. Goodall will push the waiting commits with the next record it writes."
+            "they were. Goodall will send the waiting records with the next record it writes."
+            + detail(f"git calls the shared record repo {target.remote}.")
         ),
     )
 
 
 def merge_failed_failure(record_repo: Path, target: PushTarget, problem: str, undone: bool = True) -> Failure:
-    """The failure for a merge with the remote branch that did not complete.
+    """The failure for combining a collaborator's records with ours that did not complete.
 
     `undone` says whether the attempt was rolled back; the message must
     never claim it was when it was not.
     """
-    what_was_left = "Goodall undid the attempt; your commits are as they were."
+    what_was_left = "Goodall undid the attempt; your records are as they were."
     if not undone:
         what_was_left = (
-            "Goodall could not undo the attempt, so the record repo is part-way through a merge; your commits "
-            "are still there."
+            "Goodall could not undo the attempt, so the record repo is part-way through combining them; your "
+            "records are still there."
         )
     return Failure(
         kind="record_merge_failed",
         what_happened=(
-            f"The record is saved and committed in {record_repo}, but not pushed: another contributor pushed to "
-            f"{target.remote} first, and combining their commits with yours failed ({problem}). {what_was_left}"
+            f"The record is saved on this Mac in {record_repo}, but not yet sent to the shared record repo: "
+            f"another contributor sent records there first, and combining theirs with yours failed. "
+            f"{what_was_left} Nothing is lost."
         ),
         why=(
             "Records are separate files, so this should not happen; it usually means a file other than a "
             "record was changed on both sides."
         ),
         what_to_do_next=(
-            f"Ask the researcher who runs the eval to look at the record repo in {record_repo} (git status and "
-            "git log show the state). Goodall will push the waiting commits with the next record it writes "
-            "once the histories can be combined."
+            f"Ask the researcher who runs the eval to look at the record repo in {record_repo}. Goodall will send "
+            "the waiting records with the next record it writes, once the two sets can be combined."
+            + detail(f"git said: {redact_credentials(problem)}; git calls the shared record repo {target.remote}.")
         ),
     )
 
@@ -485,6 +488,19 @@ def count_pending_commits(runner: Runner, record_repo: Path, target: PushTarget)
     return int(count_result.standard_output.strip() or "0")
 
 
+DETAIL_MARKER = "Detail for whoever looks after the record repo:"
+
+
+def detail(text: str) -> str:
+    """Technical detail for the end of a message, marked so a researcher can skip it."""
+    return f" {DETAIL_MARKER} {text}"
+
+
+def redact_credentials(text: str) -> str:
+    """Remove `user:token@` from any address in git's own words, so a secret never reaches the terminal."""
+    return re.sub(r"(\w+://)[^/\s@]+@", r"\1", text)
+
+
 def push_failed_failure(
     record_repo: Path, target: PushTarget, push_result: CommandResult, pending_commits: int
 ) -> Failure:
@@ -492,16 +508,20 @@ def push_failed_failure(
     return Failure(
         kind="record_push_failed",
         what_happened=(
-            f"The record is saved and committed in {record_repo}, but could not be pushed to the remote "
-            f"{target.remote}: {push_result.problem}. {pending_commits} commit(s) are waiting to be pushed."
+            f"The record is saved on this Mac in {record_repo}, but could not be sent to the shared record repo. "
+            f"{pending_commits} record(s) are waiting to be sent."
         ),
         why=(
-            "Other contributors and the researcher see records only once they reach the remote. Nothing is lost: "
-            "the next record goodall writes pushes everything waiting."
+            "Other contributors and the researcher see records only once they reach the shared record repo. "
+            "Nothing is lost: the next record goodall writes sends everything waiting."
         ),
         what_to_do_next=(
-            f"Check this Mac is online and can reach the remote (run git push in {record_repo} to see git's own "
-            "message). Goodall will push the waiting commits with the next record it writes."
+            "Check this Mac is online and can reach the shared record repo. Goodall will send the waiting "
+            "records with the next record it writes."
+            + detail(
+                f"git said: {redact_credentials(push_result.problem or 'git push failed')}; "
+                f"git calls the shared record repo {target.remote}."
+            )
         ),
     )
 
@@ -536,17 +556,18 @@ def find_push_target(runner: Runner, record_repo: Path) -> PushTarget | Failure 
 
 
 def not_on_a_branch_failure(record_repo: Path) -> Failure:
-    """The failure for a record repo whose copy is not on a branch, so there is no branch to push."""
+    """The failure for a record repo whose copy is not on a branch, so there is nowhere to send records."""
     return Failure(
         kind="record_repo_not_on_a_branch",
         what_happened=(
-            f"The record is saved and committed in {record_repo}, but not pushed: the record repo is not on a "
-            "branch (git calls this a detached HEAD), so goodall does not know where on the remote it belongs."
+            f"The record is saved on this Mac in {record_repo}, but not yet sent to the shared record repo: the "
+            "record repo is not set to follow the eval's records, so goodall does not know where this one belongs."
         ),
-        why="Records reach other contributors only once they are pushed to the eval's branch on the remote.",
+        why="Records reach other contributors only once they are sent to the shared record repo. Nothing is lost.",
         what_to_do_next=(
-            f"Ask the researcher who runs the eval to put the record repo in {record_repo} back on its branch "
-            "(git status shows where it is). The waiting commits are pushed with the next record goodall writes."
+            f"Ask the researcher who runs the eval to put the record repo in {record_repo} back as it was set up. "
+            "The waiting records are sent with the next record goodall writes."
+            + detail("the record repo is on no branch (a detached HEAD); git status shows where it is.")
         ),
     )
 
@@ -556,13 +577,17 @@ def no_push_destination_failure(record_repo: Path, branch: str) -> Failure:
     return Failure(
         kind="record_repo_push_destination_unknown",
         what_happened=(
-            f"The record is saved and committed in {record_repo}, but not pushed: the branch {branch} has no "
-            "upstream and there is no remote called origin, so goodall does not know where to push it."
+            f"The record is saved on this Mac in {record_repo}, but not yet sent to the shared record repo: "
+            "goodall does not know which shared record repo this one belongs to."
         ),
-        why="Goodall pushes where git says to, and never guesses or changes the repository's settings itself.",
+        why=(
+            "Goodall sends records where the record repo's own settings say to, and never guesses or changes "
+            "those settings itself. Nothing is lost."
+        ),
         what_to_do_next=(
-            f"In {record_repo}, run git push --set-upstream <remote> {branch} once, naming the eval's remote. "
-            "Goodall pushes there from then on."
+            "Ask the researcher who runs the eval to say which shared record repo this is. Goodall sends the "
+            "waiting records there from then on."
+            + detail(f"in {record_repo}, run git push --set-upstream NAME {branch} once, with NAME the eval's remote.")
         ),
     )
 
