@@ -82,6 +82,7 @@ select = ["E", "F", "I", "B", "UP", "TID251"]
 # for this repo's contributors. It must run with nothing but the standard
 # library and without goodall installed, so it cannot import the runner.
 ".claude/hooks/branch_merge_status.py" = ["TID251"]
+".claude/hooks/beads_push.py" = ["TID251"]
 
 [tool.mypy]
 strict = true
