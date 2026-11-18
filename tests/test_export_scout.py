@@ -27,7 +27,10 @@ from typing import Any
 import pytest
 
 from goodall import cli, exit_codes, records
+from goodall.actor_labels import ACTOR_LABEL_RULES_VERSION
 from goodall.fake_runner import FakeRunner
+from goodall.human_actions import RULES_VERSION as HUMAN_ACTION_RULES_VERSION
+from goodall.scout_additions import EXPORT_RULES_VERSION
 from goodall.terminal import Terminal
 
 EVAL_CONFIG_TEXT = """\
@@ -401,7 +404,8 @@ def test_export_can_be_filtered_by_actor_label_and_intervention_category(pretend
     assert list(with_human_entries) == [WORKING_SESSION]
     working = with_human_entries[WORKING_SESSION]
     assert working.metadata["goodall_ai_entries"] == 3
-    assert working.metadata["goodall_actor_label_rules_version"] == "2"
+    assert working.metadata["goodall_actor_label_rules_version"] == ACTOR_LABEL_RULES_VERSION
+    assert working.metadata["goodall_human_action_rules_version"] == HUMAN_ACTION_RULES_VERSION
 
     agent_limitation = read_transcripts(
         pretend_eval.default_database, columns.goodall_intervention_categories.like('%"agent-limitation"%')
@@ -537,7 +541,11 @@ def test_export_json_has_a_stable_shape(pretend_eval: PretendEval, tmp_path: Pat
     assert document["transcripts"] == {"claude_code": 1, "work_blocks": 2, "outside_work_blocks": 1}
     assert document["records"] == {"work_blocks": 2, "journal_entries": 2, "interventions": 2}
     assert document["events_added"]["approval"] == 2
-    assert document["rules_versions"]["actor_labels"] == "2"
+    assert document["rules_versions"] == {
+        "actor_labels": ACTOR_LABEL_RULES_VERSION,
+        "human_actions": HUMAN_ACTION_RULES_VERSION,
+        "export": EXPORT_RULES_VERSION,
+    }
     assert document["warnings"] == []
     assert document["failures"] == []
     assert sorted(read_transcripts(database)) == sorted(
