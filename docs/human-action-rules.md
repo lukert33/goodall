@@ -1,4 +1,4 @@
-# Human-action rules, version 2
+# Human-action rules, version 3
 
 These are the rules `goodall.human_actions` uses to find what the person did in
 one Claude Code transcript. Each rule is a function in
@@ -30,7 +30,7 @@ looking at real results, without re-reading transcripts.
 |---|---|---|
 | `typed_prompt` | `is_typed_prompt` | `text`, `image_count` |
 | `interruption` | `interruption_from_marker`, `interruption_from_tool_result` | `interrupted` (`"generate"` or `"tool_call"`), `interrupted_tool_call_id` |
-| `tool_call_rejection` | `rejection_from_tool_result` | `tool_call_id`, `tool_name`, `decision` (always `"reject"`), `feedback` |
+| `tool_call_rejection` | `rejection_from_tool_result`, `rejection_from_permission_decision` | `tool_call_id`, `tool_name`, `decision` (always `"reject"`), `feedback` |
 | `shell_command` | `shell_command_from_bash_input` | `text` (the command as typed), `output_line_number`, `output_entry_id` |
 | `slash_command` | `slash_command_from_command_tags` | `command_name`, `arguments` (both as typed), `command_type` (`"local"` or `"prompt"`) |
 | `tool_call_approval_once` | `approval_from_permission_decision` | `tool_call_id`, `tool_name`, `decision` (always `"approve"`), `permission_source`, `grant_scope`, `rule_source` |
@@ -78,8 +78,8 @@ function that applied it.
    a call to `ExitPlanMode` (or a call not in this transcript, when the text
    alone decides).
 5. **Permission decision** (`approval_from_permission_decision`,
-   `dismissal_from_permission_decision`, applied together by
-   `permission_decision_from_entry`). Claude Code 2.1.289 and later write
+   `dismissal_from_permission_decision`, `rejection_from_permission_decision`,
+   applied together by `permission_decision_from_entry`). Claude Code 2.1.289 and later write
    `permissionDecision` (`decision`, `source`, and sometimes `reasonType`,
    `grantScope`, `ruleSource`) on every tool result entry. It is read only
    when the entry answers exactly one call (every entry in the structure scan
@@ -93,12 +93,19 @@ function that applied it.
    - `source: user_abort`, `decision: reject`: `permission_prompt_dismissal`,
      the person dismissed the prompt without choosing. Seen once in the scan;
      what the person did to dismiss it is not recorded.
+   - `source: user_reject`, `decision: reject`: `tool_call_rejection`, the
+     person refused the call. Seen in Claude Code 2.1.326 on a refusal with
+     feedback, where rule 1 had already found it, so it is not counted again.
+     When rule 1 does not recognise the text, this rule finds the rejection
+     instead, with no feedback.
    - `source: config` (a settings rule, the permission mode or the auto-mode
      classifier) and `source: hook` decided without the person: no action.
    - Any other source is reported as unfamiliar.
 
-   A refusal the person chose carries no `permissionDecision`; rule 1 finds
-   it. Approvals in transcripts older than 2.1.289 are not recorded.
+   A refusal the person chose carried no `permissionDecision` in the
+   structure scan, and `user_reject` in the 2026-11-17 hand test; rule 1
+   finds it either way. Approvals in transcripts older than 2.1.289 are not
+   recorded.
 
 ### In a `user` entry with text
 
@@ -218,7 +225,7 @@ the subagent's. Each file's parse keeps its own record; the merged list in
   beginning with an app-specific tag, such as `<create-pr-command>`). Counted
   as typed prompts; whether they deserve a kind of their own is open.
 
-## Not detected in version 2
+## Not detected in version 3
 
 - **Permission approvals before Claude Code 2.1.289**, which wrote no
   `permissionDecision`.
