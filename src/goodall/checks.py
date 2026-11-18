@@ -83,6 +83,10 @@ class CheckContext:
     - `hook_goodall_programs` maps each goodall program Claude Code's
       hooks name, as written in its settings, to the events it is
       installed on, once every event has a goodall hook.
+    - `activitywatch_buckets` maps the id of each bucket ActivityWatch
+      lists to its type (`currentwindow`, `afkstatus`, ...), once the
+      ActivityWatch checks have asked for the list. Bucket ids carry the
+      Mac's hostname, so they are only ever used to ask for more, never shown.
     """
 
     runner: Runner
@@ -96,6 +100,7 @@ class CheckContext:
     record_repo_remote: RecordRepoRemote | None = None
     github_signed_in: bool = False
     hook_goodall_programs: dict[str, list[str]] | None = None
+    activitywatch_buckets: dict[str, str] | None = None
 
 
 @dataclass(frozen=True)
