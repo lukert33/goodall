@@ -50,7 +50,9 @@ from goodall.remote_checks import REMOTE_CHECKS
 from goodall.runner import Runner
 from goodall.secrets_checks import CHECKS_UNVERIFIABLE_WITHOUT_A_SECRET, SECRETS_CHECKS
 from goodall.settings_checks import SETTINGS_CHECKS
+from goodall.telemetry_checks import TELEMETRY_CHECKS
 from goodall.terminal import CheckResult, CheckStatus, Terminal, count_checks
+from goodall.work_block_commands import Clock
 
 # The layout of `goodall doctor --json`.
 DOCTOR_JSON_SCHEMA_VERSION = 1
@@ -59,27 +61,30 @@ DOCTOR_JSON_SCHEMA_VERSION = 1
 # they say which eval this account belongs to; then the checks that run
 # other programs (tools, the eval account, the record repo); then where the
 # record repo is shared (its remote, gh's sign-in, its visibility); then the
-# checks of the env file and the shared env file (secrets); last, Claude
-# Code's hooks. A check is shown under its group's heading wherever it runs:
-# gh's sign-in under "Tools", and the secrets manager's command, which waits
-# for the env file, too.
+# checks of the env file and the shared env file (secrets); then Claude
+# Code's hooks; last, the active work block's telemetry receiver. A check
+# is shown under its group's heading wherever it runs: gh's sign-in under
+# "Tools", and the secrets manager's command, which waits for the env file,
+# too.
 DOCTOR_CHECKS: list[Check] = [
     *SETTINGS_CHECKS,
     *PROGRAM_CHECKS,
     *REMOTE_CHECKS,
     *SECRETS_CHECKS,
     *CLAUDE_CODE_CHECKS,
+    *TELEMETRY_CHECKS,
 ]
 
 
-def run_doctor(terminal: Terminal, runner: Runner, as_json: bool, offline: bool = False) -> int:
+def run_doctor(terminal: Terminal, runner: Runner, clock: Clock, as_json: bool, offline: bool = False) -> int:
     """Run every check, show the results, and return the exit code.
 
     `runner` is how the checks start other programs (goodall.runner).
-    `offline` leaves out every question to GitHub: those checks are
-    reported as unverified, which neither passes nor fails them.
+    `clock` says what time it is, once, so every check agrees on which work
+    block is active. `offline` leaves out every question to GitHub: those
+    checks are reported as unverified, which neither passes nor fails them.
     """
-    results = run_checks(DOCTOR_CHECKS, CheckContext(runner=runner, offline=offline))
+    results = run_checks(DOCTOR_CHECKS, CheckContext(runner=runner, offline=offline, now=clock()))
     if as_json:
         terminal.write_json(doctor_document(results))
     else:
