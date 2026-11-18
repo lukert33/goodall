@@ -11,14 +11,14 @@ Decisions a reader would otherwise reverse-engineer:
 
 - Only github.com counts as GitHub (with its `www.` and `ssh.` names).
   A GitHub Enterprise server has a name of its own that goodall cannot
-  recognise, so it counts as "elsewhere", and the record repo's visibility
+  recognize, so it counts as "elsewhere", and the record repo's visibility
   there is left for a person to check.
 - An address may carry a user name and a token (`https://user:token@...`).
   Only the host and the `owner/name` pair are kept; nothing else of the
   address is ever returned, so no caller can print a token by accident.
 - Both of git's ways of writing an address are read: as a URL
   (`https://`, `ssh://`) and in the short form `[user@]host:owner/name`,
-  which git recognises by a colon before any slash. Anything else is a
+  which git recognizes by a colon before any slash. Anything else is a
   folder on this machine.
 
 This module imports only the standard library and nothing from goodall.

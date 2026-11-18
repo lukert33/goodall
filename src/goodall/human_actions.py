@@ -64,7 +64,7 @@ class ClaudeCodeMarkers:
     # agent during a tool call.
     interrupted_during_tool_call: str
     # How a tool result begins when the person stopped that tool while it ran.
-    cancelled_tool_result_prefix: str
+    canceled_tool_result_prefix: str
     # How a tool result begins when the person refused permission for the call.
     rejected_tool_result_prefix: str
     # The words in a rejected tool result that come just before the feedback
@@ -121,7 +121,7 @@ def claude_code_markers() -> ClaudeCodeMarkers:
     return ClaudeCodeMarkers(
         interrupted_during_generation="[Request interrupted by user]",
         interrupted_during_tool_call="[Request interrupted by user for tool use]",
-        cancelled_tool_result_prefix="The user doesn't want to take this action right now",
+        canceled_tool_result_prefix="The user doesn't want to take this action right now",
         rejected_tool_result_prefix="The user doesn't want to proceed with this tool use",
         rejection_feedback_lead_in="the user said:",
         known_entry_types=(
@@ -259,7 +259,7 @@ class ToolCallRejection:
     is what the person typed with the refusal, or None if they typed nothing.
     `tool_name` is the tool the agent asked for, when the call is in the same
     transcript. `rule` says which of the two rules found it: the refusal's
-    fixed text (the usual case) or, when the text is not recognised, the
+    fixed text (the usual case) or, when the text is not recognized, the
     permission decision Claude Code wrote on the entry.
     """
 
@@ -1117,7 +1117,7 @@ def interruption_from_tool_result(
     """
     if tool_result.get("is_error") is not True:
         return None
-    if not tool_result_text(tool_result).startswith(markers.cancelled_tool_result_prefix):
+    if not tool_result_text(tool_result).startswith(markers.canceled_tool_result_prefix):
         return None
     tool_call_id = tool_result.get("tool_use_id")
     return Interruption(
@@ -1291,7 +1291,7 @@ def rejection_from_permission_decision(
 ) -> ToolCallRejection | None:
     """Rule: a refusal whose source is "user_reject" is the person rejecting the call.
 
-    It is reached only when `rejection_from_tool_result` did not recognise the
+    It is reached only when `rejection_from_tool_result` did not recognize the
     result's text, so a change in Claude Code's wording does not lose the
     rejection. Feedback is not looked for: without the known text there is no
     reliable place where it starts.

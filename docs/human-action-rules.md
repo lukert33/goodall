@@ -96,7 +96,7 @@ function that applied it.
    - `source: user_reject`, `decision: reject`: `tool_call_rejection`, the
      person refused the call. Seen in Claude Code 2.1.326 on a refusal with
      feedback, where rule 1 had already found it, so it is not counted again.
-     When rule 1 does not recognise the text, this rule finds the rejection
+     When rule 1 does not recognize the text, this rule finds the rejection
      instead, with no feedback.
    - `source: config` (a settings rule, the permission mode or the auto-mode
      classifier) and `source: hook` decided without the person: no action.
