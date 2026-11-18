@@ -163,6 +163,7 @@ def test_status_json_reports_the_same_failure_on_standard_output(empty_config_di
         "contributor",
         "work_block",
         "ended_work_blocks",
+        "work_blocks_waiting_for_workstream",
         "warnings",
         "failures",
     }
@@ -584,6 +585,7 @@ def test_valid_eval_as_json_gives_the_same_facts(eval_account: EvalAccount) -> N
         "contributor": {"id": "ada-lovelace", "display_name": "Ada Lovelace", "main_workstream": "research"},
         "work_block": None,
         "ended_work_blocks": [],
+        "work_blocks_waiting_for_workstream": [],
         "warnings": [],
         "failures": [],
     }
@@ -852,6 +854,17 @@ def test_duplicate_workstreams_are_reported(eval_account: EvalAccount) -> None:
 
     assert "research" in standard_error
     assert failure_kinds() == ["eval_config_duplicate"]
+
+
+def test_a_workstream_named_unknown_is_refused_because_goodall_reserves_that_name(eval_account: EvalAccount) -> None:
+    break_eval_config(eval_account, '"go-to-market"]', '"go-to-market", "unknown"]')
+
+    _, _, standard_error = run_goodall(["status"])
+
+    message = " ".join(standard_error.split())
+    assert "unknown is reserved" in message
+    assert "Rename that workstream" in message
+    assert failure_kinds() == ["eval_config_reserved_name"]
 
 
 def test_several_eval_config_problems_are_all_shown(eval_account: EvalAccount) -> None:

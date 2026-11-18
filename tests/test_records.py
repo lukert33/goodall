@@ -359,6 +359,19 @@ def test_a_decision_inspect_does_not_know_is_reported_with_the_allowed_values() 
     assert "approve, modify, reject, escalate, terminate" in message
 
 
+def test_an_abnormal_work_block_may_have_the_unknown_workstream_though_the_eval_lists_no_such_workstream() -> None:
+    work_block = good_work_block(workstream="unknown", end_state="abnormal")
+
+    assert records.validate_record(work_block, contributor_ids=ROSTER, workstreams=WORKSTREAMS) == []
+
+
+def test_only_an_abnormal_work_block_may_have_the_unknown_workstream() -> None:
+    message = problem_with(good_work_block(workstream="unknown", end_state="clean"), "workstream").message
+
+    assert "unknown" in message
+    assert "abnormal" in message
+
+
 def test_an_unknown_interrupted_activity_is_reported() -> None:
     message = problem_with(good_intervention(interrupted="thinking"), "interrupted").message
 
@@ -484,6 +497,94 @@ def test_rendering_an_invalid_record_is_refused() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Work block fixes, and the workstream a work block counts towards
+# ---------------------------------------------------------------------------
+
+UNKNOWN_BLOCK_ID = "20261116T090000Z-ada-lovelace-0a1b2c3d"
+
+
+def good_fix(**changes: object) -> records.WorkBlockFix:
+    """A valid work block fix, with any fields replaced by `changes`."""
+    fix = records.build_work_block_fix(
+        contributor=ADA, written_at=LATER, work_block=UNKNOWN_BLOCK_ID, workstream="research", suffix="5e6f7a8b"
+    )
+    return dataclasses.replace(fix, **changes)  # type: ignore[arg-type]
+
+
+def test_a_work_block_fix_survives_render_and_parse_and_is_named_from_when_it_was_written() -> None:
+    fix = good_fix()
+
+    text = records.render_record(fix)
+    parsed = records.parse_work_block_fix(text)
+
+    assert parsed.problems == []
+    assert parsed.record == fix
+    assert fix.id == "20261116T114510Z-ada-lovelace-5e6f7a8b"
+    assert str(records.relative_path_for(fix)) == "work-block-fixes/20261116T114510Z-ada-lovelace-5e6f7a8b.json"
+
+
+def test_a_misspelled_key_in_a_work_block_fix_is_reported() -> None:
+    text = records.render_record(good_fix()).replace('"workstream"', '"work_stream"')
+
+    parsed = records.parse_work_block_fix(text)
+
+    assert sorted(problem.field for problem in parsed.problems) == ["work_stream"]
+
+
+def test_a_work_block_fix_that_corrects_nothing_is_reported() -> None:
+    message = problem_with(good_fix(workstream=None), "workstream").message
+
+    assert "at least one corrected value" in message
+
+
+def test_a_work_block_fix_may_not_set_the_unknown_workstream() -> None:
+    message = problem_with(good_fix(workstream="unknown"), "workstream").message
+
+    assert "placeholder" in message
+
+
+def test_a_work_block_fix_to_a_workstream_the_eval_does_not_have_is_reported() -> None:
+    message = problem_with(good_fix(workstream="sales"), "workstream").message
+
+    assert "workstreams in eval.toml" in message
+
+
+def test_a_work_block_fix_must_name_its_work_block_by_id() -> None:
+    message = problem_with(good_fix(work_block="last tuesday"), "work_block").message
+
+    assert "not a record id" in message
+
+
+def test_a_work_block_fix_with_a_secret_is_refused_without_repeating_it() -> None:
+    secret = "sk-" + "a" * 30
+    message = problem_with(good_fix(work_block=secret), "work_block").message
+
+    assert "secret" in message
+    assert secret not in message
+
+
+def test_a_work_block_counts_towards_its_own_workstream_until_a_fix_says_otherwise() -> None:
+    unknown_block = good_work_block(id=UNKNOWN_BLOCK_ID, workstream="unknown", end_state="abnormal")
+    other_block = good_work_block(id="20261116T130000Z-ada-lovelace-9a8b7c6d", workstream="engineering")
+
+    workstreams = records.effective_workstreams([unknown_block, other_block], [])
+
+    assert workstreams == {UNKNOWN_BLOCK_ID: "unknown", "20261116T130000Z-ada-lovelace-9a8b7c6d": "engineering"}
+
+
+def test_the_latest_fix_of_a_work_block_wins_and_fixes_of_other_blocks_are_ignored() -> None:
+    unknown_block = good_work_block(id=UNKNOWN_BLOCK_ID, workstream="unknown", end_state="abnormal")
+    later_fix = good_fix(written_at=datetime(2026, 11, 17, 9, 0, tzinfo=UTC), workstream="go-to-market")
+    earlier_fix = good_fix(written_at=datetime(2026, 11, 16, 12, 0, tzinfo=UTC), workstream="research")
+    stray_fix = good_fix(work_block="20261101T090000Z-grace-hopper-11111111", workstream="engineering")
+
+    # Given in no particular order, as files are found on disk.
+    workstreams = records.effective_workstreams([unknown_block], [later_fix, stray_fix, earlier_fix])
+
+    assert workstreams == {UNKNOWN_BLOCK_ID: "go-to-market"}
+
+
+# ---------------------------------------------------------------------------
 # The examples in docs/record-schemas.md are real, valid files
 # ---------------------------------------------------------------------------
 
@@ -502,7 +603,15 @@ def examples_in_schema_document() -> dict[str, str]:
 
 
 def test_the_schema_document_has_one_example_of_each_record_type() -> None:
-    assert sorted(examples_in_schema_document()) == ["intervention", "journal_entry", "work_block"]
+    assert sorted(examples_in_schema_document()) == ["intervention", "journal_entry", "work_block", "work_block_fix"]
+
+
+def test_the_documented_work_block_fix_example_parses_and_validates() -> None:
+    parsed = records.parse_work_block_fix(examples_in_schema_document()["work_block_fix"])
+
+    assert parsed.problems == []
+    assert parsed.record is not None
+    assert records.validate_record(parsed.record, contributor_ids=ROSTER, workstreams=WORKSTREAMS) == []
 
 
 def test_the_documented_work_block_example_parses_and_validates() -> None:
@@ -540,8 +649,11 @@ def test_the_documented_examples_are_exactly_what_goodall_would_write() -> None:
     work_block = records.parse_work_block_record(examples["work_block"]).record
     journal_entry = records.parse_journal_entry(examples["journal_entry"]).record
     intervention = records.parse_intervention(examples["intervention"]).record
+    work_block_fix = records.parse_work_block_fix(examples["work_block_fix"]).record
     assert work_block is not None and journal_entry is not None and intervention is not None
+    assert work_block_fix is not None
 
+    assert records.render_record(work_block_fix) == examples["work_block_fix"]
     assert records.render_record(work_block) == examples["work_block"]
     assert records.render_record(journal_entry) == examples["journal_entry"]
     assert records.render_record(intervention) == examples["intervention"]
