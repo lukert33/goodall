@@ -51,11 +51,12 @@ Design decisions a reader might otherwise reverse-engineer:
   request stays on one line. `as_one_line` explains why that keeps the raw
   record verbatim in every sense a reader can observe.
 
-What it does not do: choose a port for Claude Code, start with a work
-block, or notice that Claude Code has nobody to send to. A receiver that is
-not running loses telemetry silently (spike goodall-fs9.2), and another
-program already listening on a fixed port would receive it instead, so the
-code that starts the receiver must check it is the one listening.
+What it does not do: start with a work block, or notice that Claude Code
+has nobody to send to. A receiver that is not running loses telemetry
+silently (spike goodall-fs9.2). goodall.telemetry_receivers starts and
+stops it with each work block and checks it is the one listening on its
+port; goodall.telemetry_capture says where its directory is and lets the
+hook notice when it has stopped.
 
 Security. The receiver runs on a machine that holds credentials, and the
 telemetry it receives carries the person's email address on every record
