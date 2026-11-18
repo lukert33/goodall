@@ -43,6 +43,8 @@ HOOK_PATH_MODULES = [
     # PostToolUse, Stop and SessionEnd copy the Claude session's transcript
     # into the log directory through it.
     "goodall.transcripts",
+    # The prompt gate notes input it could not read through it.
+    "goodall.hook_problems",
 ]
 
 # Runs inside the fresh interpreter: import the modules, then print every
@@ -311,8 +313,26 @@ def test_the_hook_command_loads_no_third_party_module_and_starts_no_program(tmp_
         )
         assert completed.returncode == 0, completed.stderr
         assert completed.stdout == "", event_name
-    # Both heartbeats were recorded, so the hook really ran its whole path.
+
+    # The prompt gate with input it cannot read, which notes the problem in
+    # the log directory and prints its notice: standard output holds that one
+    # JSON line and no module name.
+    completed = subprocess.run(
+        [sys.executable, "-c", RUN_HOOK_AND_LIST_MODULES, "UserPromptSubmit"],
+        input="{cut short",
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+        env=environment,
+    )
+    assert completed.returncode == 0, completed.stderr
+    [notice_line] = completed.stdout.splitlines()
+    assert list(json.loads(notice_line)) == ["systemMessage"]
+    assert (log_directory / "hook-problems" / "hook-problems.jsonl").exists()
+
+    # All three heartbeats were recorded, so the hook really ran its whole path.
     heartbeat_file = work_blocks.WorkBlockFiles(log_directory).heartbeat_file(running.id)
-    assert len(heartbeat_file.read_text().splitlines()) == 2
+    assert len(heartbeat_file.read_text().splitlines()) == 3
     copied_transcript = log_directory / "transcripts" / "-Users-ada-work" / transcript.name
     assert copied_transcript.read_bytes() == transcript.read_bytes()

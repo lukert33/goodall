@@ -790,6 +790,54 @@ def test_fixblock_whose_fix_cannot_be_committed_exits_1_and_leaves_no_file(eval_
 
 
 # ---------------------------------------------------------------------------
+# Prompts whose hook input goodall could not read
+# ---------------------------------------------------------------------------
+
+
+def send_prompt_goodall_cannot_read(eval_account: EvalAccount) -> int:
+    """Run the prompt gate in this account with input it cannot read, as Claude Code would; return the exit code."""
+    terminal = Terminal(
+        standard_output=io.StringIO(), standard_error=io.StringIO(), standard_input=io.StringIO("{cut short")
+    )
+    return cli.main(["hook", "UserPromptSubmit"], terminal=terminal, runner=FakeRunner(), clock=eval_account.clock)
+
+
+def test_status_warns_once_about_prompts_whose_hook_input_could_not_be_read(eval_account: EvalAccount) -> None:
+    run_goodall(eval_account, ["start"])
+    eval_account.clock.advance(timedelta(minutes=10))
+    assert send_prompt_goodall_cannot_read(eval_account) == exit_codes.SUCCESS
+    eval_account.clock.advance(timedelta(minutes=5))
+    assert send_prompt_goodall_cannot_read(eval_account) == exit_codes.SUCCESS
+
+    status = run_goodall(eval_account, ["status"])
+
+    assert status.exit_code == exit_codes.SUCCESS
+    assert "could not read what Claude Code sent with a prompt 2 times since Mon 16 Nov 2026, 09:40 GMT" in (
+        status.everything_printed
+    )
+    assert "Those prompts were sent and your work block kept recording" in status.everything_printed
+    assert "not linked to the work block" in status.everything_printed
+    assert "goodall may need updating" in status.everything_printed
+    assert "Tell the researcher who runs the eval" in status.everything_printed
+
+    # Said once, then filed away, kept.
+    again = run_goodall(eval_account, ["status", "--json"])
+    assert json.loads(again.standard_output)["warnings"] == []
+    [filed] = (eval_account.log_directory / "hook-problems" / "reported").glob("*.jsonl")
+    assert len(filed.read_text().splitlines()) == 2
+
+
+def test_status_json_includes_the_warning_about_unreadable_hook_input(eval_account: EvalAccount) -> None:
+    run_goodall(eval_account, ["start"])
+    send_prompt_goodall_cannot_read(eval_account)
+
+    status = run_goodall(eval_account, ["status", "--json"])
+
+    [warning] = json.loads(status.standard_output)["warnings"]
+    assert warning["kind"] == "hook_input_unreadable"
+
+
+# ---------------------------------------------------------------------------
 # An unreachable log directory, and an end that was interrupted
 # ---------------------------------------------------------------------------
 

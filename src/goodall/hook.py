@@ -14,6 +14,8 @@ Two jobs, by event:
   a heartbeat naming the Claude session, prints nothing and exits 0, and the
   prompt goes through. Otherwise it refuses the prompt: it writes one or two
   plain sentences to standard error saying what to do, and exits 2.
+  When a work block is active but what Claude Code sent cannot be read, the
+  prompt still goes through (see below).
 - Every other event leaves a heartbeat when a work block is active, and
   always exits 0 with nothing printed. These events must never disrupt
   Claude Code: exit 2 from a Stop hook, for one, would stop Claude from
@@ -36,12 +38,27 @@ owner says otherwise):
   JSON cannot be read, so it can refuse rather than let the prompt through.
   When the two disagree, the command line wins.
 - The gate fails closed. Missing or unreadable local settings, an
-  unreachable log directory (ADR 0008), input that cannot be read, and any
+  unreachable log directory (ADR 0008), no active work block, and any
   unexpected error all refuse the prompt, because in an eval account
   unrecorded work is the worse failure. Each has its own next step.
-- Input without a Claude session id refuses the prompt too: without it, the
-  Claude session's transcript cannot be tied to the work block, so the work
-  would be recorded but not attributable.
+- Input goodall cannot read (empty, not JSON, or without a valid Claude
+  session id) does NOT refuse the prompt while a work block is active: the
+  owner decided (2026-11-17) to record with an empty value that can be
+  reconciled later and to warn, so a Claude Code that changes its input
+  shape cannot block every prompt until goodall is updated. The heartbeat
+  names no Claude session, a line in the log directory notes the moment,
+  the event, the work block and what was unreadable, as a fixed word and
+  never the input itself (goodall.hook_problems, which also says how the
+  Claude session can be tied back to the work block), and the next
+  `goodall status` warns. With no work block active the prompt is refused
+  exactly as it would be with readable input: unreadable input never opens
+  a gate that would otherwise be closed.
+- The warning at the moment it happens is the JSON field `systemMessage`
+  on standard output, which Claude Code's hooks documentation describes as
+  a warning shown to the person; only `additionalContext` and plain-text
+  standard output are added to Claude's context, so the hook prints that
+  one JSON object and nothing else. Checked against the documentation on
+  2026-11-17, not yet by hand in Claude Code.
 - Every other event fails open and silent: any error is swallowed, because
   a broken heartbeat is a gap in evidence, while a broken hook would get in
   the person's way on every tool call. Standard output stays empty, because
@@ -60,7 +77,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from goodall import exit_codes, records, transcripts, work_blocks
+from goodall import exit_codes, hook_problems, records, transcripts, work_blocks
 from goodall.folders import describe_folder_problem
 from goodall.local_settings import LocalSettings, read_local_settings
 from goodall.terminal import Terminal
@@ -100,9 +117,13 @@ LOG_DIRECTORY_UNREACHABLE_REFUSAL = (
     "If the log directory is on an external drive, connect it; then run goodall status in a terminal "
     "and send your prompt again."
 )
-HOOK_INPUT_UNREADABLE_REFUSAL = (
-    "Goodall could not read the details Claude Code sent with this prompt, so it was not sent. "
-    "Tell your eval's researcher, who may need to update goodall."
+# Shown inside Claude Code, through the hook's JSON `systemMessage`, when a
+# prompt went through although goodall could not read what came with it.
+# One plain sentence; it reaches the person, not Claude.
+UNREADABLE_INPUT_NOTICE = (
+    "Goodall could not read the details Claude Code sent with this prompt, so it sent the prompt and kept your "
+    "work block recording without linking this Claude session to it; please tell your eval's researcher, who may "
+    "need to update goodall."
 )
 UNEXPECTED_PROBLEM_REFUSAL = (
     "Goodall hit an unexpected problem while checking this prompt, so it was not sent. "
@@ -136,6 +157,40 @@ class HookInput:
     claude_session: str
     transcript_path: Path | None
     fields: dict[str, object]
+
+
+@dataclass(frozen=True)
+class GateDecision:
+    """What the prompt gate decided: refuse with `refusal`, or let the prompt through, with `notice` if any.
+
+    `notice` is what the person is shown inside Claude Code when the prompt
+    goes through but something about it was not recorded fully.
+    """
+
+    refusal: str | None = None
+    notice: str | None = None
+
+
+def unreadable_input_category(text: str | None) -> str | None:
+    """Which of hook_problems.INPUT_PROBLEMS makes `text` unreadable, or None when it can be read.
+
+    The answer is one fixed word, so what is noted holds nothing of the
+    input, which carries the person's prompt.
+    """
+    if text is None or text.strip() == "":
+        return "empty"
+    try:
+        fields = json.loads(text)
+    except json.JSONDecodeError:
+        return "not_json"
+    if not isinstance(fields, dict):
+        return "not_json"
+    if "session_id" not in fields:
+        return "no_session_id"
+    claude_session = fields["session_id"]
+    if not isinstance(claude_session, str) or not records.CLAUDE_SESSION_ID_PATTERN.fullmatch(claude_session):
+        return "session_id_not_uuid"
+    return None
 
 
 def read_hook_input(text: str | None) -> HookInput | None:
@@ -183,15 +238,17 @@ def run_hook(event_name: str | None, terminal: Terminal, clock: Clock) -> int:
 
     if event_name == PROMPT_GATE_EVENT:
         try:
-            refusal = check_prompt(terminal.read_piped_text(HOOK_INPUT_LIMIT), clock())
+            decision = check_prompt(terminal.read_piped_text(HOOK_INPUT_LIMIT), clock())
         except Exception:
             # Trap: this catches goodall's own bugs too. That is deliberate:
             # a bug must close the gate, not open it.
-            refusal = UNEXPECTED_PROBLEM_REFUSAL
-        if refusal is None:
-            return exit_codes.SUCCESS
-        terminal.show_hook_message(refusal)
-        return exit_codes.CLAUDE_CODE_REFUSES_PROMPT
+            decision = GateDecision(refusal=UNEXPECTED_PROBLEM_REFUSAL)
+        if decision.refusal is not None:
+            terminal.show_hook_message(decision.refusal)
+            return exit_codes.CLAUDE_CODE_REFUSES_PROMPT
+        if decision.notice is not None:
+            terminal.show_hook_notice(decision.notice)
+        return exit_codes.SUCCESS
 
     try:
         record_activity(event_name, terminal.read_piped_text(HOOK_INPUT_LIMIT), clock())
@@ -201,34 +258,46 @@ def run_hook(event_name: str | None, terminal: Terminal, clock: Clock) -> int:
     return exit_codes.SUCCESS
 
 
-def check_prompt(hook_input_text: str | None, now: datetime) -> str | None:
-    """The prompt gate: leave a heartbeat and return None, or return why the prompt is refused.
+def check_prompt(hook_input_text: str | None, now: datetime) -> GateDecision:
+    """The prompt gate: leave a heartbeat and let the prompt through, or say why it is refused.
 
     Checked in the order a person would fix things: goodall set up at all,
-    then the log directory, then what Claude Code sent, then the work block.
+    then the log directory, then the work block. What Claude Code sent is
+    read last, and only decides which Claude session the heartbeat names,
+    so it can never open a gate the checks before it closed.
     """
     settings = read_local_settings()
     if not isinstance(settings, LocalSettings):
         for failure in settings:
             if failure.kind == "local_settings_missing":
-                return LOCAL_SETTINGS_MISSING_REFUSAL
-        return LOCAL_SETTINGS_UNREADABLE_REFUSAL
+                return GateDecision(refusal=LOCAL_SETTINGS_MISSING_REFUSAL)
+        return GateDecision(refusal=LOCAL_SETTINGS_UNREADABLE_REFUSAL)
 
     log_directory = settings.log_directory.path
     if describe_folder_problem(log_directory, needs_writing=True) is not None:
-        return LOG_DIRECTORY_UNREACHABLE_REFUSAL
+        return GateDecision(refusal=LOG_DIRECTORY_UNREACHABLE_REFUSAL)
 
     hook_input = read_hook_input(hook_input_text)
-    if hook_input is None:
-        return HOOK_INPUT_UNREADABLE_REFUSAL
+    claude_session = None
+    if hook_input is not None:
+        claude_session = hook_input.claude_session
 
     # record_heartbeat answers "is a work block active?" and records the
     # heartbeat in one step. None covers no work block, an overdue one, and a
     # heartbeat that could not be written: in each, this prompt would go
     # unrecorded, which ADR 0008 treats as the same observable state.
-    if work_blocks.record_heartbeat(log_directory, now, hook_input.claude_session) is None:
-        return NO_WORK_BLOCK_REFUSAL
-    return None
+    work_block = work_blocks.record_heartbeat(log_directory, now, claude_session)
+    if work_block is None:
+        return GateDecision(refusal=NO_WORK_BLOCK_REFUSAL)
+    if hook_input is None:
+        problem = unreadable_input_category(hook_input_text)
+        if problem is None:
+            # Readable JSON that read_hook_input still refused cannot happen
+            # today; noted under the broadest word rather than not at all.
+            problem = "not_json"
+        hook_problems.record_hook_problem(log_directory, now, PROMPT_GATE_EVENT, work_block.id, problem)
+        return GateDecision(notice=UNREADABLE_INPUT_NOTICE)
+    return GateDecision()
 
 
 def record_activity(event_name: str, hook_input_text: str | None, now: datetime) -> None:

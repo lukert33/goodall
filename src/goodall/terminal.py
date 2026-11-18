@@ -443,6 +443,17 @@ class Terminal:
         """
         self.standard_error.write(message + "\n")
 
+    def show_hook_notice(self, message: str) -> None:
+        """Write a notice for Claude Code to show the person without stopping anything, as hook JSON on standard output.
+
+        Used by `goodall hook` (goodall.hook) when it lets a prompt through but
+        something was not recorded fully. Claude Code reads one JSON object
+        on standard output and shows its `systemMessage` to the person; any
+        other text there would be added to Claude's context, so this writes
+        that one object, on one line, and nothing else.
+        """
+        self.standard_output.write(json.dumps({"systemMessage": message}) + "\n")
+
     def show_failures(self, failures: list[Failure]) -> None:
         """Write several failures to standard error, one after another, with a blank line between them."""
         for position, failure in enumerate(failures):

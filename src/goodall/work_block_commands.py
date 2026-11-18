@@ -25,7 +25,9 @@ recovered from it is recorded with end state `abnormal`; every ended
 work block's record still waiting in the log directory is written to the
 record repo; and every Claude Code transcript that changed since it was
 last copied is copied into the log directory (goodall.transcripts), which
-is said in one sentence only when something was copied.
+is said in one sentence only when something was copied; and any problem a
+hook noted (goodall.hook_problems), such as a prompt whose input goodall
+could not read, is reported once as a warning and filed away.
 
 A work block's record is written to the record repo ONCE, when it ends,
 because records are never rewritten. Until it is committed it waits in the
@@ -49,7 +51,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import goodall
-from goodall import exit_codes, records, transcripts, work_blocks
+from goodall import exit_codes, hook_problems, records, transcripts, work_blocks
 from goodall.eval_config import EvalForThisAccount, read_eval_for_this_account
 from goodall.folders import describe_folder_problem, log_directory_unreachable_failure, record_repo_missing_failure
 from goodall.local_settings import read_local_settings
@@ -315,12 +317,14 @@ class Settling:
     `closings` are sentences for a person, one per work block goodall closed
     itself (forgotten or damaged); `writes` are the waiting records it tried
     to write into the record repo; `transcript_sweep` is what the sweep of
-    Claude Code's transcripts into the log directory did.
+    Claude Code's transcripts into the log directory did; `noted_hook_problems` is
+    what hooks noted since a command last reported it, or None.
     """
 
     closings: list[str] = field(default_factory=list)
     writes: list[UnrecordedWrite] = field(default_factory=list)
     transcript_sweep: transcripts.SweepResult = field(default_factory=transcripts.SweepResult)
+    noted_hook_problems: hook_problems.HookProblems | None = None
 
     @property
     def warnings(self) -> list[Failure]:
@@ -335,6 +339,8 @@ class Settling:
                 warnings.append(record_waiting_failure(write.record, write.waiting_file, write.failures))
         if self.transcript_sweep.problems:
             warnings.append(transcripts_not_copied_failure(self.transcript_sweep))
+        if self.noted_hook_problems is not None and self.noted_hook_problems.unreadable_inputs > 0:
+            warnings.append(hook_input_unreadable_failure(self.noted_hook_problems))
         return warnings
 
     @property
@@ -367,6 +373,7 @@ def settle(runner: Runner, eval_reading: EvalForThisAccount, now: datetime) -> S
        is copied into the log directory (goodall.transcripts.sweep). The
        hooks copy as Claude works, but a killed Claude Code fires none, so
        this is what guarantees nothing is left behind.
+    4. What hooks noted they could not do is taken, to be reported once.
     """
     log_directory = eval_reading.local_settings.log_directory.path
     closings = []
@@ -387,6 +394,7 @@ def settle(runner: Runner, eval_reading: EvalForThisAccount, now: datetime) -> S
         closings=closings,
         writes=write_unrecorded_records(runner, eval_reading),
         transcript_sweep=transcripts.sweep(transcripts.claude_projects_folder(), log_directory, now),
+        noted_hook_problems=hook_problems.take_hook_problems(log_directory, now),
     )
 
 
@@ -675,6 +683,34 @@ def transcripts_not_copied_failure(sweep_result: transcripts.SweepResult) -> Fai
         what_to_do_next=(
             "Check that the log directory has free space and that this account can write to it, then run goodall "
             "status again. If it keeps failing, tell the researcher who runs the eval."
+        ),
+    )
+
+
+def hook_input_unreadable_failure(problems: hook_problems.HookProblems) -> Failure:
+    """The warning for prompts the gate let through although it could not read what Claude Code sent.
+
+    Shown once: settling has already filed the note away (goodall.hook_problems).
+    """
+    since = ""
+    if problems.first_at is not None:
+        since = f" since {describe_moment(problems.first_at)}"
+    return Failure(
+        kind="hook_input_unreadable",
+        what_happened=(
+            f"Goodall could not read what Claude Code sent with a prompt {describe_times(problems.unreadable_inputs)}"
+            f"{since}. Those prompts were sent and your work block kept recording, but their Claude sessions are "
+            "not linked to the work block."
+        ),
+        why=(
+            "Claude Code sends each prompt's details to goodall's prompt gate. When goodall cannot read them, it "
+            "lets the prompt through rather than block your work, and keeps a note of when, in "
+            f"{problems.filed_at}, so the researcher can link those Claude sessions later. Their transcripts are "
+            "still copied."
+        ),
+        what_to_do_next=(
+            "Tell the researcher who runs the eval: goodall may need updating for this version of Claude Code. "
+            "Nothing needs to be run again."
         ),
     )
 
