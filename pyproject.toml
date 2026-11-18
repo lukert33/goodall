@@ -13,6 +13,12 @@ dependencies = []
 [project.scripts]
 goodall = "goodall.entry_point:main"
 
+[project.optional-dependencies]
+scout = [
+    "inspect-ai>=0.3.290,<0.4",
+    "inspect-scout>=0.6.2,<0.7",
+]
+
 # Build backend. uv_build ships inside uv itself, so building adds no package
 # beyond the tool this project already relies on. The range matches the uv
 # version in use; raise both together. The floor is 0.13.4 because every uv
