@@ -1,7 +1,9 @@
 # Goodall
 
 Goodall records what a person and their AI agents each did while doing real
-work together, so that the record can be analysed and published.
+work together, so that the record can be analyzed. It also includes tools for
+applying a redaction policy to the raw record, to protect personally 
+identifiable information (PII) or trade secrets.
 
 It is for researchers who run **open-world evals**: studies of what AI can do
 on real work in the real world, with a person working alongside the agents,
