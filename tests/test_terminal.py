@@ -355,5 +355,16 @@ def test_commands_to_try_are_shown_one_per_line_and_never_wrapped() -> None:
     assert failure.as_json()["commands_to_try"] == [long_command, "pbpaste | goodall intervene"]
 
 
+def test_commands_after_a_success_go_to_standard_output_and_are_never_wrapped() -> None:
+    standard_output = io.StringIO()
+    terminal = Terminal(standard_output=standard_output, standard_error=io.StringIO())
+    long_command = "scout view -T /Volumes/EvalLogs/goodall-pilot/exports/scout-with-a-name-long-enough-to-wrap-a-line"
+
+    terminal.show_paragraph("Exported.")
+    terminal.show_commands((long_command,))
+
+    assert standard_output.getvalue() == f"Exported.\n\nTry   {long_command}\n"
+
+
 def test_a_failure_without_commands_to_try_keeps_its_four_json_keys() -> None:
     assert set(EXAMPLE_FAILURE.as_json()) == {"kind", "what_happened", "why", "what_to_do_next"}
