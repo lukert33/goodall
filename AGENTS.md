@@ -2,7 +2,7 @@
 
 Goodall is an open-source tool for instrumenting open-world evals: it records
 what a human and their AI agents each did while doing real work together, so
-the record can be analysed and published. It is being rebuilt from scratch;
+the record can be analyzed and published. It is being rebuilt from scratch;
 most of what is described below does not exist in code yet.
 
 This file is the single source of guidance for every agent and human
@@ -44,7 +44,7 @@ See `docs/agents/domain.md`.
 ## Two kinds of machine account
 
 Goodall imposes strict rules on an **eval account**: a standard (non-admin)
-macOS user account used only for one eval. Those rules are product behaviour, to be
+macOS user account used only for one eval. Those rules are product behavior, to be
 enforced by `goodall doctor` and `goodall onboard`.
 
 Developing goodall happens in an ordinary **development account** and is
@@ -112,7 +112,7 @@ understand why each function exists.
 - Module docstring first: what the file is for, who calls it, and any design
   decision a reader would otherwise reverse-engineer.
 - Docstrings and comments give the reason and the trap, and are updated in the
-  same edit as the behaviour they describe.
+  same edit as the behavior they describe.
 - Spell in American English everywhere: code, docs, messages, issues
   (`analyze`, `labeled`, `license`, `behavior`).
 - Type hints on every signature, `@dataclass` for records, `pathlib.Path` for
@@ -134,15 +134,15 @@ understand why each function exists.
   pull request.
 - Tests use the fake runner and `tmp_path`; the real network, the real
   1Password sign-in (`op`) and the user's real files stay out of reach.
-- Real `git` is used in tests, because git behaviour is what they verify.
-- Test names state the behaviour protected:
+- Real `git` is used in tests, because git behavior is what they verify.
+- Test names state the behavior protected:
   `test_tracked_env_fails_even_when_ignored`.
 - A bug fix arrives with a test that fails without it.
 
 ## Dependencies
 
 Standard library first. To add a package, give the human a request containing
-its maintainer, repository, advisory history, licence and dependency count,
+its maintainer, repository, advisory history, license and dependency count,
 each checked live today, plus anything you could not verify. Add it only after
 approval, together with its row in `docs/DEPENDENCIES.md` and the updated
 `uv.lock`. A recommendation from a model is a lead to check, and the checked
