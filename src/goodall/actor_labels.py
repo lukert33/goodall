@@ -407,7 +407,7 @@ class UnmatchedEntry:
 
 
 @dataclass
-class LabelledTranscript:
+class LabeledTranscript:
     """Everything `label_transcript` produced for one transcript.
 
     Every non-blank line is in exactly one of `labels` and `unmatched`, in
@@ -421,7 +421,7 @@ class LabelledTranscript:
     human_action_rules_version: str = HUMAN_ACTION_RULES_VERSION
 
 
-def label_transcript(transcript_path: Path) -> LabelledTranscript:
+def label_transcript(transcript_path: Path) -> LabeledTranscript:
     """Read one transcript and label every entry in it.
 
     This is the module's entry point. Blank lines hold no entry and are
@@ -433,7 +433,7 @@ def label_transcript(transcript_path: Path) -> LabelledTranscript:
         human_action_kinds_by_line.setdefault(action.line_number, set()).add(action.kind)
 
     known_entry_types = claude_code_markers().known_entry_types
-    result = LabelledTranscript(labels=[], unmatched=[])
+    result = LabeledTranscript(labels=[], unmatched=[])
     # What started the last compaction, until the summary after it is read.
     compaction_trigger: str | None = None
     with transcript_path.open(encoding="utf-8", errors="replace") as transcript_file:
@@ -516,7 +516,7 @@ class LabelSummary:
     unmatched_entries: int
 
 
-def summarize_labels(labeled_transcript: LabelledTranscript) -> LabelSummary:
+def summarize_labels(labeled_transcript: LabeledTranscript) -> LabelSummary:
     """Count the labels, the rules that decided them, mixed and unmatched entries."""
     entries_by_label = {"human": 0, "ai": 0, "harness": 0}
     entries_by_rule: dict[str, int] = {}

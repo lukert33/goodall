@@ -23,7 +23,7 @@ Design decisions a reader would otherwise reverse-engineer:
   sessions are expected to fit; a very large eval would need this to stream.
 - Added events go where they happened: an approval just before the tool
   event it decided, in the same span; anything else before the first event
-  that happened later. Each takes `working_start` from its neighbour,
+  that happened later. Each takes `working_start` from its neighbor,
   because Scout's own values for imported transcripts count from no fixed
   moment.
 """
@@ -252,12 +252,12 @@ def merge_events(scout_events: list[Event], events_to_add: list[AddedEvent], sum
             position = tool_event_positions[added.tool_call_id]
         else:
             position = position_by_time(scout_events, added.timestamp)
-        neighbour: Event | None = None
+        neighbor: Event | None = None
         if position < len(scout_events):
-            neighbour = scout_events[position]
+            neighbor = scout_events[position]
         elif scout_events:
-            neighbour = scout_events[-1]
-        inspect_event = to_inspect_event(added, neighbour, start)
+            neighbor = scout_events[-1]
+        inspect_event = to_inspect_event(added, neighbor, start)
         added_before.setdefault(position, []).append(inspect_event)
         summary.events_added[added.event_type] += 1
 
@@ -289,10 +289,10 @@ def position_by_time(scout_events: list[Event], moment: datetime | None) -> int:
     return len(scout_events)
 
 
-def to_inspect_event(added: AddedEvent, neighbour: Event | None, start: datetime | None) -> Event:
+def to_inspect_event(added: AddedEvent, neighbor: Event | None, start: datetime | None) -> Event:
     """Build the Inspect event an `AddedEvent` describes.
 
-    An approval's tool call comes from the neighbouring tool event when it is
+    An approval's tool call comes from the neighboring tool event when it is
     the one decided, which is how Inspect itself records an approval: the
     call as the model made it. When Scout kept no tool event for the call,
     the call has the tool's name and no arguments, and
@@ -305,8 +305,8 @@ def to_inspect_event(added: AddedEvent, neighbour: Event | None, start: datetime
         timestamp = start if start is not None else NO_TIME
     working_start = 0.0
     span_id = None
-    if neighbour is not None:
-        working_start = neighbour.working_start
+    if neighbor is not None:
+        working_start = neighbor.working_start
     common: dict[str, Any] = {
         "uuid": added.uuid,
         "timestamp": timestamp,
@@ -315,8 +315,8 @@ def to_inspect_event(added: AddedEvent, neighbour: Event | None, start: datetime
     }
     if added.event_type == "approval":
         tool_event = None
-        if isinstance(neighbour, ToolEvent) and neighbour.id == added.tool_call_id:
-            tool_event = neighbour
+        if isinstance(neighbor, ToolEvent) and neighbor.id == added.tool_call_id:
+            tool_event = neighbor
         if tool_event is not None:
             call = ToolCall(id=tool_event.id, function=tool_event.function, arguments=dict(tool_event.arguments))
             span_id = tool_event.span_id

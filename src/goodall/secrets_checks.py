@@ -821,7 +821,7 @@ def check_referenced_fields_exist(context: CheckContext) -> CheckOutcome:
     were not. Today it can never pass when the env file has references,
     because 1Password, the one secrets manager, cannot say whether a field
     exists without handing over its value (goodall.secrets_manager). It
-    says so as "unverified", never as a pass: a misspelt field name shows
+    says so as "unverified", never as a pass: a misspelled field name shows
     only when a program is launched with the secret.
     """
     local_settings = valid_local_settings(context)

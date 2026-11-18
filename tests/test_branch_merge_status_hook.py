@@ -368,7 +368,7 @@ def test_switch_create_reusing_a_merged_branch_name_is_blocked(tmp_path: Path) -
     assert result.returncode == 2
 
 
-def test_unrecognised_switch_forms_fall_back_to_the_current_branch(tmp_path: Path) -> None:
+def test_unrecognized_switch_forms_fall_back_to_the_current_branch(tmp_path: Path) -> None:
     workspace = make_workspace(tmp_path)
     workspace.git("branch", "live-branch")
     workspace.set_pull_requests_for_branch("work-branch", [MERGED_PULL_REQUEST])

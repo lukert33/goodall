@@ -15,7 +15,7 @@ line is on disk and before the sender is told it succeeded. For example:
   no request id, so this is the only one there is. A number that never
   appears means a request was numbered but not finished.
 - `received_at`: when the whole body had arrived, in UTC. Under concurrent
-  requests two neighbouring receipts may be a few microseconds out of order;
+  requests two neighboring receipts may be a few microseconds out of order;
   `sequence` is the order the lines were written in.
 - `file`: which telemetry file the line went to.
 - `offset`: the byte position in that file where the line begins. ADR 0013
