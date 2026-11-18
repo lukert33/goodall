@@ -166,6 +166,24 @@ def files_and_bytes(folder: Path) -> dict[str, bytes]:
     return found
 
 
+def files_an_importer_would_take_for_claude_sessions(log_directory: Path) -> list[str]:
+    """The files Inspect Scout's claude_code importer would read as Claude sessions if pointed at `log_directory`.
+
+    Its rule (`discover_session_files` in inspect_scout, read 2026-11-18):
+    a folder holding `*.jsonl` files is a project folder, and every such file
+    in it is a Claude session; otherwise each folder inside it is tried as a
+    project folder, one level down and no deeper.
+    """
+    found = []
+    candidate_folders = [log_directory]
+    if not any(log_directory.glob("*.jsonl")):
+        candidate_folders = sorted(path for path in log_directory.iterdir() if path.is_dir())
+    for folder in candidate_folders:
+        for session_file in sorted(folder.glob("*.jsonl")):
+            found.append(str(session_file.relative_to(log_directory)))
+    return found
+
+
 def test_a_stop_hook_copies_the_transcript_byte_for_byte_in_claude_codes_layout(tmp_path: Path) -> None:
     eval_account = make_eval_account(tmp_path)
     eval_account.transcript.write_bytes(FIRST_LINES)
@@ -262,7 +280,7 @@ def test_a_hook_copies_the_whole_claude_session_folder_byte_for_byte_in_claude_c
         expected_mode = 0o700 if copied_path.is_dir() else 0o600
         assert stat.S_IMODE(copied_path.stat().st_mode) == expected_mode, copied_path
     # Nothing failed, so nothing was noted for goodall status.
-    assert not (eval_account.log_directory / "transcript-sync" / "failed-copies.jsonl").exists()
+    assert not (eval_account.log_directory / "transcript-sync" / "failed-copies.ndjson").exists()
 
 
 def test_a_session_file_rewritten_in_place_is_copied_again_and_its_earlier_copy_kept_aside(tmp_path: Path) -> None:
@@ -300,7 +318,7 @@ def test_a_session_file_that_disappears_from_claude_codes_folder_keeps_its_copy(
         f"{PROJECT_FOLDER_NAME}/{CLAUDE_SESSION}.jsonl": FIRST_LINES,
         f"{PROJECT_FOLDER_NAME}/{CLAUDE_SESSION}/tool-results/toolu_01ABC.txt": b"3 passed\n",
     }
-    assert not (eval_account.log_directory / "transcript-sync" / "failed-copies.jsonl").exists()
+    assert not (eval_account.log_directory / "transcript-sync" / "failed-copies.ndjson").exists()
 
 
 def test_links_special_files_and_unreadable_files_in_a_session_folder_are_skipped_and_noted_and_the_rest_copied(
@@ -339,7 +357,7 @@ def test_links_special_files_and_unreadable_files_in_a_session_folder_are_skippe
         f"{PROJECT_FOLDER_NAME}/{CLAUDE_SESSION}.jsonl": FIRST_LINES,
         f"{PROJECT_FOLDER_NAME}/{CLAUDE_SESSION}/tool-results/toolu_01ABC.txt": b"3 passed\n",
     }
-    failed_copies = eval_account.log_directory / "transcript-sync" / "failed-copies.jsonl"
+    failed_copies = eval_account.log_directory / "transcript-sync" / "failed-copies.ndjson"
     problem = json.loads(failed_copies.read_text())["problem"]
     for skipped_name in ["toolu_01LNK.txt", "linked-folder", "toolu_01FIF.txt", "toolu_01UNR.txt", "unreadable-folder"]:
         assert skipped_name in problem
@@ -422,7 +440,7 @@ def test_a_transcript_path_that_leads_outside_the_claude_projects_folder_is_refu
         assert completed.stderr == ""
     assert not eval_account.copied_transcripts.exists()
     # Each refusal is noted for goodall status, without the path's contents.
-    failed_copies = eval_account.log_directory / "transcript-sync" / "failed-copies.jsonl"
+    failed_copies = eval_account.log_directory / "transcript-sync" / "failed-copies.ndjson"
     problems = [json.loads(line)["problem"] for line in failed_copies.read_text().splitlines()]
     assert len(problems) == len(refused_paths)
     for problem in problems:
@@ -597,11 +615,12 @@ def test_a_copy_that_fails_in_a_hook_is_silent_but_kept_for_status_to_report(
     completed = run_hook(eval_account, "Stop", hook_input(eval_account, "Stop"))
 
     assert (completed.returncode, completed.stdout, completed.stderr) == (0, "", "")
-    failed_copies = eval_account.log_directory / "transcript-sync" / "failed-copies.jsonl"
+    failed_copies = eval_account.log_directory / "transcript-sync" / "failed-copies.ndjson"
     failure = json.loads(failed_copies.read_text())
     assert failure["event"] == "Stop"
     assert failure["claude_session"] == CLAUDE_SESSION
     assert "Permission denied" in failure["problem"]
+    assert files_an_importer_would_take_for_claude_sessions(eval_account.log_directory) == []
 
     # While the folder is still read-only, status warns, and keeps the hook's record.
     status = run_goodall(eval_account, monkeypatch, ["status", "--json"])
@@ -620,6 +639,55 @@ def test_a_copy_that_fails_in_a_hook_is_silent_but_kept_for_status_to_report(
     assert "could not copy a transcript 1 time when a Claude Code hook fired" in fixed_status.everything_printed
     assert "transcript" not in later_status.everything_printed
     assert not failed_copies.exists()
+    assert files_an_importer_would_take_for_claude_sessions(eval_account.log_directory) == []
+    assert not list((eval_account.log_directory / "transcript-sync").rglob("*.jsonl"))
+
+
+def test_failures_noted_under_the_old_file_name_are_still_reported_by_status(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Goodall once noted failed hook copies in `failed-copies.jsonl`, a name
+    # an importer takes for a Claude session. A log directory may still hold one.
+    eval_account = make_eval_account(tmp_path)
+    eval_account.transcript.write_bytes(FIRST_LINES)
+    sync_folder = eval_account.log_directory / "transcript-sync"
+    sync_folder.mkdir(parents=True)
+    old_failed_copies = sync_folder / "failed-copies.jsonl"
+    old_failed_copies.write_text(
+        '{"at": "20261117T101500.000000Z", "event": "Stop", "claude_session": "'
+        + CLAUDE_SESSION
+        + '", "problem": "PermissionError: synthetic"}\n'
+    )
+
+    status = run_goodall(eval_account, monkeypatch, ["status"])
+
+    assert "could not copy a transcript 1 time when a Claude Code hook fired" in status.everything_printed
+    assert not old_failed_copies.exists()
+    assert files_an_importer_would_take_for_claude_sessions(eval_account.log_directory) == []
+    assert not list(sync_folder.rglob("*.jsonl"))
+
+
+def test_failures_noted_under_both_file_names_are_counted_together_and_both_filed_away(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    eval_account = make_eval_account(tmp_path)
+    eval_account.transcript.write_bytes(FIRST_LINES)
+    sync_folder = eval_account.log_directory / "transcript-sync"
+    sync_folder.mkdir(parents=True)
+    failure_line = (
+        '{"at": "20261117T101500.000000Z", "event": "Stop", "claude_session": "'
+        + CLAUDE_SESSION
+        + '", "problem": "PermissionError: synthetic"}\n'
+    )
+    (sync_folder / "failed-copies.jsonl").write_text(failure_line)
+    (sync_folder / "failed-copies.ndjson").write_text(failure_line + failure_line)
+
+    status = run_goodall(eval_account, monkeypatch, ["status"])
+
+    assert "could not copy a transcript 3 times when a Claude Code hook fired" in status.everything_printed
+    assert str(sync_folder / "reported") in status.everything_printed
+    assert [path.name for path in sync_folder.iterdir() if path.is_file()] == []
+    assert len(list((sync_folder / "reported").glob("failed-copies-*.ndjson"))) == 2
 
 
 def synthetic_transcript_bytes(size: int) -> bytes:
@@ -963,7 +1031,7 @@ def test_links_and_special_files_in_file_history_are_skipped_and_noted(tmp_path:
     assert (completed.returncode, completed.stdout, completed.stderr) == (0, "", "")
     mirror = eval_account.log_directory / "claude-config" / mirror_name(eval_account.claude_config_directory)
     assert files_and_bytes(mirror) == {f"file-history/{CLAUDE_SESSION}/aa@v1": b"kept\n"}
-    failed_copies = eval_account.log_directory / "transcript-sync" / "failed-copies.jsonl"
+    failed_copies = eval_account.log_directory / "transcript-sync" / "failed-copies.ndjson"
     problem = json.loads(failed_copies.read_text())["problem"]
     assert "bb@v1: a symbolic link" in problem
     assert "cc@v1: a special file" in problem

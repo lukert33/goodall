@@ -823,8 +823,33 @@ def test_status_warns_once_about_prompts_whose_hook_input_could_not_be_read(eval
     # Said once, then filed away, kept.
     again = run_goodall(eval_account, ["status", "--json"])
     assert json.loads(again.standard_output)["warnings"] == []
-    [filed] = (eval_account.log_directory / "hook-problems" / "reported").glob("*.jsonl")
+    [filed] = (eval_account.log_directory / "hook-problems" / "reported").glob("*.ndjson")
     assert len(filed.read_text().splitlines()) == 2
+    # Never a `.jsonl`, which an importer pointed at the log directory would take for a Claude session.
+    assert not list((eval_account.log_directory / "hook-problems").rglob("*.jsonl"))
+
+
+def test_status_still_warns_about_hook_problems_noted_under_the_old_file_name(eval_account: EvalAccount) -> None:
+    # Goodall once noted hook problems in `hook-problems.jsonl`, a name an
+    # importer takes for a Claude session. A log directory may still hold one.
+    problems_folder = eval_account.log_directory / "hook-problems"
+    problems_folder.mkdir(parents=True)
+    old_problems_file = problems_folder / "hook-problems.jsonl"
+    old_problems_file.write_text(
+        '{"at": "2026-11-16T09:20:00Z", "event": null, "work_block": null, "problem": "no_event_name"}\n'
+    )
+    (problems_folder / "hook-problems.ndjson").write_text(
+        '{"at": "2026-11-16T09:25:00Z", "event": null, "work_block": null, "problem": "no_event_name"}\n'
+    )
+
+    status = run_goodall(eval_account, ["status", "--json"])
+
+    [warning] = json.loads(status.standard_output)["warnings"]
+    text = " ".join(f"{warning['what_happened']} {warning['why']} {warning['what_to_do_next']}".split())
+    assert "ran 2 times since Mon 16 Nov 2026, 09:20 GMT without being told which Claude Code event" in text
+    assert [path.name for path in problems_folder.iterdir() if path.is_file()] == []
+    assert len(list((problems_folder / "reported").glob("hook-problems-*.ndjson"))) == 2
+    assert not list(problems_folder.rglob("*.jsonl"))
 
 
 def test_status_warns_about_a_hook_that_ran_without_being_told_its_event(eval_account: EvalAccount) -> None:

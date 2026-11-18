@@ -21,7 +21,7 @@ that reads such a folder, Inspect Scout's claude_code importer included:
     and goodall keeps, beside them:
     <log directory>/superseded-transcripts/<moment>/...   earlier copies that were replaced
     <log directory>/superseded-claude-config/<moment>/... the same, for claude-config/
-    <log directory>/transcript-sync/failed-copies.jsonl   copies hooks could not make
+    <log directory>/transcript-sync/failed-copies.ndjson  copies hooks could not make
     <log directory>/transcript-sync/reported/...          those, once goodall status said so
     <log directory>/transcript-sync/locks/...             one per Claude session, project and config folder
     <log directory>/transcript-sync/claude-config-folders.json   where hooks found Claude Code
@@ -152,10 +152,20 @@ CLAUDE_CONFIG_FOLDER_ALLOW_LIST = ["history.jsonl", f"file-history/{SESSION_ID_P
 PROJECT_MEMORY_PATHS = ["MEMORY.md", "memory"]
 
 # The folder in the log directory for goodall's own notes about copying:
-# `failed-copies.jsonl`, one line per copy a hook could not make, and
+# `failed-copies.ndjson`, one JSON line per copy a hook could not make, and
 # `reported/`, where those lines go once `goodall status` has said so.
+#
+# Trap: goodall's notes never end in `.jsonl`, though they are JSON Lines.
+# Inspect Scout's claude_code importer, pointed at a folder, reads every
+# `*.jsonl` file directly inside it, or inside each folder one level down, as
+# a Claude session, so a `.jsonl` here would be imported as one if someone
+# pointed it at the whole log directory. `.ndjson` names the same format.
+# Goodall wrote `failed-copies.jsonl` until 2026-11-18; a sweep still reads
+# a file of that name (OLD_FAILED_COPIES_FILE_NAME) and files it away, but
+# never writes one.
 SYNC_FOLDER_NAME = "transcript-sync"
-FAILED_COPIES_FILE_NAME = "failed-copies.jsonl"
+FAILED_COPIES_FILE_NAME = "failed-copies.ndjson"
+OLD_FAILED_COPIES_FILE_NAME = "failed-copies.jsonl"
 REPORTED_FOLDER_NAME = "reported"
 
 # One lock file per Claude session, in `transcript-sync/locks/`, so two
@@ -406,7 +416,8 @@ class SweepResult:
     earlier_copies_kept: int = 0
     problems: list[str] = field(default_factory=list)
     # How many copies hooks failed to make since the last sweep that
-    # succeeded, and where the reasons are kept.
+    # succeeded, and where the reasons are kept: their file, or the folder
+    # holding them when they were found under both the old and new names.
     failed_hook_copies: int = 0
     failed_hook_copies_file: Path | None = None
 
@@ -444,19 +455,29 @@ def take_failed_hook_copies(log_directory: Path, now: datetime, result: SweepRes
     the record is moved to `transcript-sync/reported/` (kept, not deleted)
     and is reported only this once.
     """
-    failed_copies_file = log_directory / SYNC_FOLDER_NAME / FAILED_COPIES_FILE_NAME
-    try:
-        failed_copies_text = failed_copies_file.read_text(encoding="utf-8", errors="replace")
-    except OSError:
+    sync_folder = log_directory / SYNC_FOLDER_NAME
+    found_files = []
+    # The old name first: any file under it is older than the current one.
+    for file_name in [OLD_FAILED_COPIES_FILE_NAME, FAILED_COPIES_FILE_NAME]:
+        failed_copies_file = sync_folder / file_name
+        try:
+            failed_copies_text = failed_copies_file.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        result.failed_hook_copies += len(failed_copies_text.splitlines())
+        found_files.append(failed_copies_file)
+    if not found_files:
         return
-    result.failed_hook_copies = len(failed_copies_text.splitlines())
-    result.failed_hook_copies_file = failed_copies_file
+    # Two files can only be met while a log directory moves to the new
+    # name; the message then names the folder that holds both.
+    result.failed_hook_copies_file = found_files[0] if len(found_files) == 1 else sync_folder
     if result.problems:
         return
     reported_folder = make_folders(log_directory, [SYNC_FOLDER_NAME, REPORTED_FOLDER_NAME])
-    reported_file = reported_folder / f"failed-copies-{format_moment(now)}-{secrets.token_hex(2)}.jsonl"
-    os.rename(failed_copies_file, reported_file)
-    result.failed_hook_copies_file = reported_file
+    for failed_copies_file in found_files:
+        reported_file = reported_folder / f"failed-copies-{format_moment(now)}-{secrets.token_hex(2)}.ndjson"
+        os.rename(failed_copies_file, reported_file)
+        result.failed_hook_copies_file = reported_file if len(found_files) == 1 else reported_folder
 
 
 def format_moment(moment: datetime) -> str:
