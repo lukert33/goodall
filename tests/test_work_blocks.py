@@ -12,6 +12,7 @@ it, and a log directory. git runs for real through the fake runner; every
 other program (only `claude --version` here) is scripted.
 """
 
+import fcntl
 import http.client
 import io
 import json
@@ -1354,6 +1355,34 @@ def test_a_receiver_left_by_an_interrupted_end_is_stopped_by_the_next_command(ev
     [receiver] = eval_account.simulated_receivers()
     assert not receiver.is_running()
     assert telemetry_capture.receiver_record_for(eval_account.log_directory, work_block_id) is None
+
+
+def test_restart_is_not_refused_while_the_prompt_gate_briefly_holds_the_receipt_log_lock(
+    eval_account: EvalAccount,
+) -> None:
+    # In the gap before the new receiver listens, the old receiver's record is
+    # still on disk, so the prompt gate may try the receipt log's lock. Here a
+    # probe holds it for a moment, as the gate's check does, while goodall
+    # start restarts the receiver.
+    first = run_goodall(eval_account, ["start"])
+    port = receiver_port_shown(first)
+    work_block_id = running_work_block_id(eval_account)
+    [crashed] = eval_account.simulated_receivers()
+    assert isinstance(crashed, InProcessTelemetryReceiver)
+    crashed.crash()
+    receipt_log = telemetry_capture.TelemetryFiles(eval_account.log_directory, work_block_id).receipt_log
+    probe_descriptor = os.open(receipt_log, os.O_RDONLY)
+    fcntl.flock(probe_descriptor, fcntl.LOCK_EX)
+    release_probe = threading.Timer(0.3, os.close, args=[probe_descriptor])
+    release_probe.start()
+    try:
+        again = run_goodall(eval_account, ["start"])
+    finally:
+        release_probe.join()
+
+    assert again.exit_code == exit_codes.SUCCESS, again.standard_error
+    assert "telemetry receiver was not running, so goodall started it again" in again.everything_printed
+    assert post_like_claude_code(port, "/v1/logs", CLAUDE_CODE_LOGS_BODY) == 200
 
 
 def test_start_while_a_work_block_is_active_restarts_a_stopped_receiver_on_the_same_port(

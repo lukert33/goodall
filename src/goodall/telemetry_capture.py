@@ -41,9 +41,12 @@ system drops that lock the moment the receiver dies, however it dies. So
 the hook tries to take the same lock without waiting: if it can, nobody
 holds it, and the receiver is down. Unlike a process id, a lock cannot be
 inherited by an unrelated program. Trap: the hook releases the lock at
-once, and only checks a work block whose receiver record exists, which is
-written only after the receiver is listening, so the hook can never hold
-the lock while a receiver is trying to start.
+once, and only checks a work block whose receiver record exists. A first
+receiver writes that record only after it is listening, but a restarted
+one starts while the old record is still there, so the hook can hold the
+lock for an instant while it starts. The receiver therefore retries its
+lock for a short time (goodall.telemetry_receiver.ReceiptLog) instead of
+refusing; the hook never waits.
 """
 
 import fcntl
