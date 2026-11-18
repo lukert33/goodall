@@ -329,7 +329,7 @@ def test_the_hook_command_loads_no_third_party_module_and_starts_no_program(tmp_
     assert completed.returncode == 0, completed.stderr
     [notice_line] = completed.stdout.splitlines()
     assert list(json.loads(notice_line)) == ["systemMessage"]
-    assert (log_directory / "hook-problems" / "hook-problems.jsonl").exists()
+    assert (log_directory / "hook-problems" / "hook-problems.ndjson").exists()
 
     # All three heartbeats were recorded, so the hook really ran its whole path.
     heartbeat_file = work_blocks.WorkBlockFiles(log_directory).heartbeat_file(running.id)

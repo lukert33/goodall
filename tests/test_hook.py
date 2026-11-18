@@ -204,7 +204,7 @@ UNREADABLE_INPUTS = [
 
 def noted_hook_problems(log_directory: Path) -> list[dict[str, object]]:
     """The lines goodall noted about hooks it could not handle fully, not yet reported."""
-    problems_file = log_directory / "hook-problems" / "hook-problems.jsonl"
+    problems_file = log_directory / "hook-problems" / "hook-problems.ndjson"
     if not problems_file.exists():
         return []
     noted = []
@@ -240,7 +240,7 @@ def test_a_prompt_whose_input_cannot_be_read_goes_through_during_a_work_block_wi
         assert sorted(line) == ["at", "event", "problem", "work_block"]
         assert line["event"] == "UserPromptSubmit"
         assert line["work_block"] == work_block.id
-    problems_file = eval_account.log_directory / "hook-problems" / "hook-problems.jsonl"
+    problems_file = eval_account.log_directory / "hook-problems" / "hook-problems.ndjson"
     assert "Private" not in problems_file.read_text()
     assert problems_file.stat().st_mode & 0o777 == 0o600
 
@@ -390,7 +390,7 @@ def test_a_bare_hook_command_whose_input_names_no_event_exits_1_silently_and_is_
         assert noted["problem"] == problem
         assert noted["event"] is None
         assert noted["work_block"] == work_block.id
-    problems_file = eval_account.log_directory / "hook-problems" / "hook-problems.jsonl"
+    problems_file = eval_account.log_directory / "hook-problems" / "hook-problems.ndjson"
     assert "Private" not in problems_file.read_text()
 
 

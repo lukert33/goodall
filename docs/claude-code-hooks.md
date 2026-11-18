@@ -90,7 +90,7 @@ id, or one that is not a session id). In that case goodall:
   shows activity;
 - notes the moment, the event, the work block and which of those four went
   wrong (never anything Claude Code sent, which holds your prompt) in
-  `hook-problems/hook-problems.jsonl` in the log directory;
+  `hook-problems/hook-problems.ndjson` in the log directory;
 - shows you one sentence inside Claude Code, through the hook's JSON
   `systemMessage`, saying the prompt was sent but not linked and to tell the
   researcher; and
@@ -121,7 +121,7 @@ prompt.
 - `1`: neither the hook command nor what Claude Code sent names an event
   goodall handles. Goodall prints nothing, so nothing reaches Claude, and
   Claude Code carries on. The moment is noted in
-  `hook-problems/hook-problems.jsonl` in the log directory (when goodall is
+  `hook-problems/hook-problems.ndjson` in the log directory (when goodall is
   set up and the log directory can be reached), and the next
   `goodall status`, `start` or `stop` warns once that the hook settings need
   checking against this page.

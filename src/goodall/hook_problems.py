@@ -6,7 +6,7 @@
 filed away. This module is on the hook path, so it imports only the standard
 library (ADR 0005) and starts no program.
 
-    <log directory>/hook-problems/hook-problems.jsonl   one line per problem, not yet reported
+    <log directory>/hook-problems/hook-problems.ndjson  one line per problem, not yet reported
     <log directory>/hook-problems/reported/...          those lines, once a command has said so
 
 One line looks like:
@@ -57,8 +57,15 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+# Trap: the file is JSON Lines but never ends in `.jsonl`. Inspect Scout's
+# claude_code importer, pointed at the log directory, reads every `*.jsonl`
+# directly inside each folder there as a Claude session. `.ndjson` names the
+# same format. Goodall wrote `hook-problems.jsonl` until 2026-11-18; a
+# command that settles still reads a file of that name and files it away,
+# but nothing writes one.
 PROBLEMS_FOLDER_NAME = "hook-problems"
-PROBLEMS_FILE_NAME = "hook-problems.jsonl"
+PROBLEMS_FILE_NAME = "hook-problems.ndjson"
+OLD_PROBLEMS_FILE_NAME = "hook-problems.jsonl"
 REPORTED_FOLDER_NAME = "reported"
 
 # Why the prompt gate could not read what Claude Code sent: nothing was sent;
@@ -116,7 +123,8 @@ class HookProblems:
     `unknown_events` hooks that did not know their event; each `..._since`
     is the earliest moment of that kind, None when there were none or no
     time could be read. `filed_at` is where the lines were moved and are
-    kept, or the file itself when moving it failed.
+    kept, or the file itself when moving it failed; a folder when they came
+    from files under both the old and new names.
     """
 
     unreadable_inputs: int
@@ -134,10 +142,18 @@ def take_hook_problems(log_directory: Path, now: datetime) -> HookProblems | Non
     anything on the disk.
     """
     folder = log_directory / PROBLEMS_FOLDER_NAME
-    problems_file = folder / PROBLEMS_FILE_NAME
-    try:
-        text = problems_file.read_text(encoding="utf-8", errors="replace")
-    except OSError:
+    found_files = []
+    text = ""
+    # The old name first: any file under it is older than the current one.
+    for file_name in [OLD_PROBLEMS_FILE_NAME, PROBLEMS_FILE_NAME]:
+        problems_file = folder / file_name
+        try:
+            file_text = problems_file.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        found_files.append(problems_file)
+        text = text + file_text + "\n"
+    if not found_files:
         return None
     unreadable_inputs = 0
     unreadable_inputs_since = None
@@ -158,15 +174,18 @@ def take_hook_problems(log_directory: Path, now: datetime) -> HookProblems | Non
     if unreadable_inputs == 0 and unknown_events == 0:
         return None
 
-    filed_at = problems_file
+    # Two files can only be met while a log directory moves to the new
+    # name; `filed_at` then names the folder that holds both.
+    filed_at = found_files[0] if len(found_files) == 1 else folder
     reported_folder = folder / REPORTED_FOLDER_NAME
-    reported_file = reported_folder / (
-        f"hook-problems-{now.astimezone(UTC).strftime('%Y%m%dT%H%M%S.%fZ')}-{secrets.token_hex(2)}.jsonl"
-    )
     try:
         reported_folder.mkdir(mode=FOLDER_PERMISSIONS, exist_ok=True)
-        os.rename(problems_file, reported_file)
-        filed_at = reported_file
+        for problems_file in found_files:
+            reported_file = reported_folder / (
+                f"hook-problems-{now.astimezone(UTC).strftime('%Y%m%dT%H%M%S.%fZ')}-{secrets.token_hex(2)}.ndjson"
+            )
+            os.rename(problems_file, reported_file)
+            filed_at = reported_file if len(found_files) == 1 else reported_folder
     except OSError:
         pass
     return HookProblems(
