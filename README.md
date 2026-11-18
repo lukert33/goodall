@@ -195,7 +195,7 @@ is what git pushes to the record repo you set up.
   damaged and recorded as `unknown`, the correction is a new file beside it
   (`goodall fixblock`), and analysis reads both.
 
-## What is not supported
+## What is not supported in this version
 
 - **Two evals in one macOS user account.** One eval account holds exactly one
   eval, so goodall never has to guess which eval a command belongs to.
