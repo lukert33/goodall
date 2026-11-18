@@ -100,6 +100,28 @@ def gh_auth_status_answer(entry: dict[str, object]) -> str:
     return json.dumps({"hosts": {"github.com": [account]}})
 
 
+# The goodall the healthy account's Claude Code hooks run. It exists on no
+# machine: the fake runner answers for it (see goodall.claude_code_checks).
+HOOK_GOODALL = "/nonexistent-goodall-test/bin/goodall"
+GOODALL_VERSION = [HOOK_GOODALL, "--version"]
+
+# A value that must never be shown, in a part of Claude Code's settings
+# goodall has no business reading.
+SYNTHETIC_SETTINGS_KEY = "sk-ant-api03-SETTINGSsettingsSETTINGS"
+
+
+def claude_code_settings(goodall_program: str = HOOK_GOODALL) -> dict[str, object]:
+    """Claude Code user settings as docs/claude-code-hooks.md shows them, beside settings goodall never reads."""
+    hooks: dict[str, object] = {}
+    for event in ["UserPromptSubmit", "PostToolUse", "Stop", "SessionEnd", "SessionStart"]:
+        command = {"type": "command", "command": f"{goodall_program} hook {event}"}
+        matcher_group: dict[str, object] = {"hooks": [command]}
+        if event == "PostToolUse":
+            matcher_group["matcher"] = "*"
+        hooks[event] = [matcher_group]
+    return {"env": {"ANTHROPIC_API_KEY": SYNTHETIC_SETTINGS_KEY}, "model": "opus", "hooks": hooks}
+
+
 GH_SIGNED_IN_ANSWER = gh_auth_status_answer({"state": "success", "scopes": "gist, read:org, repo, workflow"})
 GH_PRIVATE_ANSWER = json.dumps({"visibility": "PRIVATE"})
 
@@ -117,6 +139,9 @@ def healthy_runner() -> FakeRunner:
     runner.answer(OP_ITEM_LIST_EVAL, standard_output=ITEM_LIST_ANSWER)
     runner.answer(GH_AUTH_STATUS, standard_output=GH_SIGNED_IN_ANSWER)
     runner.answer(GH_REPO_VIEW, standard_output=GH_PRIVATE_ANSWER)
+    runner.answer(GOODALL_VERSION)
+    # For a test whose hooks name goodall without its full path.
+    runner.answer(["goodall", "--version"])
     return runner
 
 
@@ -181,6 +206,17 @@ class EvalAccount:
     log_directory: Path
 
     @property
+    def claude_config_directory(self) -> Path:
+        return self.home_folder / ".claude"
+
+    @property
+    def claude_settings_file(self) -> Path:
+        return self.claude_config_directory / "settings.json"
+
+    def write_claude_settings(self, settings: dict[str, object]) -> None:
+        self.claude_settings_file.write_text(json.dumps(settings, indent=2) + "\n")
+
+    @property
     def settings_file(self) -> Path:
         return self.config_directory / "local-settings.toml"
 
@@ -219,6 +255,8 @@ def healthy_account(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> EvalAcco
     )
     for folder in [account.config_directory, account.record_repo, account.log_directory]:
         folder.mkdir(parents=True)
+    account.claude_config_directory.mkdir()
+    account.write_claude_settings(claude_code_settings())
     account.settings_file.write_text(account.settings_text())
     account.eval_config_file.write_text(VALID_EVAL_CONFIG_TEXT)
     account.env_file.write_text(VALID_ENV_FILE_TEXT)
@@ -235,6 +273,7 @@ def healthy_account(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> EvalAcco
     )
     monkeypatch.setenv("HOME", str(home_folder))
     monkeypatch.setenv("GOODALL_CONFIG_DIR", str(account.config_directory))
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(account.claude_config_directory))
     # Doctor must not depend on, or write to, the folder it is run from.
     monkeypatch.chdir(tmp_path)
     return account
@@ -286,8 +325,12 @@ Secrets
               Otherwise, copy each one that way and paste it over its value in
               the env file.
 
+Claude Code
+  pass        Claude Code's user settings run goodall's hooks
+  pass        The goodall that the hooks run starts
+
 All checks passed. One thing goodall cannot check without reading a secret.
-21 passed, 0 warned, 0 failed, 0 skipped, 1 unverified
+23 passed, 0 warned, 0 failed, 0 skipped, 1 unverified
 """
 
 
@@ -362,7 +405,13 @@ Secrets
   skip        Each secret reference names a field that exists
               Waiting for: Local settings are found
 
-3 passed, 0 warned, 1 failed, 18 skipped, 0 unverified
+Claude Code
+  skip        Claude Code's user settings run goodall's hooks
+              Waiting for: Local settings are found
+  skip        The goodall that the hooks run starts
+              Waiting for: Local settings are found
+
+3 passed, 0 warned, 1 failed, 20 skipped, 0 unverified
 """
 
 
@@ -427,6 +476,8 @@ ALL_CHECK_IDS = [
     "secrets.secrets_manager_signed_in",
     "secrets.referenced_items_exist",
     "secrets.referenced_fields_exist",
+    "claude_code.hooks_installed",
+    "claude_code.hooks_run_goodall",
 ]
 
 
@@ -435,7 +486,7 @@ def test_healthy_setup_as_json_gives_the_same_results(healthy_account: EvalAccou
 
     assert exit_code == exit_codes.SUCCESS
     assert document["schema_version"] == 1
-    assert document["summary"] == {"passed": 21, "warned": 0, "failed": 0, "skipped": 0, "unverified": 1}
+    assert document["summary"] == {"passed": 23, "warned": 0, "failed": 0, "skipped": 0, "unverified": 1}
     checks = document["checks"]
     assert isinstance(checks, list)
     assert checks[0] == {
@@ -461,7 +512,7 @@ def test_missing_local_settings_as_json_names_what_each_skip_waited_for(settings
     exit_code, document = doctor_json()
 
     assert exit_code == exit_codes.ERROR
-    assert document["summary"] == {"passed": 3, "warned": 0, "failed": 1, "skipped": 18, "unverified": 0}
+    assert document["summary"] == {"passed": 3, "warned": 0, "failed": 1, "skipped": 20, "unverified": 0}
     checks = document["checks"]
     assert isinstance(checks, list)
     failed_check = checks[0]
@@ -495,7 +546,7 @@ def test_invalid_local_settings_fail_once_and_name_every_problem(healthy_account
     assert "favourite_colour" in standard_output
     assert standard_output.count("        Next: ") == 2
     assert "Waiting for: Local settings are valid" in standard_output
-    assert standard_output.endswith("4 passed, 0 warned, 1 failed, 17 skipped, 0 unverified\n")
+    assert standard_output.endswith("4 passed, 0 warned, 1 failed, 19 skipped, 0 unverified\n")
 
 
 def test_relative_settings_folder_override_fails_the_found_check(
@@ -560,6 +611,8 @@ def test_missing_record_repo_skips_the_eval_config_but_still_checks_the_log_dire
         "secrets.secrets_manager_signed_in": "pass",
         "secrets.referenced_items_exist": "pass",
         "secrets.referenced_fields_exist": "unverified",
+        "claude_code.hooks_installed": "pass",
+        "claude_code.hooks_run_goodall": "pass",
     }
     checks = document["checks"]
     assert isinstance(checks, list)
@@ -581,7 +634,7 @@ def test_unreachable_log_directory_is_a_warning_with_a_next_step_and_exits_0(hea
     assert exit_code == exit_codes.SUCCESS
     assert "  warn        The log directory can be written to\n              Not recording:" in standard_output
     assert "        Next: If the log directory is on an external drive, connect it." in standard_output
-    assert standard_output.endswith("20 passed, 1 warned, 0 failed, 0 skipped, 1 unverified\n")
+    assert standard_output.endswith("22 passed, 1 warned, 0 failed, 0 skipped, 1 unverified\n")
 
     json_exit_code, document = doctor_json()
     assert json_exit_code == exit_code
@@ -608,7 +661,7 @@ def test_contributor_and_main_workstream_are_reported_as_separate_checks(healthy
     exit_code, document = doctor_json()
 
     assert exit_code == exit_codes.ERROR
-    assert document["summary"] == {"passed": 19, "warned": 0, "failed": 2, "skipped": 0, "unverified": 1}
+    assert document["summary"] == {"passed": 21, "warned": 0, "failed": 2, "skipped": 0, "unverified": 1}
     checks = document["checks"]
     assert isinstance(checks, list)
     assert [failure["kind"] for failure in checks[5]["failures"]] == ["contributor_not_in_roster"]
@@ -630,6 +683,10 @@ def test_contributor_and_main_workstream_are_reported_as_separate_checks(healthy
         "remove the shared env file",
         "set a variable in both env files",
         "refer to an item that does not exist",
+        "remove the record repo's remote",
+        "remove Claude Code's settings",
+        "leave a hook out",
+        "name goodall without its path in the hooks",
     ],
 )
 def test_every_failure_and_warning_has_a_next_step_and_exit_codes_agree(
@@ -660,6 +717,18 @@ def test_every_failure_and_warning_has_a_next_step_and_exit_codes_agree(
         healthy_account.env_file.write_text("DEFAULT_MODEL=op://Eval/item/field\n")
     elif break_setup == "refer to an item that does not exist":
         healthy_account.env_file.write_text("ANTHROPIC_API_KEY=op://Eval/nothing-here/credential\n")
+    elif break_setup == "remove the record repo's remote":
+        subprocess.run(["git", "-C", str(healthy_account.record_repo), "remote", "remove", "origin"], check=True)
+    elif break_setup == "remove Claude Code's settings":
+        healthy_account.claude_settings_file.unlink()
+    elif break_setup == "leave a hook out":
+        settings = claude_code_settings()
+        hooks = settings["hooks"]
+        assert isinstance(hooks, dict)
+        del hooks["SessionStart"]
+        healthy_account.write_claude_settings(settings)
+    elif break_setup == "name goodall without its path in the hooks":
+        healthy_account.write_claude_settings(claude_code_settings(goodall_program="goodall"))
     else:
         healthy_account.eval_config_file.write_text(VALID_EVAL_CONFIG_TEXT.replace("ada-lovelace", "grace-hopper"))
 
@@ -764,7 +833,7 @@ def test_missing_gh_is_one_failure_naming_it_and_saying_an_administrator_account
 
     assert exit_code == exit_codes.ERROR
     document = json.loads(standard_output)
-    assert document["summary"] == {"passed": 18, "warned": 0, "failed": 1, "skipped": 2, "unverified": 1}
+    assert document["summary"] == {"passed": 20, "warned": 0, "failed": 1, "skipped": 2, "unverified": 1}
     gh_check = check_document(document, "tools.gh_installed")
     assert gh_check["status"] == "fail"
     assert isinstance(gh_check["detail"], str)
@@ -784,7 +853,7 @@ def test_missing_git_is_one_failure_and_the_record_repo_check_waits_for_it(healt
 
     assert exit_code == exit_codes.ERROR
     document = json.loads(standard_output)
-    assert document["summary"] == {"passed": 16, "warned": 0, "failed": 1, "skipped": 4, "unverified": 1}
+    assert document["summary"] == {"passed": 18, "warned": 0, "failed": 1, "skipped": 4, "unverified": 1}
     git_check = check_document(document, "tools.git_installed")
     assert git_check["status"] == "fail"
     assert isinstance(git_check["next_step"], str)
@@ -800,7 +869,7 @@ def test_missing_op_fails_the_secrets_manager_check_naming_1password(healthy_acc
 
     assert exit_code == exit_codes.ERROR
     document = json.loads(standard_output)
-    assert document["summary"] == {"passed": 18, "warned": 0, "failed": 1, "skipped": 3, "unverified": 0}
+    assert document["summary"] == {"passed": 20, "warned": 0, "failed": 1, "skipped": 3, "unverified": 0}
     secrets_manager_check = check_document(document, "tools.secrets_manager_installed")
     assert secrets_manager_check["status"] == "fail"
     assert isinstance(secrets_manager_check["detail"], str)
@@ -877,7 +946,7 @@ def test_an_administrator_account_fails_with_why_a_standard_account_is_required(
     # The reason, so a researcher does not wave it away as fussiness.
     assert "cannot reach other accounts' files or install software" in report_text
     assert "safe to hand to an agent" in report_text
-    assert standard_output.endswith("20 passed, 0 warned, 1 failed, 0 skipped, 1 unverified\n")
+    assert standard_output.endswith("22 passed, 0 warned, 1 failed, 0 skipped, 1 unverified\n")
 
 
 @pytest.mark.parametrize(
@@ -911,7 +980,7 @@ def test_a_record_repo_folder_that_is_not_a_git_repository_fails(healthy_account
 
     assert exit_code == exit_codes.ERROR
     document = json.loads(standard_output)
-    assert document["summary"] == {"passed": 17, "warned": 0, "failed": 1, "skipped": 3, "unverified": 1}
+    assert document["summary"] == {"passed": 19, "warned": 0, "failed": 1, "skipped": 3, "unverified": 1}
     git_repository_check = check_document(document, "record_repo.is_git_repository")
     assert git_repository_check["status"] == "fail"
     assert isinstance(git_repository_check["detail"], str)
@@ -983,7 +1052,7 @@ def test_an_account_check_that_never_finishes_is_reported_as_timed_out_and_docto
     assert isinstance(account_check["detail"], str)
     assert "`/usr/bin/id -Gn` timed out after 10 s" in account_check["detail"]
     # Every other check still ran.
-    assert document["summary"] == {"passed": 20, "warned": 0, "failed": 1, "skipped": 0, "unverified": 1}
+    assert document["summary"] == {"passed": 22, "warned": 0, "failed": 1, "skipped": 0, "unverified": 1}
 
 
 # A recognisable fake key. If any part of it shows up in goodall's output,
@@ -1575,7 +1644,7 @@ def test_a_report_whose_only_unverified_check_needs_a_secret_reads_as_healthy(he
     last_lines = standard_output.splitlines()[-2:]
     assert last_lines == [
         "All checks passed. One thing goodall cannot check without reading a secret.",
-        "21 passed, 0 warned, 0 failed, 0 skipped, 1 unverified",
+        "23 passed, 0 warned, 0 failed, 0 skipped, 1 unverified",
     ]
     # The check itself keeps its status and says when a wrong field shows up.
     assert "  unverified  Each secret reference names a field that exists\n" in standard_output
@@ -1584,7 +1653,7 @@ def test_a_report_whose_only_unverified_check_needs_a_secret_reads_as_healthy(he
         report_text
     )
     # --json is unchanged: the count is still there, and nothing calls it a pass.
-    assert document["summary"] == {"passed": 21, "warned": 0, "failed": 0, "skipped": 0, "unverified": 1}
+    assert document["summary"] == {"passed": 23, "warned": 0, "failed": 0, "skipped": 0, "unverified": 1}
     assert check_document(document, "secrets.referenced_fields_exist")["status"] == "unverified"
 
 
@@ -1609,7 +1678,7 @@ def test_a_report_with_a_warning_has_no_all_passed_line(healthy_account: EvalAcc
 
     assert exit_code == exit_codes.SUCCESS
     assert "All checks passed" not in standard_output
-    assert standard_output.splitlines()[-1] == "20 passed, 1 warned, 0 failed, 0 skipped, 1 unverified"
+    assert standard_output.splitlines()[-1] == "22 passed, 1 warned, 0 failed, 0 skipped, 1 unverified"
 
 
 def test_an_env_file_with_no_references_has_no_field_to_leave_unverified(healthy_account: EvalAccount) -> None:
@@ -2399,3 +2468,251 @@ def test_with_the_network_down_doctor_waits_at_most_30_seconds_on_programs_that_
         if command.arguments[0] in ["gh", "op"]:
             total_seconds += command.timeout_seconds
     assert total_seconds <= 30
+
+
+# Claude Code's hooks: installed in its user settings, and running a goodall
+# that starts (goodall.claude_code_checks).
+
+
+def hooks_of(settings: dict[str, object]) -> dict[str, list[dict[str, object]]]:
+    """The `hooks` table of Claude Code settings made by `claude_code_settings`, to change in a test."""
+    hooks = settings["hooks"]
+    assert isinstance(hooks, dict)
+    return hooks
+
+
+def test_missing_claude_code_settings_fail_saying_how_to_add_the_hooks_and_skip_the_goodall_check(
+    healthy_account: EvalAccount,
+) -> None:
+    healthy_account.claude_settings_file.unlink()
+
+    exit_code, document = doctor_json()
+
+    assert exit_code == exit_codes.ERROR
+    hooks_check = check_document(document, "claude_code.hooks_installed")
+    assert hooks_check["status"] == "fail"
+    assert failure_kinds(document, "claude_code.hooks_installed") == ["claude_code_settings_missing"]
+    assert isinstance(hooks_check["detail"], str)
+    assert str(healthy_account.claude_settings_file) in hooks_check["detail"]
+    assert isinstance(hooks_check["next_step"], str)
+    assert "docs/claude-code-hooks.md" in hooks_check["next_step"]
+    goodall_check = check_document(document, "claude_code.hooks_run_goodall")
+    assert goodall_check["status"] == "skip"
+    assert goodall_check["waiting_for"] == "claude_code.hooks_installed"
+
+
+def test_claude_code_settings_that_are_not_json_fail_by_line_number_without_showing_the_line(
+    healthy_account: EvalAccount,
+) -> None:
+    healthy_account.claude_settings_file.write_text(
+        f'{{\n  "env": {{"ANTHROPIC_API_KEY": {SYNTHETIC_SETTINGS_KEY}}}\n}}\n'
+    )
+
+    exit_code, standard_output, _ = run_goodall(["doctor"])
+    _, document = doctor_json()
+
+    assert exit_code == exit_codes.ERROR
+    assert failure_kinds(document, "claude_code.hooks_installed") == ["claude_code_settings_not_json"]
+    detail = check_document(document, "claude_code.hooks_installed")["detail"]
+    assert isinstance(detail, str)
+    assert "line 2" in detail
+    assert SYNTHETIC_SETTINGS_KEY not in standard_output + json.dumps(document)
+
+
+@pytest.mark.parametrize("missing_event", ["UserPromptSubmit", "Stop"])
+def test_a_missing_hook_fails_naming_its_event(healthy_account: EvalAccount, missing_event: str) -> None:
+    settings = claude_code_settings()
+    del hooks_of(settings)[missing_event]
+    healthy_account.write_claude_settings(settings)
+
+    exit_code, document = doctor_json()
+
+    assert exit_code == exit_codes.ERROR
+    assert failure_kinds(document, "claude_code.hooks_installed") == ["claude_code_hooks_missing"]
+    detail = check_document(document, "claude_code.hooks_installed")["detail"]
+    assert isinstance(detail, str)
+    assert missing_event in detail
+
+
+def test_a_hook_that_names_another_event_does_not_count_for_its_own(healthy_account: EvalAccount) -> None:
+    # Goodall trusts the event on the command line over Claude Code's, so
+    # this Stop hook would record every reply's end as a tool call.
+    settings = claude_code_settings()
+    hooks_of(settings)["Stop"] = [{"hooks": [{"type": "command", "command": f"{HOOK_GOODALL} hook PostToolUse"}]}]
+    healthy_account.write_claude_settings(settings)
+
+    _, document = doctor_json()
+
+    assert check_document(document, "claude_code.hooks_installed")["status"] == "fail"
+    detail = check_document(document, "claude_code.hooks_installed")["detail"]
+    assert isinstance(detail, str)
+    assert "Stop" in detail
+
+
+def test_a_goodall_hook_beside_other_hooks_on_the_same_event_still_counts(healthy_account: EvalAccount) -> None:
+    settings = claude_code_settings()
+    hooks_of(settings)["Stop"].insert(
+        0, {"hooks": [{"type": "command", "command": "afplay /System/Sounds/Glass.aiff"}]}
+    )
+    healthy_account.write_claude_settings(settings)
+
+    _, document = doctor_json()
+
+    assert check_document(document, "claude_code.hooks_installed")["status"] == "pass"
+
+
+def test_settings_that_turn_every_hook_off_fail(healthy_account: EvalAccount) -> None:
+    settings = claude_code_settings()
+    settings["disableAllHooks"] = True
+    healthy_account.write_claude_settings(settings)
+
+    exit_code, document = doctor_json()
+
+    assert exit_code == exit_codes.ERROR
+    assert failure_kinds(document, "claude_code.hooks_installed") == ["claude_code_hooks_disabled"]
+    next_step = check_document(document, "claude_code.hooks_installed")["next_step"]
+    assert isinstance(next_step, str)
+    assert "disableAllHooks" in next_step
+
+
+def test_a_hook_that_does_not_name_its_event_works_but_warns(healthy_account: EvalAccount) -> None:
+    # A bare `goodall hook` takes the event from what Claude Code sends,
+    # so it works until that cannot be read (docs/claude-code-hooks.md).
+    settings = claude_code_settings()
+    hooks_of(settings)["UserPromptSubmit"] = [{"hooks": [{"type": "command", "command": f"{HOOK_GOODALL} hook"}]}]
+    healthy_account.write_claude_settings(settings)
+
+    exit_code, document = doctor_json()
+
+    assert exit_code == exit_codes.SUCCESS
+    hooks_check = check_document(document, "claude_code.hooks_installed")
+    assert hooks_check["status"] == "warn"
+    assert failure_kinds(document, "claude_code.hooks_installed") == ["claude_code_hook_without_event"]
+    assert isinstance(hooks_check["detail"], str)
+    assert "UserPromptSubmit" in hooks_check["detail"]
+    assert check_document(document, "claude_code.hooks_run_goodall")["status"] == "pass"
+
+
+def test_a_hook_that_names_goodall_without_its_full_path_warns_and_is_still_tried(
+    healthy_account: EvalAccount,
+) -> None:
+    healthy_account.write_claude_settings(claude_code_settings(goodall_program="goodall"))
+    runner = healthy_runner()
+    runner.answer(["goodall", "--version"])
+
+    exit_code, document = doctor_json(runner)
+
+    assert exit_code == exit_codes.SUCCESS
+    assert failure_kinds(document, "claude_code.hooks_installed") == ["claude_code_hook_not_full_path"]
+    next_step = check_document(document, "claude_code.hooks_installed")["next_step"]
+    assert isinstance(next_step, str)
+    assert "command -v goodall" in next_step
+    assert check_document(document, "claude_code.hooks_run_goodall")["status"] == "pass"
+
+
+def test_a_hook_path_starting_with_a_tilde_is_a_full_path(healthy_account: EvalAccount) -> None:
+    # Claude Code runs a hook command through a shell, which expands ~.
+    healthy_account.write_claude_settings(claude_code_settings(goodall_program="~/.local/bin/goodall"))
+    runner = healthy_runner()
+    runner.answer([str(healthy_account.home_folder / ".local/bin/goodall"), "--version"])
+
+    _, document = doctor_json(runner)
+
+    assert check_document(document, "claude_code.hooks_installed")["status"] == "pass"
+    assert check_document(document, "claude_code.hooks_run_goodall")["status"] == "pass"
+
+
+@pytest.mark.parametrize("how_it_breaks", ["not found", "exits 1", "never finishes"])
+def test_a_goodall_in_the_hooks_that_does_not_start_fails_naming_the_events_not_the_path(
+    healthy_account: EvalAccount, how_it_breaks: str
+) -> None:
+    runner = healthy_runner()
+    if how_it_breaks == "not found":
+        runner.answer_not_found(GOODALL_VERSION)
+    elif how_it_breaks == "exits 1":
+        runner.answer(GOODALL_VERSION, exit_code=1, standard_error="ModuleNotFoundError: No module named 'goodall'\n")
+    else:
+        runner.answer_timed_out(GOODALL_VERSION)
+
+    exit_code, standard_output, _ = run_goodall(["doctor"], runner)
+    _, document = doctor_json(runner)
+
+    assert exit_code == exit_codes.ERROR
+    goodall_check = check_document(document, "claude_code.hooks_run_goodall")
+    assert goodall_check["status"] == "fail"
+    assert failure_kinds(document, "claude_code.hooks_run_goodall") == ["hook_goodall_does_not_start"]
+    assert isinstance(goodall_check["detail"], str)
+    assert "UserPromptSubmit" in goodall_check["detail"]
+    assert isinstance(goodall_check["next_step"], str)
+    assert "command -v goodall" in goodall_check["next_step"]
+    assert HOOK_GOODALL not in standard_output + json.dumps(document)
+    assert "ModuleNotFoundError" not in standard_output + json.dumps(document)
+
+
+def test_each_goodall_the_hooks_name_is_started_once_quietly_and_briefly(healthy_account: EvalAccount) -> None:
+    other_goodall = "/nonexistent-goodall-test/other/goodall"
+    settings = claude_code_settings()
+    hooks_of(settings)["Stop"] = [{"hooks": [{"type": "command", "command": f"{other_goodall} hook Stop"}]}]
+    healthy_account.write_claude_settings(settings)
+    runner = healthy_runner()
+    runner.answer([other_goodall, "--version"])
+
+    run_goodall(["doctor"], runner)
+
+    goodall_calls = []
+    for command in runner.calls:
+        if command.arguments[-1] == "--version":
+            goodall_calls.append(command)
+    assert [command.arguments for command in goodall_calls] == [GOODALL_VERSION, [other_goodall, "--version"]]
+    for command in goodall_calls:
+        assert command.output == OutputMode.DISCARD
+        assert command.timeout_seconds <= 5
+
+
+def test_hooks_only_in_a_project_s_settings_do_not_count(healthy_account: EvalAccount, tmp_path: Path) -> None:
+    # A project's hooks gate Claude Code only inside that project's folder.
+    healthy_account.claude_settings_file.unlink()
+    project_settings = tmp_path / ".claude" / "settings.json"
+    project_settings.parent.mkdir()
+    project_settings.write_text(json.dumps(claude_code_settings()))
+
+    _, document = doctor_json()
+
+    assert failure_kinds(document, "claude_code.hooks_installed") == ["claude_code_settings_missing"]
+
+
+@pytest.mark.parametrize("shape", ["hooks not a table", "event not a list", "command not text", "settings a list"])
+def test_hooks_in_a_shape_claude_code_would_not_run_fail_without_crashing(
+    healthy_account: EvalAccount, shape: str
+) -> None:
+    settings: object = claude_code_settings()
+    assert isinstance(settings, dict)
+    if shape == "hooks not a table":
+        settings["hooks"] = ["UserPromptSubmit"]
+    elif shape == "event not a list":
+        hooks_of(settings)["UserPromptSubmit"] = "goodall hook UserPromptSubmit"  # type: ignore[assignment]
+    elif shape == "command not text":
+        hooks_of(settings)["UserPromptSubmit"] = [{"hooks": [{"type": "command", "command": 7}]}]
+    else:
+        settings = [settings]
+    healthy_account.claude_settings_file.write_text(json.dumps(settings))
+
+    exit_code, document = doctor_json()
+
+    assert exit_code == exit_codes.ERROR
+    assert check_document(document, "claude_code.hooks_installed")["status"] == "fail"
+
+
+def test_no_value_from_claude_code_s_settings_is_ever_shown(healthy_account: EvalAccount) -> None:
+    # A goodall path that holds a token, and that does not start, so it
+    # would be the first thing a careless message quoted.
+    secret_path = f"/nonexistent-goodall-test/{SYNTHETIC_SETTINGS_KEY}/goodall"
+    healthy_account.write_claude_settings(claude_code_settings(goodall_program=secret_path))
+    runner = healthy_runner()
+    runner.answer_not_found([secret_path, "--version"])
+
+    _, standard_output, standard_error = run_goodall(["doctor"], runner)
+    _, json_output, _ = run_goodall(["doctor", "--json"], runner)
+
+    for printed in [standard_output, standard_error, json_output]:
+        assert SYNTHETIC_SETTINGS_KEY not in printed

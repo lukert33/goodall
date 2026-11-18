@@ -77,6 +77,9 @@ class CheckContext:
       elsewhere, nowhere, or unclear (goodall.remote_addresses).
     - `github_signed_in` is True once gh is known to be signed in to
       GitHub, so the visibility check asks gh only when it can answer.
+    - `hook_goodall_programs` maps each goodall program Claude Code's
+      hooks name, as written in its settings, to the events it is
+      installed on, once every event has a goodall hook.
     """
 
     runner: Runner
@@ -88,6 +91,7 @@ class CheckContext:
     shared_env_file_entries: list[EnvEntry] | None = None
     record_repo_remote: RecordRepoRemote | None = None
     github_signed_in: bool = False
+    hook_goodall_programs: dict[str, list[str]] | None = None
 
 
 @dataclass(frozen=True)
