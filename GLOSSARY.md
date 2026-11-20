@@ -148,3 +148,27 @@ _Avoid_: System, scaffold, tool
 **Corroboration**:
 Checking an eval's own records against records someone else holds and the researcher cannot edit.
 _Avoid_: Verification, validation, audit
+
+**Delegation**:
+Handing a piece of work to an AI agent. Goodall measures it and does not judge it.
+_Avoid_: Amplification, disempowerment, automation rate
+
+**Error catch**:
+The point at which a mistake in delegated work was noticed, recorded as one of two values: **caught at review**, before the work left the person's hands, or **caught downstream**, after it had effects.
+_Avoid_: Oversight score, over-reliance, quality of review
+
+**Off-agent work**:
+What a person does for the eval outside any agent session, such as searching, reading, or writing instructions for an agent to follow.
+_Avoid_: Manual work, human-only work
+
+**Outcome record**:
+A record of what actually went out into the world, such as a sent email, against which an agent's draft can be compared.
+_Avoid_: Final output, deliverable
+
+**Redaction policy**:
+The versioned rules that decide what is removed from records before they are shared. Goodall has a default, and each eval may make it stricter or looser.
+_Avoid_: Anonymisation, scrubbing, sanitising
+
+**Export**:
+A redacted or derived layer prepared for sharing, stamped with the versions of the redaction policy and derivation rules that produced it. A raw record is never an export.
+_Avoid_: Release, dump, dataset
