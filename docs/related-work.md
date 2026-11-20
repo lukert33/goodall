@@ -90,6 +90,25 @@ auto-approve in roughly 20% of sessions, rising to over 40% by 750 sessions;
 experienced users interrupt more often (about 9% of turns) than new ones
 (about 5%).
 
+## Davidson: a sceptic's reading of gradual disempowerment
+
+[Thoughts on Gradual Disempowerment](https://alignmentforum.org/posts/ct6SMDuexe9uBwDoL/thoughts-on-gradual-disempowerment)
+(Tom Davidson, AI Alignment Forum, 15 August 2025) is a critique of the
+gradual disempowerment paper, marked by its author as very rough notes. Read
+in full on 2026-11-20 from a PDF of the post.
+
+- It makes no call for data collection. It argues the opposite of urgency: a
+  gradual risk can be studied as it unfolds, so work on it can wait. Do not
+  cite it as support for "better data is needed".
+- It treats thin oversight as the competitive default and not as harm in
+  itself: an owner can let their AIs act with no checking in and still keep
+  the gains, and handing decisions to well-aligned AI could be good. This is
+  a reason goodall records where errors are caught and judges nothing
+  (ADR 0018).
+- Its main complaint is that the paper stays abstract and never shows how
+  strong the competitive pressure is. A firm-level record is the kind of
+  concrete evidence it says is missing, though it does not ask for one.
+
 ## What goodall adds
 
 Goodall is **not the first measurement of human oversight of AI agents in
@@ -120,8 +139,6 @@ person cannot match. What is new in goodall:
 Cited in project notes but not opened, or read only in summary. Do not cite
 them in anything published until they have been read.
 
-- Tom Davidson, "Thoughts on Gradual Disempowerment" (August 2025): read in
-  summary only.
 - Drago and Laine, "The Intelligence Curse": not opened.
 - Kulveit and others, "Gradual Disempowerment" (2025): sections 1 to 4 read
   directly on 2026-11-17; sections 5 to 8, including its proposed metrics, in
