@@ -1,0 +1,12 @@
+# What It Feels Like to Use Goodall
+If goodall is to become a basis of a community who is willing to share troves of case study data with third party AI safety researchers they don't know, we should strive to ensure that the tool is satisfying to use in addition to being privacy preserving.
+
+Let's categorize those prioririties, actually:
+- **Privacy preserving** is existential. If goodall data contributors do not have a strong and verfiable assurance their PII, their payment data, any data that enter into forms on websites during tracking sessions, PII  about their clients, trade secrets, etc, then we are a non-starter.
+    - [OPEN QUESTION] This is so important that we might consider whether we should increase our claim to **privacy preserving** on disk, with some redaction applied during a session and more at the end.
+- **Informative to the user's use of AI** is not existential but will be instrumental to widespread adoption. Goodall will facilitate expert research into human-computer interfaces (HCI) that emphasize human control (amplified oversight). In my research-community facing comms, I have noted that goodall will be neutral with regard to that analysis. In terms of an individual user of goodall, I think we should actually offer a point of view where that is interesting. Some of the goals of this "user empowerment" domain:
+    - at the end of a session, goodall marshals a first pass report of the questions raised and the decisions made, including ambiguities like deferring to later to make an actionable call.
+    - we might refer to popular decision frameworks like DACI or RAPID, but let's not commit to one. An interesting way this product could evolve is to incorporate new decision frameworks that fields like HCI come up with to empower human-agent teams.
+- **Insight-provoking** is not existential but will be instrumental to the sub-goal of ensuring the human user regularly adds subjective testimonials, so that they can be included surrounded by the work context in which they were elicited. 
+    - All sorts of journaling practices can be informative here.
+    - It's reasonably likely that people will feel a minor sense of affront when goodall's first pass of how the human and agents decided, delegated, and executed. Speaking as a user, if I see a place where I know that I overrode the AI but it is not expressed as forcefully in the report as it should be, that is cause for me to provide testimonial clarifying what I did AND should hopefully offer one of many moments of ownership over the project.
