@@ -187,7 +187,10 @@ class WorkBlockRecord:
     a tuple, not a list, so a record cannot be changed after it is built.
     `telemetry` is one of TELEMETRY_STATES once the work block has ended, or
     None when goodall does not say (while running, and in records written
-    before goodall captured telemetry).
+    before goodall captured telemetry). `continues_work_block` is the id of
+    the work block this one continues: the one that was paused when this
+    one started (`goodall pause`, ADR 0021). None for a work block that
+    continues none, which is most of them.
     """
 
     schema_version: int
@@ -200,6 +203,7 @@ class WorkBlockRecord:
     machine: MachineFacts
     claude_sessions: tuple[str, ...]
     telemetry: str | None = None
+    continues_work_block: str | None = None
 
 
 @dataclass(frozen=True)
@@ -337,11 +341,13 @@ def build_work_block_record(
     claude_sessions: Collection[str] = (),
     suffix: str | None = None,
     telemetry: str | None = None,
+    continues_work_block: str | None = None,
 ) -> WorkBlockRecord:
     """Build a work block record, giving it an id from the time it started.
 
     Leave `ended_at` and `end_state` out for a work block that is still
-    running.
+    running. `continues_work_block` is the id of the paused work block this
+    one continues, when it continues one.
     """
     started_at = _as_utc(started_at)
     if ended_at is not None:
@@ -357,6 +363,7 @@ def build_work_block_record(
         machine=machine,
         claude_sessions=tuple(claude_sessions),
         telemetry=telemetry,
+        continues_work_block=continues_work_block,
     )
 
 
@@ -461,10 +468,11 @@ def _render_work_block_record(record: WorkBlockRecord) -> str:
     """Write a work block record as indented JSON, one field per line.
 
     Unlike TOML, JSON has null, so an empty optional field is written as null
-    rather than left out: a reader sees every field the schema has. The one
-    exception is `telemetry`, added after records were already being
-    written: it is left out when goodall does not say, so a running work
-    block's marker, and any record without it, look exactly as before.
+    rather than left out: a reader sees every field the schema has. The
+    exceptions are `telemetry` and `continues_work_block`, added after
+    records were already being written: each is left out when it has nothing
+    to say, so a record without it looks exactly as before, and
+    `schema_version` did not need raising.
     """
     ended_at = None
     if record.ended_at is not None:
@@ -488,6 +496,8 @@ def _render_work_block_record(record: WorkBlockRecord) -> str:
     }
     if record.telemetry is not None:
         values["telemetry"] = record.telemetry
+    if record.continues_work_block is not None:
+        values["continues_work_block"] = record.continues_work_block
     return json.dumps(values, indent=2, ensure_ascii=False) + "\n"
 
 
@@ -692,6 +702,7 @@ def parse_work_block_record(text: str) -> ParseResult[WorkBlockRecord]:
     machine = _read_machine_facts(reader)
     claude_sessions = reader.text_list("claude_sessions")
     telemetry = reader.optional_text("telemetry")
+    continues_work_block = reader.optional_text("continues_work_block")
     reader.report_unknown_keys()
 
     required_values = [schema_version, record_id, contributor, workstream, started_at, machine, claude_sessions]
@@ -712,6 +723,7 @@ def parse_work_block_record(text: str) -> ParseResult[WorkBlockRecord]:
         machine=machine,
         claude_sessions=tuple(claude_sessions),
         telemetry=telemetry,
+        continues_work_block=continues_work_block,
     )
     return ParseResult(record=work_block, problems=problems)
 
@@ -1016,6 +1028,13 @@ def _validate_work_block_record(
         checker.add(
             "telemetry",
             "telemetry must be captured, incomplete or missing, or left out when goodall does not say; correct it.",
+        )
+    checker.optional_record_id("continues_work_block", record.continues_work_block)
+    if record.continues_work_block == record.id:
+        checker.add(
+            "continues_work_block",
+            "continues_work_block names this work block itself; it must name the earlier, paused work block, or be "
+            "left out.",
         )
 
 
