@@ -265,13 +265,14 @@ decision is recorded in
   welcome.
 - **Agents other than Claude Code.** Today only Claude Code is recorded. A
   future tool would keep its own logs as raw records in its own format. We
-  are evaluating whether to build on Entire, an open-source tool that already
-  records sessions from several coding agents, instead of adding each agent
-  ourselves. Nothing is adopted yet.
+  tested Entire, an open-source tool that already records sessions from
+  several coding agents, and decided not to build on it: its copies are
+  edited, and goodall keeps raw records verbatim. See
+  [docs/related-work.md](docs/related-work.md).
 - **Email.** Sent email is the record of what actually went out to
   customers and suppliers, and it lives outside git. How to capture it is
   undecided.
-- **A cost-of-labour estimate.** A planned, secondary layer would compare
+- **A cost-of-labor estimate.** A planned, secondary layer would compare
   what AI-assisted work cost with a range for what the same work would have
   cost in human hours. It will report ranges and its assumptions, not a
   single figure.

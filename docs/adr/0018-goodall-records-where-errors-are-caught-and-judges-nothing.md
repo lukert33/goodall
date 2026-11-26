@@ -4,9 +4,9 @@ Goodall measures delegation neutrally. It is an instrument: it records who did w
 
 ## Consequences
 
-- Error catching comes before every other analysis in priority, including the cost-of-labour layer.
+- Error catching comes before every other analysis in priority, including the cost-of-labor layer.
 - Candidate signals, each to become a versioned rule: agent-authored lines later reverted or fixed, found through line attribution; the person's corrections in later prompts; and downstream reports of a mistake, such as an email from a customer or supplier.
 - "Caught at review" and "caught downstream" are the only two values. A signal that cannot say which is recorded as unknown, not guessed.
 - Sent email is treated as an outcome record: what went out, compared with what an agent drafted. Email lives outside git, and how to capture it is undecided.
 - Goodall makes no claim to be the first measurement of human oversight of agents in real work (see `docs/related-work.md`).
-- Later layers follow the same rule. The cost-of-labour layer reports a range and its assumptions, and draws no conclusion about concentration of power.
+- Later layers follow the same rule. The cost-of-labor layer reports a range and its assumptions, and draws no conclusion about concentration of power.

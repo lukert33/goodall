@@ -167,7 +167,7 @@ _Avoid_: Final output, deliverable
 
 **Redaction policy**:
 The versioned rules that decide what is removed from records before they are shared. Goodall has a default, and each eval may make it stricter or looser.
-_Avoid_: Anonymisation, scrubbing, sanitising
+_Avoid_: Anonymization, scrubbing, sanitizing
 
 **Export**:
 A redacted or derived layer prepared for sharing, stamped with the versions of the redaction policy and derivation rules that produced it. A raw record is never an export.
