@@ -78,7 +78,7 @@ from goodall.eval_config import (
 )
 from goodall.folders import describe_folder_problem, log_directory_unreachable_failure, record_repo_missing_failure
 from goodall.local_settings import read_local_settings
-from goodall.record_repo import PushState, write_record
+from goodall.record_repo import write_record
 from goodall.runner import Command, Runner
 from goodall.terminal import Failure, Terminal
 
@@ -343,7 +343,7 @@ def run_stop(terminal: Terminal, runner: Runner, clock: Clock) -> int:
     terminal.show_paragraph(
         f"Stopped your work block on {ended_record.workstream}. It ran from "
         f"{describe_moment(ended_record.started_at)} to {describe_moment(now)} ({describe_length(ended_record)}). "
-        + where_the_record_went(write_of_this_block.push_state)
+        + RECORD_COMMITTED
     )
     facts = [
         ("Id", ended_record.id),
@@ -357,7 +357,7 @@ def run_stop(terminal: Terminal, runner: Runner, clock: Clock) -> int:
     if activitywatch.copied:
         facts.append(("ActivityWatch", f"copied, {describe_buckets(activitywatch.bucket_count)}"))
     terminal.show_facts(facts)
-    terminal.show_warnings(write_of_this_block.failures + copy_warnings)
+    terminal.show_warnings(copy_warnings)
     return exit_codes.SUCCESS
 
 
@@ -420,15 +420,14 @@ class UnrecordedWrite:
     """What came of writing one waiting work block record into the record repo.
 
     `record` is None when the waiting file could not be read as a record;
-    it is then left where it is, never deleted. `committed`, `path`,
-    `push_state` and `failures` are as goodall.record_repo reports them.
+    it is then left where it is, never deleted. `committed`, `path` and
+    `failures` are as goodall.record_repo reports them.
     """
 
     waiting_file: Path
     record: records.WorkBlockRecord | None
     committed: bool
     path: Path | None = None
-    push_state: PushState = PushState.NOT_ATTEMPTED
     failures: list[Failure] = field(default_factory=list)
 
 
@@ -482,7 +481,6 @@ def write_one_unrecorded_record(
         record,
         committed=outcome.committed,
         path=outcome.path,
-        push_state=outcome.push_state,
         failures=outcome.failures,
     )
 
@@ -537,7 +535,7 @@ class Settling:
                 paragraphs.append(
                     f"Recorded your work block {describe_workstream(write.record)}, which ran from "
                     f"{describe_moment(write.record.started_at)} to {describe_ended_at(write.record)}. "
-                    + where_the_record_went(write.push_state)
+                    + RECORD_COMMITTED
                 )
         copies_paragraph = describe_agent_session_copies(self.copies)
         if copies_paragraph is not None:
@@ -832,16 +830,8 @@ def find_write(writes: list[UnrecordedWrite], work_block_id: str) -> UnrecordedW
     return None
 
 
-def where_the_record_went(push_state: PushState) -> str:
-    """One sentence saying the record is kept and whether others can see it yet, as journal entries say it."""
-    if push_state == PushState.PUSHED:
-        return "Its record is in the record repo and was sent to the shared record repo."
-    if push_state == PushState.PENDING:
-        return (
-            "Its record is saved in the record repo on this Mac and will be sent to the shared record repo the "
-            "next time goodall records something."
-        )
-    return "Its record is in the record repo, which has no shared copy to send it to, so it is kept on this Mac."
+# Said once a work block's record is committed, as journal entries say it.
+RECORD_COMMITTED = "Its record is committed in the record repo on this Mac."
 
 
 def describe_length(record: records.WorkBlockRecord) -> str:

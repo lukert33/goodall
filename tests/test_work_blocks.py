@@ -1407,3 +1407,70 @@ def test_start_while_a_work_block_is_active_restarts_a_stopped_receiver_on_the_s
     run_goodall(eval_account, ["stop"])
     [record] = eval_account.work_block_records()
     assert record["telemetry"] == "incomplete"
+
+
+# ---------------------------------------------------------------------------
+# The record repo stays on this Mac: no command sends anything anywhere
+# ---------------------------------------------------------------------------
+
+# git's commands that talk to another repository or change the list of
+# remotes. Goodall commits to the record repo and never runs any of them
+# (ADR 0023).
+GIT_COMMANDS_THAT_REACH_A_REMOTE = ["push", "fetch", "pull", "remote", "ls-remote", "clone"]
+
+
+def git_command_name(arguments: list[str]) -> str | None:
+    """The git command in `arguments` (`commit` in `git -c x=y commit -m ...`), or None when it is not git."""
+    if Path(arguments[0]).name != "git":
+        return None
+    position = 1
+    while position < len(arguments) and arguments[position].startswith("-"):
+        # `-c name=value` and `-C folder` take the next argument as theirs.
+        if arguments[position] in ["-c", "-C"]:
+            position += 1
+        position += 1
+    if position >= len(arguments):
+        return None
+    return arguments[position]
+
+
+def programs_that_reach_a_remote(run: GoodallRun) -> list[list[str]]:
+    """Every command this run of goodall started that could send a record off this Mac."""
+    reaching = []
+    for command in run.runner.calls:
+        if Path(command.arguments[0]).name == "gh":
+            reaching.append(command.arguments)
+        elif git_command_name(command.arguments) in GIT_COMMANDS_THAT_REACH_A_REMOTE:
+            reaching.append(command.arguments)
+    return reaching
+
+
+def test_a_record_repo_with_a_remote_set_by_hand_is_committed_to_and_never_pushed_by_any_command(
+    eval_account: EvalAccount,
+) -> None:
+    remote = eval_account.home_folder.parent / "remote.git"
+    git(eval_account.home_folder.parent, "clone", "--quiet", "--bare", str(eval_account.record_repo), str(remote))
+    git(eval_account.record_repo, "remote", "add", "origin", str(remote))
+    git(eval_account.record_repo, "fetch", "--quiet", "origin")
+    git(eval_account.record_repo, "branch", "--quiet", "--set-upstream-to=origin/main")
+    commits_before = len(eval_account.commit_subjects())
+
+    runs = [run_goodall(eval_account, ["start"])]
+    runs.append(run_goodall(eval_account, ["journal", "Chose Postgres."]))
+    runs.append(
+        run_goodall(eval_account, ["intervene", "--category", "infrastructure", "--decision", "modify", "Stopped it."])
+    )
+    runs.append(run_goodall(eval_account, ["status"]))
+    eval_account.clock.advance(timedelta(minutes=40))
+    runs.append(run_goodall(eval_account, ["stop"]))
+    [record] = eval_account.work_block_records()
+    runs.append(run_goodall(eval_account, ["fixblock", record["id"], "--workstream", "engineering"]))
+
+    for run in runs:
+        assert run.exit_code == exit_codes.SUCCESS, run.standard_error
+        assert programs_that_reach_a_remote(run) == []
+        assert "shared record repo" not in run.everything_printed
+        assert run.standard_error == ""
+    # Journal entry, intervention, work block record and fix: each a local commit.
+    assert len(eval_account.commit_subjects()) == commits_before + 4
+    assert git(remote, "log", "--format=%s", "main").splitlines() == ["Start the record repo"]

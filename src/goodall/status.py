@@ -23,7 +23,7 @@ In the order goodall checks:
    ended work blocks' records waiting in the log directory are written
    into the record repo, and the agent sessions of ended work blocks that
    are still to be copied are copied into the log directory
-   (goodall.agent_session_copies). So `goodall status` can commit, push and
+   (goodall.agent_session_copies). So `goodall status` can commit and
    copy; it is not a read-only diagnostic like `goodall doctor`. An agent
    session that could not be copied appears in `warnings`.
 5. Goodall lists each of this account's work blocks recorded with the

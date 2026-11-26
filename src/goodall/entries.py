@@ -20,19 +20,18 @@ has been passed:
    and check it against the eval config. Nothing a person writes is
    refused except what the records module refuses: email addresses and
    secrets. No failure ever repeats the text.
-4. Write it through goodall.record_repo, which writes the file, commits it
-   and pushes it.
+4. Write it through goodall.record_repo, which writes the file and commits
+   it in the record repo on this Mac. Nothing is sent anywhere (ADR 0023).
 5. Say what was recorded and where, as text or as one JSON document.
 
 Exit codes: 0 once the record is committed, because from then on it is
-safe, even if the push is still pending (that is shown as a warning); 1 when
-it was not committed; 2 for a mistake in how the command was run, including
+safe; 1 when it was not committed; 2 for a mistake in how the command was run, including
 the text and every option, so nothing was attempted.
 
 A journal entry or an intervention is the person's own testimony; what an
 agent does is already in its transcript. So both commands refuse, before
 reading any text, settings or files, when Claude Code started them
-(goodall.caller): nothing is read, written, committed or pushed, and they
+(goodall.caller): nothing is read, written or committed, and they
 exit 1, because the command line was fine but the entry did not happen and
 running it again the same way will not help. The refusal is not recorded
 anywhere, and records have no field for how an entry was made: the agent's
@@ -51,7 +50,7 @@ from goodall.caller import was_started_by_claude_code
 from goodall.eval_config import EvalForThisAccount, read_eval_for_this_account
 from goodall.folders import describe_folder_problem, where_goodall_looked
 from goodall.local_settings import LocalSettings, read_local_settings
-from goodall.record_repo import RECORD_TYPE_NAMES, PushState, write_record
+from goodall.record_repo import RECORD_TYPE_NAMES, write_record
 from goodall.runner import Runner
 from goodall.terminal import Failure, Terminal
 
@@ -79,9 +78,7 @@ class EntryResult:
     - `record_id` and `path` are None when goodall stopped before it had a
       record to write.
     - `facts` are the labeled lines shown under the summary on success.
-    - `warnings` are problems that did not stop the record being kept
-      safely, such as a push that is still pending; `failures` are problems
-      that did.
+    - `failures` are the problems that stopped the record being kept.
     """
 
     record_type: str
@@ -90,9 +87,7 @@ class EntryResult:
     record_id: str | None = None
     path: Path | None = None
     committed: bool = False
-    push_state: PushState = PushState.NOT_ATTEMPTED
     facts: list[tuple[str, str]] = field(default_factory=list)
-    warnings: list[Failure] = field(default_factory=list)
     failures: list[Failure] = field(default_factory=list)
 
 
@@ -477,8 +472,6 @@ def check_and_write(
         ("By", f"{contributor.display_name} ({contributor.id})"),
         *facts,
     ]
-    # Once committed, the record is safe on this Mac whatever happened to
-    # the push, so anything still wrong is a warning and the exit code is 0.
     return EntryResult(
         record_type=record_type,
         record_type_name=RECORD_TYPE_NAMES_BY_TYPE[record_type],
@@ -486,9 +479,7 @@ def check_and_write(
         record_id=record.id,
         path=outcome.path,
         committed=True,
-        push_state=outcome.push_state,
         facts=all_facts,
-        warnings=outcome.failures,
     )
 
 
@@ -747,9 +738,6 @@ def show_result(terminal: Terminal, result: EntryResult, as_json: bool) -> None:
         path = None
         if result.path is not None:
             path = str(result.path)
-        warning_documents = []
-        for warning in result.warnings:
-            warning_documents.append(warning.as_json())
         failure_documents = []
         for failure in result.failures:
             failure_documents.append(failure.as_json())
@@ -759,9 +747,6 @@ def show_result(terminal: Terminal, result: EntryResult, as_json: bool) -> None:
                 "id": result.record_id,
                 "path": path,
                 "committed": result.committed,
-                "pushed": result.push_state == PushState.PUSHED,
-                "push_state": str(result.push_state),
-                "warnings": warning_documents,
                 "failures": failure_documents,
             }
         )
@@ -771,21 +756,8 @@ def show_result(terminal: Terminal, result: EntryResult, as_json: bool) -> None:
         return
     terminal.show_paragraph(success_summary(result))
     terminal.show_facts(result.facts)
-    terminal.show_warnings(result.warnings)
 
 
 def success_summary(result: EntryResult) -> str:
-    """One sentence saying the record is kept and whether others can see it yet, in a contributor's words.
-
-    "Shared record repo" is the remote; the word "push" is left to the
-    warning, which names git's own terms for whoever has to fix it.
-    """
-    name = result.record_type_name
-    if result.push_state == PushState.PUSHED:
-        return f"Recorded your {name} and sent it to the shared record repo."
-    if result.push_state == PushState.PENDING:
-        return (
-            f"Recorded your {name}. It is saved on this Mac and will be sent to the shared record repo the next "
-            "time goodall records something."
-        )
-    return f"Recorded your {name}. This record repo has no shared copy to send it to, so it is kept on this Mac."
+    """One sentence saying the record is kept, and where, in a contributor's words."""
+    return f"Recorded your {result.record_type_name}. It is committed in the record repo on this Mac."
