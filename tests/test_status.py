@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from goodall import cli, exit_codes
+from goodall import cli, exit_codes, local_settings
 from goodall.terminal import Terminal
 
 # An obviously made-up key, used wherever a test checks that goodall never repeats a value.
@@ -1210,6 +1210,45 @@ def test_a_secret_pasted_anywhere_in_settings_or_eval_config_is_never_shown_by_s
     for printed in [text_output, text_error, json_output, json_error]:
         assert secret not in printed
     assert json.loads(json_output)["failures"] != []
+
+
+# The account mode (ADR 0021): dedicated account mode records in an eval
+# account, mixed account mode in an account the person also uses for other
+# things. It is true for one account on one machine, so it is a local setting.
+@pytest.mark.parametrize("account_mode", ["dedicated", "mixed"])
+def test_local_settings_naming_either_account_mode_are_valid(eval_account: EvalAccount, account_mode: str) -> None:
+    eval_account.make_valid()
+    eval_account.write_settings(eval_account.valid_settings_text() + f'account_mode = "{account_mode}"\n')
+    assert failure_kinds() == []
+
+
+def test_local_settings_without_an_account_mode_mean_dedicated_account_mode(eval_account: EvalAccount) -> None:
+    # Every setup made before mixed account mode existed has no such key,
+    # and must keep behaving as it did.
+    eval_account.make_valid()
+
+    settings = local_settings.read_local_settings()
+
+    assert isinstance(settings, local_settings.LocalSettings)
+    assert settings.account_mode == "dedicated"
+
+
+@pytest.mark.parametrize("mode_line", ['account_mode = "mixd"', 'account_mode = "Mixed"', "account_mode = true"])
+def test_an_account_mode_goodall_does_not_know_is_reported_with_both_values(
+    eval_account: EvalAccount, mode_line: str
+) -> None:
+    eval_account.make_valid()
+    eval_account.write_settings(eval_account.valid_settings_text() + mode_line + "\n")
+
+    exit_code, _, standard_error = run_goodall(["status"])
+
+    assert exit_code == exit_codes.ERROR
+    assert "account_mode" in standard_error
+    assert '"dedicated"' in standard_error
+    assert '"mixed"' in standard_error
+    # The value written is never repeated back (ADR 0006).
+    assert "mixd" not in standard_error
+    assert failure_kinds() == ["local_settings_value_invalid"]
 
 
 # ActivityWatch (ADR 0016). The eval config says whether the eval includes it;

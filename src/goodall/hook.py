@@ -54,6 +54,15 @@ owner says otherwise):
   installed on PreToolUse, say), is treated as every non-gate event is:
   a heartbeat, exit 0, nothing printed. It is noted the same way, since it
   means the settings differ from docs/claude-code-hooks.md.
+- In mixed account mode the gate is off (ADR 0021): the account is also
+  used for things that are not the eval, so refusing a prompt is the worse
+  failure there. A prompt with no work block active goes through with
+  nothing printed and nothing written, and so does one when the log
+  directory cannot be reached or goodall hits an unexpected error. The
+  other events write nothing outside a work block either. One refusal
+  stays: missing or unreadable local settings, because without them goodall
+  cannot know the mode, and dedicated account mode is the safe assumption.
+  Everything below about refusing describes dedicated account mode.
 - The gate fails closed. Missing or unreadable local settings, an
   unreachable log directory (ADR 0008), no active work block, and any
   unexpected error all refuse the prompt, because in an eval account
@@ -103,7 +112,7 @@ from pathlib import Path
 
 from goodall import claude_family, exit_codes, hook_problems, records, telemetry_capture, work_blocks
 from goodall.folders import describe_folder_problem
-from goodall.local_settings import LocalSettings, read_local_settings
+from goodall.local_settings import MIXED_ACCOUNT_MODE, LocalSettings, read_local_settings
 from goodall.terminal import Terminal
 
 # The one event that can refuse what the person asked for.
@@ -311,6 +320,10 @@ def note_hook_problem(now: datetime, event_name: str | None, problem: str) -> No
     active = work_blocks.active_work_block(log_directory, now)
     if active is not None:
         work_block_id = active.id
+    elif settings.account_mode == MIXED_ACCOUNT_MODE:
+        # Outside a work block this account is not the eval's business, and
+        # the note would hold when the person used Claude Code (ADR 0021).
+        return
     hook_problems.record_hook_problem(log_directory, now, event_name, work_block_id, problem)
 
 
@@ -323,6 +336,8 @@ def handle_event(event_name: str, read_input: Callable[[], str | None], terminal
             # Trap: this catches goodall's own bugs too. That is deliberate:
             # a bug must close the gate, not open it.
             decision = GateDecision(refusal=UNEXPECTED_PROBLEM_REFUSAL)
+            if prompt_gate_is_off():
+                decision = GateDecision()
         if decision.refusal is not None:
             terminal.show_hook_message(decision.refusal)
             return exit_codes.CLAUDE_CODE_REFUSES_PROMPT
@@ -338,6 +353,20 @@ def handle_event(event_name: str, read_input: Callable[[], str | None], terminal
     return exit_codes.SUCCESS
 
 
+def prompt_gate_is_off() -> bool:
+    """True when local settings can be read and say mixed account mode, where no prompt is ever refused.
+
+    Asked only after an unexpected error, so it reads local settings again
+    and trusts nothing the failed check worked out. Not knowing means the
+    gate stays on.
+    """
+    try:
+        settings = read_local_settings()
+    except Exception:
+        return False
+    return isinstance(settings, LocalSettings) and settings.account_mode == MIXED_ACCOUNT_MODE
+
+
 def check_prompt(hook_input_text: str | None, now: datetime) -> GateDecision:
     """The prompt gate: leave a heartbeat and let the prompt through, or say why it is refused.
 
@@ -345,6 +374,9 @@ def check_prompt(hook_input_text: str | None, now: datetime) -> GateDecision:
     then the log directory, then the work block. What Claude Code sent is
     read last, and only decides which Claude session the heartbeat names,
     so it can never open a gate the checks before it closed.
+
+    In mixed account mode the last two never refuse: the prompt goes
+    through silently, recorded only when a work block is active (ADR 0021).
     """
     settings = read_local_settings()
     if not isinstance(settings, LocalSettings):
@@ -353,8 +385,11 @@ def check_prompt(hook_input_text: str | None, now: datetime) -> GateDecision:
                 return GateDecision(refusal=LOCAL_SETTINGS_MISSING_REFUSAL)
         return GateDecision(refusal=LOCAL_SETTINGS_UNREADABLE_REFUSAL)
 
+    gate_is_off = settings.account_mode == MIXED_ACCOUNT_MODE
     log_directory = settings.log_directory.path
     if describe_folder_problem(log_directory, needs_writing=True) is not None:
+        if gate_is_off:
+            return GateDecision()
         return GateDecision(refusal=LOG_DIRECTORY_UNREACHABLE_REFUSAL)
 
     hook_input = read_hook_input(hook_input_text)
@@ -368,6 +403,8 @@ def check_prompt(hook_input_text: str | None, now: datetime) -> GateDecision:
     # unrecorded, which ADR 0008 treats as the same observable state.
     work_block = work_blocks.record_heartbeat(log_directory, now, claude_session)
     if work_block is None:
+        if gate_is_off:
+            return GateDecision()
         return GateDecision(refusal=NO_WORK_BLOCK_REFUSAL)
     notices = []
     if hook_input is None:
@@ -410,7 +447,8 @@ def record_activity(event_name: str, hook_input_text: str | None, now: datetime)
     must still find the session files to copy (goodall.claude_family). It
     comes from this process's own environment, never from the hook's
     input. A heartbeat that fails must not stop that, so each is tried on
-    its own.
+    its own. In mixed account mode none of this happens outside a work
+    block; the folder is remembered by the first event inside one.
     """
     settings = read_local_settings()
     if not isinstance(settings, LocalSettings):
@@ -426,6 +464,9 @@ def record_activity(event_name: str, hook_input_text: str | None, now: datetime)
     except Exception:
         # Silent, as every event but the prompt gate is; see the module docstring.
         pass
+    if active is None and settings.account_mode == MIXED_ACCOUNT_MODE:
+        # Outside a work block, mixed account mode writes nothing at all (ADR 0021).
+        return
     if event_name not in KNOWN_EVENTS:
         work_block_id = None
         if active is not None:
