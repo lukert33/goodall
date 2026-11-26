@@ -148,3 +148,39 @@ _Avoid_: System, scaffold, tool
 **Corroboration**:
 Checking an eval's own records against records someone else holds and the researcher cannot edit.
 _Avoid_: Verification, validation, audit
+
+**Delegation**:
+Handing a piece of work to an AI agent.
+_Avoid_: Amplification, disempowerment, automation rate
+
+**Mistake**:
+Something wrong in the work that was later noticed. Each mistake is recorded with where it was caught, as one of two values: **caught at review**, before the work left the person's hands, or **caught downstream**, after it had effects. It has three subtypes, by who made it.
+_Avoid_: Error, error catch, bug, failure, oversight score, over-reliance, quality of review
+
+**Agent mistake**:
+A mistake made in work an AI agent produced.
+_Avoid_: AI error, hallucination, model failure
+
+**Human mistake**:
+A mistake made in work the person produced, including an instruction they gave an agent.
+_Avoid_: User error, operator error
+
+**Hybrid mistake**:
+A mistake that the person and an agent both contributed to, such as an agent filling a gap in an unclear instruction the wrong way.
+_Avoid_: Shared error, joint failure
+
+**Off-agent work**:
+What a person does for the eval outside any agent session, such as searching, reading, or writing instructions for an agent to follow.
+_Avoid_: Manual work, human-only work
+
+**Outcome record**:
+A record of what actually went out into the world, such as a sent email, against which an agent's draft can be compared.
+_Avoid_: Final output, deliverable
+
+**Redaction policy**:
+The versioned rules that decide what is removed from records before they are shared. Goodall has a default, and each eval may make it stricter or looser.
+_Avoid_: Anonymization, scrubbing, sanitizing
+
+**Export**:
+A redacted or derived layer prepared for sharing, stamped with the versions of the redaction policy and derivation rules that produced it. A raw record is never an export.
+_Avoid_: Release, dump, dataset

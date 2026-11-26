@@ -11,6 +11,18 @@ rather than a benchmark run in a sandbox. You do not need to be a software
 engineer to use it, but you do need a Mac, a terminal, and someone (possibly
 you) who can install programs on that Mac.
 
+## Current scope of goodall
+
+Goodall is an instrument. It measures **delegation**: who did what, and
+where each mistake was caught.
+
+Its first analytic priority is **where mistakes are caught**: at review,
+before the work left the person's hands, or downstream, after it had
+effects.
+
+For the tools and studies that already do part of this, see
+[docs/related-work.md](docs/related-work.md).
+
 ## Status: being rebuilt after a closed source prototype phase
 
 Goodall is being rebuilt from scratch after I validated the security posture with a prototype. 
@@ -182,6 +194,13 @@ it. Goodall rejects a raw secret value given as input.
 Goodall makes no network calls of its own. The only thing that leaves the Mac
 is what git pushes to the record repo you set up.
 
+### What you share
+
+Raw records stay on the Mac. You share only a **redacted** layer or a
+**derived** layer, never the raw one. None of this is built yet; the decision
+is recorded in
+[ADR 0017](docs/adr/0017-raw-records-stay-local-and-every-export-carries-its-rule-versions.md).
+
 ## What goodall promises about your data
 
 - **Raw records stay verbatim.** Transcripts and telemetry are copied as
@@ -229,8 +248,9 @@ is what git pushes to the record repo you set up.
   keeps secrets out of files and can launch a program with the secret already
   set. Only 1Password's `op://` references work today. Contributions are
   welcome.
-- **Agents other than Claude Code.** Today only Claude Code is recorded. A
-  future tool would keep its own logs as raw records in its own format.
+- **Email.** Sent email is the record of what actually went out to
+  customers and suppliers, and it lives outside git. How to capture it is
+  undecided.
 - **Anything off macOS.** Eval accounts are macOS user accounts.
 
 ## Contributing
