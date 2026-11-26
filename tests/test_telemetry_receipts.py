@@ -9,10 +9,12 @@ one request, so that the test can show each fault is visible afterwards.
 Every body is synthetic.
 """
 
+import fcntl
 import hashlib
 import http.client
 import json
 import os
+import threading
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -188,6 +190,21 @@ def test_second_receiver_on_the_same_directory_refuses_to_start(receiver: Runnin
     finally:
         if second_receiver is not None:
             second_receiver.stop()
+
+
+def test_receiver_waits_out_a_momentary_lock_on_the_receipt_log(tmp_path: Path) -> None:
+    # Something that only looks (the prompt gate's check) can hold the lock for
+    # an instant. A starting receiver waits for that, rather than refusing.
+    receipt_log = tmp_path / telemetry_receipts.RECEIPT_FILE_NAME
+    probe_descriptor = os.open(receipt_log, os.O_RDWR | os.O_CREAT, 0o600)
+    fcntl.flock(probe_descriptor, fcntl.LOCK_EX)
+    release_probe = threading.Timer(0.2, os.close, args=[probe_descriptor])
+    release_probe.start()
+    try:
+        running_receiver = telemetry_receiver.start_receiver(tmp_path)
+    finally:
+        release_probe.join()
+    running_receiver.stop()
 
 
 def test_receipt_that_cannot_be_written_shows_as_a_gap_and_an_unreceipted_line(

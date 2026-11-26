@@ -91,6 +91,7 @@ import os
 import signal
 import sys
 import threading
+import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -303,6 +304,26 @@ def force_to_disk(file_descriptor: int) -> None:
     os.fsync(file_descriptor)
 
 
+# How long a starting receiver keeps trying for the receipt log's lock, and
+# how often it tries. Long enough for the prompt gate's momentary check to
+# pass, short enough that a real second receiver is refused promptly.
+LOCK_WAIT_SECONDS = 1.0
+LOCK_RETRY_SECONDS = 0.01
+
+
+def take_lock_within(file_descriptor: int, wait_seconds: float) -> bool:
+    """Try for up to `wait_seconds` to take an exclusive lock without blocking; False if it stayed held."""
+    deadline = time.monotonic() + wait_seconds
+    while True:
+        try:
+            fcntl.flock(file_descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return True
+        except BlockingIOError:
+            if time.monotonic() >= deadline:
+                return False
+        time.sleep(LOCK_RETRY_SECONDS)
+
+
 class ReceiptLog:
     """The open receipt log of one running receiver, and the next sequence number to hand out.
 
@@ -310,6 +331,14 @@ class ReceiptLog:
     two receivers never number requests into one directory. The operating
     system drops the lock if the receiver is killed, so a restart is never
     blocked by a dead one.
+
+    Trap: the prompt gate checks whether a receiver is running by taking this
+    same lock for an instant (goodall.telemetry_capture), and it may do so
+    while a restarted receiver is starting, because the old receiver's record
+    stays until the new one listens. A refused lock is therefore retried for
+    LOCK_WAIT_SECONDS before it counts as another receiver. A real second
+    receiver holds the lock for as long as it runs, so it is still refused,
+    one second later. The gate itself never waits.
     """
 
     def __init__(self, telemetry_directory: Path) -> None:
@@ -317,14 +346,12 @@ class ReceiptLog:
         self.file_descriptor = os.open(
             receipt_file, os.O_RDWR | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600
         )
-        try:
-            fcntl.flock(self.file_descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
+        if not take_lock_within(self.file_descriptor, LOCK_WAIT_SECONDS):
             os.close(self.file_descriptor)
             raise OSError(
                 f"Another telemetry receiver is already writing to {telemetry_directory}. "
                 "Stop that receiver first, or give this one a different directory."
-            ) from None
+            )
         # Read only once the lock is held, so no other receiver is adding to it.
         self.next_sequence_number = telemetry_receipts.next_sequence_number(receipt_file)
 
