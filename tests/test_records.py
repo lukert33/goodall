@@ -325,6 +325,52 @@ def test_a_work_block_record_written_before_telemetry_was_captured_still_reads()
     assert parsed.record.telemetry is None
 
 
+def work_block_in_account_mode(account_mode: str | None) -> records.WorkBlockRecord:
+    return records.build_work_block_record(
+        ADA,
+        "research",
+        MORNING,
+        records.MachineFacts("eval-mac-01", "26.1", "0.0.1", None),
+        suffix="0a1b2c3d",
+        account_mode=account_mode,
+    )
+
+
+@pytest.mark.parametrize("account_mode", ["dedicated", "mixed"])
+def test_a_work_block_says_which_account_mode_it_was_recorded_in(account_mode: str) -> None:
+    # ADR 0021: an analyst must always be able to tell the two modes apart.
+    work_block = work_block_in_account_mode(account_mode)
+
+    text = records.render_record(work_block)
+    parsed = records.parse_work_block_record(text)
+
+    assert f'"account_mode": "{account_mode}"' in text
+    assert parsed.problems == []
+    assert parsed.record == work_block
+
+
+def test_a_work_block_record_written_before_account_modes_existed_still_reads() -> None:
+    # Such a record was made in dedicated account mode, the only one there
+    # was, but the record itself does not say, so goodall does not either.
+    text = records.render_record(work_block_in_account_mode(None))
+    assert '"account_mode"' not in text
+
+    parsed = records.parse_work_block_record(text)
+
+    assert parsed.problems == []
+    assert parsed.record is not None
+    assert parsed.record.account_mode is None
+
+
+def test_a_work_block_with_an_unknown_account_mode_is_refused() -> None:
+    work_block = work_block_in_account_mode("personal")
+
+    [problem] = records.validate_record(work_block)
+
+    assert problem.field == "account_mode"
+    assert "dedicated or mixed" in problem.message
+
+
 def test_a_work_block_with_an_unknown_telemetry_value_is_refused() -> None:
     work_block = ended_work_block_with_telemetry("partly")
 
@@ -332,6 +378,66 @@ def test_a_work_block_with_an_unknown_telemetry_value_is_refused() -> None:
 
     assert problem.field == "telemetry"
     assert "captured, incomplete or missing" in problem.message
+
+
+def test_a_work_block_that_continues_a_paused_one_names_it() -> None:
+    work_block = dataclasses.replace(
+        ended_work_block_with_telemetry(None), continues_work_block="20261116T080000Z-ada-lovelace-1a2b3c4d"
+    )
+
+    text = records.render_record(work_block)
+    parsed = records.parse_work_block_record(text)
+
+    assert '"continues_work_block": "20261116T080000Z-ada-lovelace-1a2b3c4d"' in text
+    assert parsed.problems == []
+    assert parsed.record == work_block
+
+
+def test_a_work_block_record_carries_both_the_account_mode_and_the_work_block_it_continues() -> None:
+    work_block = dataclasses.replace(
+        ended_work_block_with_telemetry("captured"),
+        account_mode="mixed",
+        continues_work_block="20261116T080000Z-ada-lovelace-1a2b3c4d",
+    )
+
+    text = records.render_record(work_block)
+    parsed = records.parse_work_block_record(text)
+
+    assert records.validate_record(work_block) == []
+    assert '"account_mode": "mixed"' in text
+    assert '"continues_work_block": "20261116T080000Z-ada-lovelace-1a2b3c4d"' in text
+    assert parsed.problems == []
+    assert parsed.record == work_block
+
+
+def test_a_work_block_that_continues_none_leaves_the_field_out_and_older_records_still_read() -> None:
+    text = records.render_record(ended_work_block_with_telemetry(None))
+    assert "continues_work_block" not in text
+
+    parsed = records.parse_work_block_record(text)
+
+    assert parsed.problems == []
+    assert parsed.record is not None
+    assert parsed.record.continues_work_block is None
+
+
+def test_a_work_block_that_continues_something_that_is_not_a_work_block_id_is_refused() -> None:
+    work_block = dataclasses.replace(ended_work_block_with_telemetry(None), continues_work_block="the last one")
+
+    [problem] = records.validate_record(work_block)
+
+    assert problem.field == "continues_work_block"
+    assert "is not a record id" in problem.message
+
+
+def test_a_work_block_cannot_continue_itself() -> None:
+    work_block = ended_work_block_with_telemetry(None)
+    work_block = dataclasses.replace(work_block, continues_work_block=work_block.id)
+
+    [problem] = records.validate_record(work_block)
+
+    assert problem.field == "continues_work_block"
+    assert "itself" in problem.message
 
 
 def test_a_problem_inside_machine_facts_names_the_nested_field() -> None:

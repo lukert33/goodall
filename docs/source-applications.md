@@ -95,12 +95,16 @@ never edited, so what remains is still verbatim. Per kind:
   listed in `transcript-sync/deleted-agent-sessions.json` and never copied
   again, even when used in a later work block.
 - **Telemetry**, **heartbeats** and goodall's bookkeeping about the work
-  block, all named after its id; and the Scout export in `exports/scout`,
+  block, all named after its id, and the pause (`goodall pause`) when it
+  names this work block, so the next `goodall start` continues nothing; and
+  the Scout export in `exports/scout`,
   which is derived from every transcript and is rebuilt with
   `goodall export scout`.
 - **The record repo.** The work block's record is replaced by a deleted work
   block (`docs/record-schemas.md`) and its fixes are removed, in one commit.
-  Git history is left alone.
+  Git history is left alone. A later work block that names this one in
+  `continues_work_block` keeps its record as it is; the id it names is now
+  the deleted work block's.
 
 Left in place, and said so in the output with a next step:
 

@@ -36,8 +36,12 @@ class EvalAccount:
     log_directory: Path
 
 
-def make_eval_account(tmp_path: Path) -> EvalAccount:
-    """Write local settings naming a record repo and a log directory that both exist."""
+def make_eval_account(tmp_path: Path, account_mode: str | None = None) -> EvalAccount:
+    """Write local settings naming a record repo and a log directory that both exist.
+
+    `account_mode` adds that setting; None leaves it out, as every setup made
+    before mixed account mode existed does.
+    """
     config_directory = tmp_path / "goodall-config"
     config_directory.mkdir()
     record_repo = tmp_path / "records"
@@ -52,6 +56,9 @@ def make_eval_account(tmp_path: Path) -> EvalAccount:
         f'log_directory = "{log_directory}"\n'
         'secrets_manager = "1password"\n'
     )
+    if account_mode is not None:
+        with (config_directory / "local-settings.toml").open("a") as settings_file:
+            settings_file.write(f'account_mode = "{account_mode}"\n')
     return EvalAccount(config_directory=config_directory, log_directory=log_directory)
 
 
@@ -135,6 +142,25 @@ def test_a_prompt_with_no_work_block_is_refused_with_the_command_to_run(tmp_path
     assert completed.stderr == (
         "Goodall is not recording, so this prompt was not sent. "
         "Open a terminal, run goodall start, then send your prompt again.\n"
+    )
+
+
+def test_a_prompt_while_recording_is_paused_is_refused_and_told_how_to_record_again(tmp_path: Path) -> None:
+    eval_account = make_eval_account(tmp_path)
+    work_blocks.write_pause(
+        eval_account.log_directory,
+        "20261116T093000Z-ada-lovelace-0a1b2c3d",
+        "research",
+        datetime.now(UTC) - timedelta(days=2),
+    )
+
+    completed = run_hook(eval_account.config_directory, ["UserPromptSubmit"], prompt_input())
+
+    assert completed.returncode == 2
+    assert completed.stdout == ""
+    assert completed.stderr == (
+        "Goodall is paused, so it is not recording and this prompt was not sent. "
+        "Open a terminal, run goodall start to record again, then send your prompt again.\n"
     )
 
 
@@ -324,6 +350,169 @@ def test_an_event_with_unreadable_input_still_leaves_a_heartbeat(tmp_path: Path)
 
     assert completed.returncode == 0
     assert heartbeat_sessions(eval_account.log_directory, work_block) == [None]
+
+
+# ---------------------------------------------------------------------------
+# Mixed account mode: the prompt gate is off (ADR 0021)
+# ---------------------------------------------------------------------------
+
+
+def files_in(folder: Path) -> list[Path]:
+    """Every file under `folder`, so a test can show the hook wrote nothing."""
+    found = []
+    for path in sorted(folder.rglob("*")):
+        if path.is_file():
+            found.append(path)
+    return found
+
+
+def test_in_mixed_account_mode_a_prompt_with_no_work_block_goes_through_and_nothing_is_written(
+    tmp_path: Path,
+) -> None:
+    mixed_account = make_eval_account(tmp_path, account_mode="mixed")
+
+    completed = run_hook(mixed_account.config_directory, ["UserPromptSubmit"], prompt_input())
+
+    # The person is doing something of their own: goodall stays out of it.
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout == completed.stderr == ""
+    assert files_in(mixed_account.log_directory) == []
+
+
+def test_in_mixed_account_mode_a_prompt_during_a_work_block_is_recorded_as_in_dedicated_account_mode(
+    tmp_path: Path,
+) -> None:
+    mixed_account = make_eval_account(tmp_path, account_mode="mixed")
+    work_block = start_work_block(mixed_account.log_directory)
+
+    completed = run_hook(mixed_account.config_directory, ["UserPromptSubmit"], prompt_input())
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout == completed.stderr == ""
+    assert heartbeat_sessions(mixed_account.log_directory, work_block) == [CLAUDE_SESSION]
+
+
+def pause_recording(log_directory: Path) -> None:
+    """Leave the note `goodall pause` leaves: recording was paused two days ago."""
+    work_blocks.write_pause(
+        log_directory,
+        "20261116T093000Z-ada-lovelace-0a1b2c3d",
+        "research",
+        datetime.now(UTC) - timedelta(days=2),
+    )
+
+
+def test_in_dedicated_account_mode_a_prompt_while_paused_is_refused_with_the_pause_message(tmp_path: Path) -> None:
+    # ADR 0021: a paused account is simply not recording, so in dedicated
+    # account mode the prompt gate is closed.
+    dedicated_account = make_eval_account(tmp_path, account_mode="dedicated")
+    pause_recording(dedicated_account.log_directory)
+
+    completed = run_hook(dedicated_account.config_directory, ["UserPromptSubmit"], prompt_input())
+
+    assert completed.returncode == 2
+    assert completed.stdout == ""
+    assert completed.stderr == (
+        "Goodall is paused, so it is not recording and this prompt was not sent. "
+        "Open a terminal, run goodall start to record again, then send your prompt again.\n"
+    )
+
+
+def test_in_mixed_account_mode_a_prompt_while_paused_goes_through_and_nothing_is_written(tmp_path: Path) -> None:
+    # The gate is off in mixed account mode, and a pause does not turn it
+    # on: paused is the same as any time outside a work block.
+    mixed_account = make_eval_account(tmp_path, account_mode="mixed")
+    pause_recording(mixed_account.log_directory)
+    files_before = files_in(mixed_account.log_directory)
+    pause_text = files_before[0].read_text()
+
+    completed = run_hook(mixed_account.config_directory, ["UserPromptSubmit"], prompt_input())
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout == completed.stderr == ""
+    # Only the pause itself is there, exactly as it was.
+    assert [path.name for path in files_before] == ["pause.json"]
+    assert files_in(mixed_account.log_directory) == files_before
+    assert files_before[0].read_text() == pause_text
+
+
+def test_in_mixed_account_mode_the_other_events_write_nothing_while_paused(tmp_path: Path) -> None:
+    mixed_account = make_eval_account(tmp_path, account_mode="mixed")
+    pause_recording(mixed_account.log_directory)
+    files_before = files_in(mixed_account.log_directory)
+
+    for event_name in ["PostToolUse", "Stop", "SessionEnd"]:
+        completed = run_hook(mixed_account.config_directory, [event_name], prompt_input())
+        assert completed.returncode == 0, completed.stderr
+        assert completed.stdout == completed.stderr == ""
+
+    assert files_in(mixed_account.log_directory) == files_before
+
+
+def test_an_account_mode_of_dedicated_written_out_keeps_the_prompt_gate_closed(tmp_path: Path) -> None:
+    dedicated_account = make_eval_account(tmp_path, account_mode="dedicated")
+
+    completed = run_hook(dedicated_account.config_directory, ["UserPromptSubmit"], prompt_input())
+
+    assert completed.returncode == 2
+    assert "run goodall start" in completed.stderr
+
+
+def test_an_account_mode_goodall_does_not_know_refuses_the_prompt_as_unreadable_settings_do(tmp_path: Path) -> None:
+    # Without a readable mode goodall cannot know the gate is off, and
+    # dedicated account mode is the safe assumption.
+    misspelled_account = make_eval_account(tmp_path, account_mode="mixd")
+
+    completed = run_hook(misspelled_account.config_directory, ["UserPromptSubmit"], prompt_input())
+
+    assert completed.returncode == 2
+    assert "Goodall cannot read its local settings" in completed.stderr
+
+
+def test_in_mixed_account_mode_an_unreachable_log_directory_does_not_refuse_the_prompt(tmp_path: Path) -> None:
+    mixed_account = make_eval_account(tmp_path, account_mode="mixed")
+    start_work_block(mixed_account.log_directory)
+    mixed_account.log_directory.rename(tmp_path / "unplugged")
+
+    completed = run_hook(mixed_account.config_directory, ["UserPromptSubmit"], prompt_input())
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout == completed.stderr == ""
+
+
+def test_in_mixed_account_mode_unreadable_input_with_no_work_block_goes_through_silently(tmp_path: Path) -> None:
+    mixed_account = make_eval_account(tmp_path, account_mode="mixed")
+
+    completed = run_hook(mixed_account.config_directory, ["UserPromptSubmit"], "{cut short")
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout == completed.stderr == ""
+    assert files_in(mixed_account.log_directory) == []
+
+
+def test_in_mixed_account_mode_every_other_event_writes_nothing_outside_a_work_block(tmp_path: Path) -> None:
+    mixed_account = make_eval_account(tmp_path, account_mode="mixed")
+
+    for event_name, event_input in RECORDING_EVENTS.items():
+        completed = run_hook(mixed_account.config_directory, [event_name], event_input)
+        assert (completed.returncode, completed.stdout, completed.stderr) == (0, "", ""), event_name
+    # Not even a bare command whose event cannot be told is noted: the note
+    # would hold the moments the person used Claude Code for something else.
+    completed = run_hook(mixed_account.config_directory, [], "{cut short")
+
+    assert completed.returncode == 1
+    assert files_in(mixed_account.log_directory) == []
+
+
+def test_in_mixed_account_mode_every_other_event_leaves_a_heartbeat_during_a_work_block(tmp_path: Path) -> None:
+    mixed_account = make_eval_account(tmp_path, account_mode="mixed")
+    work_block = start_work_block(mixed_account.log_directory)
+
+    for event_name, event_input in RECORDING_EVENTS.items():
+        run_hook(mixed_account.config_directory, [event_name], event_input)
+
+    assert heartbeat_sessions(mixed_account.log_directory, work_block) == [CLAUDE_SESSION] * len(RECORDING_EVENTS)
+    assert (mixed_account.log_directory / "transcript-sync" / "claude-config-folders.json").exists()
 
 
 # ---------------------------------------------------------------------------

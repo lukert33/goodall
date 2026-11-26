@@ -80,8 +80,12 @@ def git(working_directory: Path, *arguments: str) -> str:
     return completed.stdout
 
 
-def make_eval_account(tmp_path: Path) -> EvalAccount:
-    """Local settings, a record repo holding the eval config, a log directory, and an empty Claude projects folder."""
+def make_eval_account(tmp_path: Path, account_mode: str | None = None) -> EvalAccount:
+    """Local settings, a record repo holding the eval config, a log directory, and an empty Claude projects folder.
+
+    `account_mode` adds that setting to local settings; None leaves it out,
+    which means dedicated account mode.
+    """
     config_directory = tmp_path / "goodall-config"
     config_directory.mkdir()
     record_repo = tmp_path / "records"
@@ -102,6 +106,9 @@ def make_eval_account(tmp_path: Path) -> EvalAccount:
         f'log_directory = "{log_directory}"\n'
         'secrets_manager = "1password"\n'
     )
+    if account_mode is not None:
+        with (config_directory / "local-settings.toml").open("a") as settings_file:
+            settings_file.write(f'account_mode = "{account_mode}"\n')
     claude_config_directory = tmp_path / "claude-config"
     eval_account = EvalAccount(config_directory, record_repo, log_directory, claude_config_directory)
     eval_account.projects_folder.mkdir(parents=True)
@@ -509,3 +516,196 @@ def test_a_copy_goodall_cannot_read_stops_the_deletion_before_anything_is_delete
     assert delete.exit_code == 1
     assert "Nothing was deleted" in delete.everything_printed
     assert files_under(eval_account.log_directory) == log_files_before
+
+
+# ---------------------------------------------------------------------------
+# Deleting, pausing and the account mode together (ADR 0021)
+
+
+def pause_file(eval_account: EvalAccount) -> Path:
+    return eval_account.log_directory / "work-blocks" / "pause.json"
+
+
+def record_a_morning_work_block_and_pause(eval_account: EvalAccount, monkeypatch: pytest.MonkeyPatch) -> str:
+    """Start, work in one Claude session, and pause; return the paused work block's id."""
+    run_goodall(eval_account, monkeypatch, ["start"], MORNING_START)
+    write_claude_session(eval_account, DELETED_SESSION, [MORNING_START + timedelta(minutes=5)])
+    run_hook(eval_account, monkeypatch, DELETED_SESSION, MORNING_START + timedelta(minutes=6))
+    pause = run_goodall(eval_account, monkeypatch, ["pause"], MORNING_END)
+    assert pause.exit_code == 0, pause.standard_error
+    [work_block_id] = work_block_ids(eval_account)
+    return work_block_id
+
+
+def test_deleting_the_paused_work_block_removes_the_pause_so_the_next_work_block_continues_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    eval_account = make_eval_account(tmp_path)
+    work_block_id = record_a_morning_work_block_and_pause(eval_account, monkeypatch)
+    assert json.loads(pause_file(eval_account).read_text())["work_block"] == work_block_id
+
+    preview = run_goodall(eval_account, monkeypatch, ["delete", work_block_id], AFTERNOON_START)
+
+    # The preview changes nothing, the pause included.
+    assert preview.exit_code == 2
+    assert pause_file(eval_account).exists()
+
+    delete = run_goodall(
+        eval_account, monkeypatch, ["delete", work_block_id, "--delete-captured-data"], AFTERNOON_START
+    )
+
+    assert delete.exit_code == 0, delete.everything_printed
+    # The pause named the deleted work block, and when it was paused: it is
+    # part of what goodall kept about that work block, so it goes too.
+    assert not pause_file(eval_account).exists()
+    assert files_under(eval_account.log_directory / "work-blocks") == []
+    status = run_goodall(eval_account, monkeypatch, ["status", "--json"], AFTERNOON_START + timedelta(minutes=1))
+    document = json.loads(status.standard_output)
+    assert document["paused"] is False
+    assert document["paused_work_block"] is None
+
+    run_goodall(eval_account, monkeypatch, ["start"], AFTERNOON_START + timedelta(minutes=5))
+    run_goodall(eval_account, monkeypatch, ["stop"], AFTERNOON_END)
+    [_, afternoon_id] = work_block_ids(eval_account)
+    afternoon_record = json.loads((eval_account.record_repo / "work-blocks" / f"{afternoon_id}.json").read_text())
+    assert "continues_work_block" not in afternoon_record
+
+
+def test_deleting_a_work_block_leaves_a_pause_that_names_another_work_block(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    eval_account = make_eval_account(tmp_path)
+    morning_id = record_a_morning_work_block(eval_account, monkeypatch)
+    run_goodall(eval_account, monkeypatch, ["start"], AFTERNOON_START)
+    run_goodall(eval_account, monkeypatch, ["pause"], AFTERNOON_END)
+    [_, afternoon_id] = work_block_ids(eval_account)
+    pause_before = pause_file(eval_account).read_text()
+
+    delete = run_goodall(
+        eval_account, monkeypatch, ["delete", morning_id, "--delete-captured-data"], AFTERNOON_END + timedelta(hours=1)
+    )
+
+    assert delete.exit_code == 0, delete.everything_printed
+    assert pause_file(eval_account).read_text() == pause_before
+    assert json.loads(pause_before)["work_block"] == afternoon_id
+
+
+@pytest.mark.parametrize("account_mode", ["dedicated", "mixed"])
+def test_deleting_a_work_block_another_continues_leaves_that_record_untouched_and_its_pointer_still_resolves(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, account_mode: str
+) -> None:
+    eval_account = make_eval_account(tmp_path, account_mode=account_mode)
+    paused_id = record_a_morning_work_block_and_pause(eval_account, monkeypatch)
+    run_goodall(eval_account, monkeypatch, ["start"], AFTERNOON_START)
+    run_goodall(eval_account, monkeypatch, ["stop"], AFTERNOON_END)
+    [_, continuing_id] = work_block_ids(eval_account)
+    paused_file = eval_account.record_repo / "work-blocks" / f"{paused_id}.json"
+    continuing_file = eval_account.record_repo / "work-blocks" / f"{continuing_id}.json"
+    continuing_before = continuing_file.read_bytes()
+    # Both fields are on the records before the deletion.
+    assert json.loads(paused_file.read_text())["account_mode"] == account_mode
+    assert json.loads(continuing_before)["continues_work_block"] == paused_id
+    assert json.loads(continuing_before)["account_mode"] == account_mode
+
+    delete = run_goodall(
+        eval_account, monkeypatch, ["delete", paused_id, "--delete-captured-data"], AFTERNOON_END + timedelta(hours=1)
+    )
+
+    assert delete.exit_code == 0, delete.everything_printed
+    # The continuing work block's record is not rewritten: its pointer still
+    # names a file, which now says only that the work block was deleted.
+    assert continuing_file.read_bytes() == continuing_before
+    assert git(eval_account.record_repo, "status", "--porcelain") == ""
+    deleted = json.loads(paused_file.read_text())
+    assert deleted["id"] == json.loads(continuing_before)["continues_work_block"]
+    # Neither the account mode nor a pointer to another work block survives.
+    assert deleted == {
+        "schema_version": 1,
+        "record_type": "deleted_work_block",
+        "id": paused_id,
+        "contributor": "ada-lovelace",
+        "deleted_at": "2026-11-16T16:00:00Z",
+        "other_work_blocks_lost_transcripts": [],
+    }
+    # The record repo still reads: status and a later start are not upset by
+    # a pointer to a deleted work block.
+    status = run_goodall(eval_account, monkeypatch, ["status", "--json"], AFTERNOON_END + timedelta(hours=2))
+    assert json.loads(status.standard_output)["failures"] == []
+
+
+def test_deleting_a_work_block_that_continues_another_leaves_a_record_without_the_pointer_or_the_mode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    eval_account = make_eval_account(tmp_path, account_mode="mixed")
+    paused_id = record_a_morning_work_block_and_pause(eval_account, monkeypatch)
+    run_goodall(eval_account, monkeypatch, ["start"], AFTERNOON_START)
+    run_goodall(eval_account, monkeypatch, ["stop"], AFTERNOON_END)
+    [_, continuing_id] = work_block_ids(eval_account)
+    paused_file = eval_account.record_repo / "work-blocks" / f"{paused_id}.json"
+    paused_before = paused_file.read_bytes()
+
+    delete = run_goodall(
+        eval_account,
+        monkeypatch,
+        ["delete", continuing_id, "--delete-captured-data"],
+        AFTERNOON_END + timedelta(hours=1),
+    )
+
+    assert delete.exit_code == 0, delete.everything_printed
+    deleted_text = (eval_account.record_repo / "work-blocks" / f"{continuing_id}.json").read_text()
+    assert sorted(json.loads(deleted_text)) == [
+        "contributor",
+        "deleted_at",
+        "id",
+        "other_work_blocks_lost_transcripts",
+        "record_type",
+        "schema_version",
+    ]
+    assert "account_mode" not in deleted_text
+    assert "continues_work_block" not in deleted_text
+    assert paused_id not in deleted_text
+    assert paused_file.read_bytes() == paused_before
+
+
+def test_a_deleted_work_block_record_refuses_an_account_mode_or_a_work_block_it_continues() -> None:
+    deleted = records.build_deleted_work_block(
+        "20261116T093000Z-ada-lovelace-0a1b2c3d", "ada-lovelace", AFTERNOON_START, []
+    )
+    values = json.loads(records.render_record(deleted))
+    values["account_mode"] = "mixed"
+    values["continues_work_block"] = "20261116T080000Z-ada-lovelace-1a2b3c4d"
+
+    parsed = records.parse_deleted_work_block(json.dumps(values))
+
+    assert sorted(problem.field for problem in parsed.problems) == ["account_mode", "continues_work_block"]
+
+
+def test_what_a_work_block_captured_is_found_the_same_way_in_both_account_modes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    previews = {}
+    files_left = {}
+    for account_mode in ["dedicated", "mixed"]:
+        account_folder = tmp_path / account_mode
+        account_folder.mkdir()
+        eval_account = make_eval_account(account_folder, account_mode=account_mode)
+        work_block_id = record_a_morning_work_block(eval_account, monkeypatch)
+
+        preview = run_goodall(eval_account, monkeypatch, ["delete", work_block_id, "--json"], AFTERNOON_START)
+        delete = run_goodall(
+            eval_account, monkeypatch, ["delete", work_block_id, "--delete-captured-data"], AFTERNOON_START
+        )
+
+        assert delete.exit_code == 0, delete.everything_printed
+        document = json.loads(preview.standard_output)
+        previews[account_mode] = (document["kinds"], document["agent_sessions"])
+        files_left[account_mode] = (
+            files_under(eval_account.copied_transcripts),
+            files_under(eval_account.log_directory / "telemetry"),
+            files_under(eval_account.log_directory / "work-blocks"),
+        )
+
+    assert previews["mixed"] == previews["dedicated"]
+    assert {"kind": "agent_session_copies", "files": 3} in previews["mixed"][0]
+    assert previews["mixed"][1] == [{"app_family": "Claude", "id": DELETED_SESSION}]
+    assert files_left["mixed"] == files_left["dedicated"] == ([], [], [])

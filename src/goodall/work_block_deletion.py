@@ -27,6 +27,11 @@ what belongs to the work block, and how goodall can tell:
 - Heartbeats, and goodall's own bookkeeping about the work block: its file
   in `work-blocks/heartbeats/`, `receivers/`, `receiver-down/`, and its
   note in `transcript-sync/work-blocks-to-copy/`. All are named after its id.
+  So is the pause (`work-blocks/pause.json`, `goodall pause`), but only
+  when it names this work block: it says which work block was paused, on
+  which workstream and when, and would otherwise make the next work block
+  say it continues one the person asked to have forgotten. A pause that
+  names another work block is left.
 - The Scout export in the log directory, which is derived from every
   transcript, so it is deleted whole (only when goodall made it), to be
   rebuilt with `goodall export scout`.
@@ -34,6 +39,13 @@ what belongs to the work block, and how goodall can tell:
   block (goodall.records), and its work block fixes are removed in the
   same commit (goodall.record_repo). Journal entries and interventions that
   name it are the person's own writing, not captured data, and are left.
+  So is the record of a work block that names this one in
+  `continues_work_block`: records are never rewritten, and the deleted work
+  block keeps the id, so that pointer still names a file. The deleted work
+  block itself carries neither `account_mode` nor `continues_work_block`.
+
+None of this depends on the account mode (ADR 0021): a work block's files
+are found the same way in dedicated and in mixed account mode.
 
 What is left in place, and said so with a next step, because goodall
 cannot tell which part of it is this work block's without cutting a raw
@@ -209,15 +221,17 @@ def plan_deletion(record_repo: Path, log_directory: Path, work_block: WorkBlockT
     telemetry_files = telemetry_capture.TelemetryFiles(log_directory, work_block.id)
     add_kind(plan, TELEMETRY, [telemetry_files.telemetry_directory])
     add_kind(plan, HEARTBEATS, [work_blocks.WorkBlockFiles(log_directory).heartbeat_file(work_block.id)])
-    add_kind(
-        plan,
-        BOOKKEEPING,
-        [
-            telemetry_files.receiver_record,
-            telemetry_files.receiver_down_notes,
-            agent_session_copies.note_file(log_directory, work_block.id),
-        ],
-    )
+    bookkeeping = [
+        telemetry_files.receiver_record,
+        telemetry_files.receiver_down_notes,
+        agent_session_copies.note_file(log_directory, work_block.id),
+    ]
+    pause = work_blocks.read_pause(log_directory)
+    if pause is not None and pause.work_block_id == work_block.id:
+        # The pause names this work block. A pause for another work block,
+        # or one goodall cannot read, is not this work block's and stays.
+        bookkeeping.append(work_blocks.WorkBlockFiles(log_directory).pause)
+    add_kind(plan, BOOKKEEPING, bookkeeping)
     scout_export = log_directory / DEFAULT_EXPORT_FOLDER
     if (scout_export / EXPORT_MARKER_FILE_NAME).is_file():
         add_kind(plan, SCOUT_EXPORT, [scout_export])

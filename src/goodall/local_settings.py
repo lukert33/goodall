@@ -57,6 +57,15 @@ are shared by every macOS user account on a Mac, and ActivityWatch's launcher
 silently joins any ActivityWatch already answering on its port, so two
 accounts on 5600 mix their data without a warning.
 
+One more setting is optional: `account_mode`, which says whether this macOS
+user account is an eval account (`"dedicated"`) or one the person also uses
+for other things (`"mixed"`, ADR 0021). It lives here because it is true for
+one account on one machine (ADR 0009). Left out, it means dedicated, so every
+setup made before mixed account mode existed behaves as it always did. Any
+other value is a failure, never a guess: the mode decides whether the prompt
+gate refuses prompts, and a misspelled "mixed" silently read as dedicated
+would refuse a person's own prompts with no explanation.
+
 The file's shape is provisional by the owner's instruction (goodall-xes.8);
 `schema_version` is there so it can change.
 """
@@ -97,8 +106,15 @@ FOLDER_SETTING_NAMES = ["record_repo", "log_directory"]
 # here; see the module docstring.
 ACTIVITYWATCH_SETTING_NAMES = ["activitywatch_port", "activitywatch_device_id"]
 
+# The two account modes (ADR 0021, GLOSSARY.md). Dedicated account mode
+# records in an eval account; mixed account mode records in a macOS user
+# account the person also uses for other things.
+DEDICATED_ACCOUNT_MODE = "dedicated"
+MIXED_ACCOUNT_MODE = "mixed"
+ACCOUNT_MODES = [DEDICATED_ACCOUNT_MODE, MIXED_ACCOUNT_MODE]
+
 # Every key local settings may contain, in the order goodall reports them.
-KNOWN_SETTING_NAMES = ["schema_version", *TEXT_SETTING_NAMES, *ACTIVITYWATCH_SETTING_NAMES]
+KNOWN_SETTING_NAMES = ["schema_version", *TEXT_SETTING_NAMES, *ACTIVITYWATCH_SETTING_NAMES, "account_mode"]
 
 # ActivityWatch's own default port, which the eval account's copy must not
 # use; see the module docstring.
@@ -175,7 +191,8 @@ class LocalSettings:
 
     `activitywatch_port` and `activitywatch_device_id` are None when the file
     does not have them; whether the eval needs them is for goodall.eval_config
-    to say. The device_id is always lowercase.
+    to say. The device_id is always lowercase. `account_mode` is one of
+    ACCOUNT_MODES, and is DEDICATED_ACCOUNT_MODE when the file does not say.
     """
 
     settings_file: Path
@@ -187,6 +204,7 @@ class LocalSettings:
     secrets_manager: str
     activitywatch_port: int | None = None
     activitywatch_device_id: str | None = None
+    account_mode: str = DEDICATED_ACCOUNT_MODE
 
 
 class RelativeConfigDirectoryError(ValueError):
@@ -357,6 +375,7 @@ def check_settings_table(settings_file: Path, settings_table: dict[str, object])
 
     activitywatch_port = read_activitywatch_port(settings_file, settings_table, problems)
     activitywatch_device_id = read_activitywatch_device_id(settings_file, settings_table, problems)
+    account_mode = read_account_mode(settings_file, settings_table, problems)
 
     if problems:
         return problems
@@ -372,6 +391,7 @@ def check_settings_table(settings_file: Path, settings_table: dict[str, object])
         secrets_manager=text_values["secrets_manager"],
         activitywatch_port=activitywatch_port,
         activitywatch_device_id=activitywatch_device_id,
+        account_mode=account_mode,
     )
 
 
@@ -422,6 +442,30 @@ def read_activitywatch_device_id(
         )
         return None
     return value.lower()
+
+
+def read_account_mode(settings_file: Path, settings_table: dict[str, object], problems: list[Failure]) -> str:
+    """Return the account mode: dedicated when the file does not say, or when a problem was recorded.
+
+    Trap: the value is never shown, like every other value that is not yet
+    known to be safe to repeat (ADR 0006).
+    """
+    if "account_mode" not in settings_table:
+        return DEDICATED_ACCOUNT_MODE
+    value = settings_table["account_mode"]
+    if not isinstance(value, str) or value not in ACCOUNT_MODES:
+        problems.append(
+            value_invalid_failure(
+                settings_file,
+                "account_mode",
+                f'must be "{DEDICATED_ACCOUNT_MODE}", for an eval account used for this eval and nothing else, or '
+                f'"{MIXED_ACCOUNT_MODE}", for an account you also use for other things, in lowercase and in double '
+                "quotes",
+                f'account_mode = "{DEDICATED_ACCOUNT_MODE}"',
+            )
+        )
+        return DEDICATED_ACCOUNT_MODE
+    return value
 
 
 def is_whole_number(value: object) -> TypeGuard[int]:

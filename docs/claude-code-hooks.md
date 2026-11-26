@@ -9,13 +9,18 @@ built; until then, nothing installs them.
 
 | Event | What goodall does | Can it stop Claude Code? |
 | --- | --- | --- |
-| `UserPromptSubmit` | The prompt gate. With a work block active, it records a heartbeat linking the Claude session and the prompt goes through, even when it cannot read what Claude Code sent (see below). Otherwise it refuses the prompt and says what to run, usually `goodall start`. | Yes: it refuses the prompt. |
+| `UserPromptSubmit` | The prompt gate. With a work block active, it records a heartbeat linking the Claude session and the prompt goes through, even when it cannot read what Claude Code sent (see below). Otherwise it refuses the prompt and says what to run, usually `goodall start`. While recording is paused (`goodall pause`) no work block is active, so it refuses in the same way, and the message says that goodall is paused. | Yes: it refuses the prompt. |
 | `PostToolUse` | Records a heartbeat after each tool call, so a long reply still shows the work block was active. | Never. |
 | `Stop` | Records a heartbeat when Claude finishes a reply. | Never. |
 | `SessionEnd` | Records a heartbeat when the Claude session ends. | Never. |
 | `SessionStart` | Records a heartbeat when a Claude session starts or resumes, linking it to the work block before the first prompt. | Never. |
 
 Heartbeats are recorded only while a work block is active.
+
+The table describes **dedicated account mode**, which is what goodall uses
+unless local settings say otherwise. In **mixed account mode**
+(`account_mode = "mixed"` in local settings, ADR 0021) the prompt gate is
+off; see [When the prompt gate refuses a prompt](#when-the-prompt-gate-refuses-a-prompt).
 
 Hooks copy nothing. Agent sessions are copied when a work block ends, the
 same way for every source application (ADR 0019): `goodall stop`, or the
@@ -80,6 +85,29 @@ command, not from what Claude Code sends, so the prompt gate knows it is the
 gate even when that input cannot be read, and still refuses the prompt when
 no work block is active.
 
+## When the prompt gate refuses a prompt
+
+Which account mode applies is read from local settings on every prompt
+(`account_mode`; left out, it means dedicated).
+
+| What goodall finds | Dedicated account mode | Mixed account mode |
+| --- | --- | --- |
+| Local settings are missing or cannot be read | Refused | Refused: without them goodall cannot know the mode, and dedicated is the safe assumption |
+| The log directory cannot be reached | Refused | Goes through, nothing recorded |
+| No work block is active | Refused | Goes through, nothing recorded |
+| Recording is paused (`goodall pause`), so no work block is active | Refused, with a message saying that goodall is paused | Goes through, nothing recorded |
+| An unexpected error inside goodall | Refused | Goes through, nothing printed |
+| A work block is active | Goes through, with a heartbeat | The same |
+| A work block is active but what Claude Code sent cannot be read | Goes through, with a notice (next section) | The same |
+| A work block is active but its telemetry receiver has stopped | Goes through, with a notice (below) | The same |
+
+In mixed account mode the macOS user account is also used for things that
+are not the eval, so goodall never stops a prompt for want of a work block,
+and outside a work block the hooks write nothing at all: no heartbeat, no
+note of a hook problem, not even where Claude Code keeps its files. While a
+work block is active the hooks behave exactly as in dedicated account mode.
+Work done outside a work block is simply not recorded.
+
 ## When goodall cannot read what Claude Code sends
 
 A newer Claude Code may change the details it sends with each hook. So that
@@ -106,7 +134,7 @@ moments noted. No goodall command does that yet.
 
 With no work block active, unreadable details change nothing: the prompt is
 refused as usual. An unexpected error inside the hook still refuses the
-prompt.
+prompt. (In mixed account mode neither refuses it; see the table above.)
 
 ## When goodall's telemetry receiver has stopped
 
@@ -172,3 +200,7 @@ project.
 In the eval account, with no work block active, send Claude Code any prompt.
 It should be refused with a message telling you to run `goodall start`. Run
 `goodall start`, send the prompt again, and it should go through.
+
+In mixed account mode the first prompt goes through too. To check the hooks
+there, run `goodall start`, send a prompt, and look for the Claude session
+under `claude_sessions` in `goodall status --json`.

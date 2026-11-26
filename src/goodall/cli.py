@@ -7,7 +7,7 @@ exit code, so `main` returns a number instead of calling `sys.exit` itself.
 
 `goodall status` (goodall.status), `goodall doctor` (goodall.doctor),
 `goodall journal` and `goodall intervene` (goodall.entries),
-`goodall start` and `goodall stop` (goodall.work_block_commands),
+`goodall start`, `goodall pause` and `goodall stop` (goodall.work_block_commands),
 `goodall fixblock` (goodall.fixblock), `goodall export scout`
 (goodall.scout_export), and `goodall hook` (goodall.hook) are built. The `goodall` command itself starts
 in goodall.entry_point, which sends `goodall hook` to goodall.hook without
@@ -48,7 +48,7 @@ from goodall.runner import RealRunner, Runner
 from goodall.scout_export import run_export_scout
 from goodall.status import run_status
 from goodall.terminal import Failure, Terminal
-from goodall.work_block_commands import Clock, run_start, run_stop
+from goodall.work_block_commands import Clock, run_pause, run_start, run_stop
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -99,6 +99,18 @@ def build_parser() -> argparse.ArgumentParser:
 
     stop = commands.add_parser("stop", help="End the current work block, which closes the prompt gate.")
     stop.set_defaults(command_name="stop")
+
+    pause = commands.add_parser(
+        "pause",
+        help="End the current work block, meaning to continue: the next goodall start names it.",
+        description=(
+            "End the current work block and remember that recording is paused. While paused goodall is not "
+            "recording, and the prompt gate is closed (in mixed account mode it stays off). goodall start then "
+            "begins a new work block whose record names the paused one, on the same workstream unless --workstream "
+            "names another. goodall stop clears the pause instead."
+        ),
+    )
+    pause.set_defaults(command_name="pause")
 
     fixblock = commands.add_parser(
         "fixblock",
@@ -395,6 +407,8 @@ def main(
         )
     if command_name == "stop":
         return run_stop(terminal, runner, clock)
+    if command_name == "pause":
+        return run_pause(terminal, runner, clock)
     if command_name == "fixblock":
         return run_fixblock(terminal, runner, clock, arguments.work_block_id, arguments.workstream)
     if command_name == "delete":

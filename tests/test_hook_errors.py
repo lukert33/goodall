@@ -73,3 +73,13 @@ def test_an_unexpected_error_refuses_the_prompt() -> None:
 def test_an_unexpected_error_in_any_other_event_is_silent() -> None:
     for event_name in ["SessionStart", "PostToolUse", "Stop", "SessionEnd"]:
         assert run_hook_in_process(event_name) == (0, "", "")
+
+
+@pytest.mark.usefixtures("broken_heartbeat")
+def test_in_mixed_account_mode_an_unexpected_error_lets_the_prompt_through_silently(tmp_path: Path) -> None:
+    # The gate is off (ADR 0021), so a bug in goodall must not stop a prompt
+    # that may have nothing to do with the eval.
+    with (tmp_path / "goodall-config" / "local-settings.toml").open("a") as settings_file:
+        settings_file.write('account_mode = "mixed"\n')
+
+    assert run_hook_in_process("UserPromptSubmit") == (0, "", "")

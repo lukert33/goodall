@@ -87,9 +87,17 @@ goodall writes, so it is JSON. Folder: `work-blocks/`.
 | `machine.claude_code_version` | no | `null` if Claude Code was not found. |
 | `claude_sessions` | yes | The Claude Code session ids of the Claude sessions that fell inside the work block; `[]` if none. |
 | `telemetry` | no | Whether the work block's telemetry was captured: `captured` (telemetry requests were stored and goodall never found its receiver down), `incomplete` (requests were stored, but the receiver was down for part of the work block), or `missing` (no request was stored at all). Left out while running, and in records written before goodall captured telemetry, which say nothing either way. PROVISIONAL. |
+| `account_mode` | no | The account mode the work block was recorded in, as local settings said when it started: `dedicated` (an eval account, with the prompt gate on) or `mixed` (a macOS user account the person also uses for other things, with the prompt gate off and ActivityWatch left out; ADR 0021). Left out only in records written before goodall recorded it, all of which were made in dedicated account mode, the only one there was. |
+| `continues_work_block` | no | The `id` of the work block this one continues: the one that was paused, with `goodall pause`, when this one started (ADR 0021). The two may be on different workstreams. Left out when the work block continues none. The work block it names may since have been deleted (see "Deleted work block" below); the id then names that record. PROVISIONAL. |
 
 The machine facts are observed, never configured (ADR 0009). There is no
 billing field: goodall does not track billing.
+
+`telemetry`, `account_mode` and `continues_work_block` were added after
+records were already being written. Each is optional and left out when it
+has nothing to say, so files already written still read, and
+`schema_version` stays `1`. A work block started after a pause carries both
+`account_mode` and `continues_work_block`.
 
 <!-- example: work_block -->
 ```json
@@ -112,7 +120,8 @@ billing field: goodall does not track billing.
     "0f6c1d2e-3a4b-4c5d-8e9f-a0b1c2d3e4f5",
     "5b8e2a71-9c04-4d3f-b6a2-17e0c9d4f8a3"
   ],
-  "telemetry": "captured"
+  "telemetry": "captured",
+  "account_mode": "dedicated"
 }
 ```
 
@@ -161,11 +170,13 @@ What is left of a work block whose captured data a person deleted with
 replaces the work block record, in the same file in `work-blocks/` and with
 the same `id`, so journal entries and interventions that name the work block
 still name something. It says only that a work block was deleted at the
-person's request, and when: the work block's times, workstream, machine facts
-and Claude sessions are dropped. This is the one time goodall replaces a
-record. The replacement is committed and git history is left alone, so the
-work block record stays in the repository's history and the fact of the
-deletion stays honest.
+person's request, and when: the work block's times, workstream, machine
+facts, Claude sessions, account mode and the work block it continued are
+dropped. A work block that named it in `continues_work_block` is left as it
+is, and that id now names the deleted work block. This is the one time
+goodall replaces a record. The replacement is committed and git history is
+left alone, so the work block record stays in the repository's history and
+the fact of the deletion stays honest.
 
 | Field | Required | Value |
 | --- | --- | --- |
@@ -328,7 +339,7 @@ does not import Inspect. Checked against the `inspect_ai` source
 | `workstream` | `SpanBeginEvent.name` | |
 | `started_at` | `SpanBeginEvent.timestamp` | |
 | `ended_at` | `SpanEndEvent.timestamp` | No `SpanEndEvent` while the work block is running. |
-| `end_state`, `contributor`, `machine`, `claude_sessions`, `telemetry` | `metadata` | Inspect has no field for these. `claude_sessions` says which transcripts (Inspect samples) the span covers. |
+| `end_state`, `contributor`, `machine`, `claude_sessions`, `telemetry`, `account_mode`, `continues_work_block` | `metadata` | Inspect has no field for these. `claude_sessions` says which transcripts (Inspect samples) the span covers. |
 | **Journal entry** | `InfoEvent` | |
 | `record_type` | `InfoEvent.source` = `"goodall/journal_entry"` | |
 | `written_at` | `InfoEvent.timestamp` | |

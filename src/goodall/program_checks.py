@@ -13,7 +13,9 @@ They fall under three headings, each with its own id prefix:
   whether it is needed depends on the env file (ADR 0006: a secrets manager
   is required only when a secret exists).
 - "Eval account": this macOS user account is a standard account, not an
-  administrator.
+  administrator. In mixed account mode (ADR 0021) the account is one the
+  person also uses for other things, so an administrator account is a
+  warning that recommends an eval account, not a failure.
 - "Record repo": the record repo folder is a git repository, and it stays
   on this Mac. Goodall never pushes the record repo (ADR 0023), so that
   check always passes; when someone has added a remote by hand, its note
@@ -23,7 +25,10 @@ The dependency edges, chosen so one broken thing is one failure:
 
 - git needs nothing else, so it is checked even when local settings are
   missing.
-- The account check needs nothing else.
+- The account check needs nothing else. It reads the account mode from
+  local settings when an earlier check found them valid, and otherwise
+  takes the mode to be dedicated, the safe assumption, so an administrator
+  account is still reported when local settings are missing.
 - The git repository check waits for the record repo folder and for git:
   without git it cannot ask, and the report should say "git is missing"
   once, not again under the record repo. The stays-on-this-Mac check waits
@@ -37,8 +42,8 @@ check that could print a secret runs here.
 
 from pathlib import Path
 
-from goodall.checks import Check, CheckContext, CheckOutcome, failed, passed
-from goodall.local_settings import LocalSettings
+from goodall.checks import Check, CheckContext, CheckOutcome, failed, passed, warned
+from goodall.local_settings import MIXED_ACCOUNT_MODE, LocalSettings
 from goodall.runner import Command, CommandOutcome, RequiredProgram, first_non_blank_line
 from goodall.settings_checks import RECORD_REPO_FOUND, valid_local_settings
 from goodall.terminal import Failure
@@ -125,7 +130,15 @@ def check_standard_account(context: CheckContext) -> CheckOutcome:
 
     It asks `id -Gn` for the account's groups by name. On macOS an
     administrator is exactly an account in the `admin` group.
+
+    In mixed account mode whatever this finds is a warning, never a failure:
+    the eval account's rules apply in dedicated account mode only (ADR 0021).
     """
+    # False when local settings are missing or invalid: the mode is then
+    # unknown, and is taken to be dedicated (see the module docstring).
+    mixed_account_mode = False
+    if context.local_settings is not None:
+        mixed_account_mode = context.local_settings.account_mode == MIXED_ACCOUNT_MODE
     command = Command(ACCOUNT_GROUPS_COMMAND)
     result = context.runner.run(command)
     group_names = result.standard_output.split()
@@ -134,9 +147,13 @@ def check_standard_account(context: CheckContext) -> CheckOutcome:
     # in at least one group, so an empty answer is not an answer either.
     if not result.succeeded or not group_names:
         problem = result.problem or f"`{command.as_typed}` listed no groups"
+        if mixed_account_mode:
+            return warned([account_groups_unknown_failure(problem)])
         return failed([account_groups_unknown_failure(problem)])
     for group_name in group_names:
         if group_name in ADMINISTRATOR_GROUPS:
+            if mixed_account_mode:
+                return warned([mixed_account_is_administrator_warning(group_name)])
             return failed([account_is_administrator_failure(group_name)])
     return passed()
 
@@ -176,6 +193,32 @@ def account_is_administrator_failure(group_name: str) -> Failure:
             "Run the eval in a standard account. From an administrator account, open System Settings, then "
             "Users & Groups, and either create a new standard account for this eval or turn off "
             "administrator rights for this one. Then run goodall doctor again in the eval account."
+        ),
+    )
+
+
+def mixed_account_is_administrator_warning(group_name: str) -> Failure:
+    """The warning for an administrator account in mixed account mode (ADR 0021).
+
+    It says what goodall still does, so the person knows nothing is broken,
+    and that an eval account is the recommended setup, with the reason.
+    """
+    return Failure(
+        kind="mixed_account_is_administrator",
+        what_happened=(
+            f"This macOS user account is an administrator (it is in the {group_name} group). Goodall still records "
+            "your work blocks here, because local settings say mixed account mode. An eval account is the "
+            "recommended setup: a standard account used for one eval and nothing else."
+        ),
+        why=(
+            "The agents you work with act with this account's rights. An administrator can install software, "
+            "change system settings and read other accounts' files, so an agent could too. An eval account also "
+            "keeps the eval apart from your other files and sign-ins, so nothing personal is recorded by mistake."
+        ),
+        what_to_do_next=(
+            "Nothing, if you are trying goodall out on your own work. To run an eval the recommended way, create a "
+            "standard account for it from System Settings, then Users & Groups, and set goodall up there in "
+            "dedicated account mode."
         ),
     )
 

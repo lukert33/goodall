@@ -16,7 +16,9 @@
    installed in an eval account.
 
 When the eval does not include ActivityWatch (ADR 0016) all four pass,
-the first with a note saying so, and nothing is asked of anything.
+the first with a note saying so, and nothing is asked of anything. The same
+holds in mixed account mode, which leaves ActivityWatch out even when the
+eval config includes it (ADR 0021); the note then says that plainly.
 
 How it asks (ADR 0011, amended 2026-11-18): with the `curl` command that
 goodall.activitywatch_server builds, which says why each of its flags is
@@ -61,6 +63,7 @@ from goodall.activitywatch_server import (
     not_answering_failure,
 )
 from goodall.checks import Check, CheckContext, CheckOutcome, failed, passed, warned
+from goodall.eval_config import activitywatch_is_used
 from goodall.runner import CommandOutcome
 from goodall.settings_checks import ACTIVITYWATCH_SETTINGS_RECORDED, valid_eval_config, valid_local_settings
 from goodall.terminal import Failure
@@ -84,6 +87,16 @@ BROWSER_BUCKET_TYPE = "web.tab.current"
 AFK_FRESH_WITHIN = timedelta(minutes=10)
 
 NOT_INCLUDED_NOTE = "This eval does not include ActivityWatch, so there is nothing to check."
+NOT_USED_IN_MIXED_ACCOUNT_MODE_NOTE = (
+    "ActivityWatch is not used in mixed account mode, so there is nothing to check. The eval config includes "
+    "ActivityWatch, but it records the whole account all the time, and local settings say you also use this "
+    "account for other things."
+)
+
+
+def checks_have_nothing_to_ask(context: CheckContext) -> bool:
+    """True when ActivityWatch is not part of this account's record, so every check here passes unasked."""
+    return not activitywatch_is_used(valid_local_settings(context), valid_eval_config(context))
 
 
 def ask_activitywatch(context: CheckContext, port: int, path: str) -> object | Failure:
@@ -112,6 +125,8 @@ def check_server_is_this_accounts(context: CheckContext) -> CheckOutcome:
     if not eval_config.activitywatch:
         return passed(note=NOT_INCLUDED_NOTE)
     local_settings = valid_local_settings(context)
+    if checks_have_nothing_to_ask(context):
+        return passed(note=NOT_USED_IN_MIXED_ACCOUNT_MODE_NOTE)
     port = local_settings.activitywatch_port
     recorded_device_id = local_settings.activitywatch_device_id
     if port is None or recorded_device_id is None:
@@ -130,7 +145,7 @@ def check_server_is_this_accounts(context: CheckContext) -> CheckOutcome:
 
 def check_window_and_afk_buckets_exist(context: CheckContext) -> CheckOutcome:
     """ActivityWatch lists a window bucket and an AFK bucket; remembers every bucket's id and type."""
-    if not valid_eval_config(context).activitywatch:
+    if checks_have_nothing_to_ask(context):
         return passed()
     port = recorded_port(context)
 
@@ -163,7 +178,7 @@ def check_afk_bucket_is_recent(context: CheckContext) -> CheckOutcome:
     readable, that the data is stale or empty. Only the newest event is
     asked for, and only its time is read from it.
     """
-    if not valid_eval_config(context).activitywatch:
+    if checks_have_nothing_to_ask(context):
         return passed()
     port = recorded_port(context)
     if context.now is None:
@@ -202,7 +217,7 @@ def check_afk_bucket_is_recent(context: CheckContext) -> CheckOutcome:
 
 def check_no_browser_watcher(context: CheckContext) -> CheckOutcome:
     """No bucket of type `web.tab.current` exists: the browser extension is not installed (ADR 0016)."""
-    if not valid_eval_config(context).activitywatch:
+    if checks_have_nothing_to_ask(context):
         return passed()
     if context.activitywatch_buckets is None:
         raise RuntimeError(f"{NO_BROWSER_WATCHER} must list {WINDOW_AND_AFK_BUCKETS_EXIST} as a prerequisite.")

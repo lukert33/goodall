@@ -63,6 +63,7 @@ from pathlib import Path
 from goodall.local_settings import (
     ACTIVITYWATCH_EXAMPLE_LINES,
     ACTIVITYWATCH_INFO_PATH,
+    MIXED_ACCOUNT_MODE,
     LocalSettings,
     is_whole_number,
 )
@@ -337,16 +338,29 @@ def read_activitywatch(config_file: Path, table: dict[str, object], problems: li
     return value
 
 
+def activitywatch_is_used(local_settings: LocalSettings, eval_config: EvalConfig) -> bool:
+    """True when this account's ActivityWatch is part of the record: the eval includes it, in dedicated account mode.
+
+    Mixed account mode leaves ActivityWatch out whatever the eval config
+    says (ADR 0021), because ActivityWatch records the whole account all the
+    time and the account is also used for things that are not the eval.
+    Every place that asks ActivityWatch anything, or notes that its data is
+    to be copied, asks this first.
+    """
+    return eval_config.activitywatch and local_settings.account_mode != MIXED_ACCOUNT_MODE
+
+
 def missing_activitywatch_settings(local_settings: LocalSettings, eval_config: EvalConfig) -> list[str]:
     """Name each ActivityWatch setting this account's local settings lack, when the eval includes ActivityWatch.
 
-    Returns an empty list when the eval does not include ActivityWatch: the
+    Returns an empty list when the eval does not include ActivityWatch, or
+    the account is in mixed account mode, which does not use it: the
     settings then have no effect, so having them or not is fine. A cross-check
     between the two files, run by `goodall doctor` only. Other commands keep
     working without these settings, because ActivityWatch keeps its own
     history and a copy missed now can be taken once they are recorded.
     """
-    if not eval_config.activitywatch:
+    if not activitywatch_is_used(local_settings, eval_config):
         return []
     missing: list[str] = []
     if local_settings.activitywatch_port is None:

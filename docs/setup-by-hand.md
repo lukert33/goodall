@@ -209,6 +209,47 @@ your first `goodall stop`.
 - [ ] Run `goodall status`. It names any setting it cannot read and shows a
       correct example line.
 
+### Mixed account mode: trying goodall in an account you also use for other things
+
+Everything above sets up **dedicated account mode**: an eval account, where
+signing in means recording. That is the recommended setup. **Mixed account
+mode** is a second choice, for trying goodall out on your own work in a
+macOS user account you also use for other things (ADR 0021). To use it, do
+Parts 2, 4, 5 and 6 in that account, skip Part 3, and add one line to local
+settings:
+
+```toml
+account_mode = "mixed"
+```
+
+The other value is `"dedicated"`, which is also what leaving the line out
+means. Anything else is refused, with the correct line shown.
+
+What changes in mixed account mode:
+
+- **The prompt gate is off.** Your prompts are never refused for want of a
+  work block. Nothing is recorded unless you run `goodall start`, and work
+  outside a work block is left alone.
+- **Any agent conversation held during a work block is copied, whatever it
+  was about.** If any part of a conversation with an agent happens while a
+  work block is active, goodall copies that whole conversation when the
+  work block ends, including the parts from before you started and anything
+  personal in it. Run `goodall stop` before you turn to something that is
+  not for the eval, and start a new conversation for it.
+- **ActivityWatch is not used**, even when `eval.toml` says
+  `activitywatch = true`, because it records the whole account all the
+  time. Goodall asks it nothing and copies nothing from it, and the
+  `activitywatch_port` and `activitywatch_device_id` lines are not needed.
+- **`goodall doctor` warns, and does not fail,** when the account is an
+  administrator account. An eval account is still the recommended setup.
+- Every work block record says which mode it was recorded in
+  (`account_mode`), and `goodall status` shows the mode.
+
+The safeguards ADR 0021 plans for mixed account mode are not built yet: the
+menu bar icon, the notifications and the automatic timeout. Until they are,
+nothing reminds you that a work block is active, so run `goodall status`
+when unsure.
+
 ## Part 5: The Claude Code hooks
 
 The prompt gate and transcript copying run from Claude Code's hooks.
@@ -230,7 +271,8 @@ sessions yet (issues goodall-fs9.24 and goodall-fs9.25).
       it again.
 - [ ] With no work block active, send any prompt in Claude Code in a
       terminal. It should be refused with a message telling you to run
-      `goodall start`.
+      `goodall start`. (In mixed account mode it should go through, and
+      nothing should appear in the log directory.)
 - [ ] Do the same in the Claude desktop app's Code tab. Note whether it is
       refused.
 - [ ] Run `goodall start`, send a prompt in each, then run `goodall stop`.

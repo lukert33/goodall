@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from goodall import cli, exit_codes
+from goodall import cli, exit_codes, local_settings
 from goodall.terminal import Terminal
 
 # An obviously made-up key, used wherever a test checks that goodall never repeats a value.
@@ -159,16 +159,20 @@ def test_status_json_reports_the_same_failure_on_standard_output(empty_config_di
     # eval and the contributor are null until goodall has read them.
     assert set(document) == {
         "work_block_active",
+        "account_mode",
         "eval",
         "contributor",
         "work_block",
         "ended_work_blocks",
         "work_blocks_waiting_for_workstream",
+        "paused",
+        "paused_work_block",
         "warnings",
         "failures",
     }
     assert document["work_block_active"] is False
     assert document["work_block"] is None
+    assert document["account_mode"] is None
     assert document["eval"] is None
     assert document["contributor"] is None
     assert len(document["failures"]) == 1
@@ -564,9 +568,10 @@ def test_valid_eval_reports_the_eval_the_contributor_and_no_work_block(eval_acco
     assert exit_code == exit_codes.ERROR
     assert standard_error == ""
     assert standard_output == (
-        "Eval         goodall-pilot\n"
-        "Contributor  Ada Lovelace (ada-lovelace)\n"
-        "Workstream   research, your main workstream\n"
+        "Eval          goodall-pilot\n"
+        "Contributor   Ada Lovelace (ada-lovelace)\n"
+        "Account mode  dedicated\n"
+        "Workstream    research, your main workstream\n"
         "\n"
         "No work block is active, so nothing is being recorded.\n"
         "\n"
@@ -599,11 +604,14 @@ def test_valid_eval_as_json_gives_the_same_facts(eval_account: EvalAccount) -> N
     assert standard_error == ""
     assert json.loads(standard_output) == {
         "work_block_active": False,
+        "account_mode": "dedicated",
         "eval": {"name": "goodall-pilot"},
         "contributor": {"id": "ada-lovelace", "display_name": "Ada Lovelace", "main_workstream": "research"},
         "work_block": None,
         "ended_work_blocks": [],
         "work_blocks_waiting_for_workstream": [],
+        "paused": False,
+        "paused_work_block": None,
         "warnings": [],
         "failures": [],
     }
@@ -1210,6 +1218,45 @@ def test_a_secret_pasted_anywhere_in_settings_or_eval_config_is_never_shown_by_s
     for printed in [text_output, text_error, json_output, json_error]:
         assert secret not in printed
     assert json.loads(json_output)["failures"] != []
+
+
+# The account mode (ADR 0021): dedicated account mode records in an eval
+# account, mixed account mode in an account the person also uses for other
+# things. It is true for one account on one machine, so it is a local setting.
+@pytest.mark.parametrize("account_mode", ["dedicated", "mixed"])
+def test_local_settings_naming_either_account_mode_are_valid(eval_account: EvalAccount, account_mode: str) -> None:
+    eval_account.make_valid()
+    eval_account.write_settings(eval_account.valid_settings_text() + f'account_mode = "{account_mode}"\n')
+    assert failure_kinds() == []
+
+
+def test_local_settings_without_an_account_mode_mean_dedicated_account_mode(eval_account: EvalAccount) -> None:
+    # Every setup made before mixed account mode existed has no such key,
+    # and must keep behaving as it did.
+    eval_account.make_valid()
+
+    settings = local_settings.read_local_settings()
+
+    assert isinstance(settings, local_settings.LocalSettings)
+    assert settings.account_mode == "dedicated"
+
+
+@pytest.mark.parametrize("mode_line", ['account_mode = "mixd"', 'account_mode = "Mixed"', "account_mode = true"])
+def test_an_account_mode_goodall_does_not_know_is_reported_with_both_values(
+    eval_account: EvalAccount, mode_line: str
+) -> None:
+    eval_account.make_valid()
+    eval_account.write_settings(eval_account.valid_settings_text() + mode_line + "\n")
+
+    exit_code, _, standard_error = run_goodall(["status"])
+
+    assert exit_code == exit_codes.ERROR
+    assert "account_mode" in standard_error
+    assert '"dedicated"' in standard_error
+    assert '"mixed"' in standard_error
+    # The value written is never repeated back (ADR 0006).
+    assert "mixd" not in standard_error
+    assert failure_kinds() == ["local_settings_value_invalid"]
 
 
 # ActivityWatch (ADR 0016). The eval config says whether the eval includes it;
