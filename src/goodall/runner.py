@@ -1,6 +1,6 @@
 """The runner: the only code in goodall that starts other programs.
 
-Every program goodall runs (git, gh, the secrets manager's command, `id`)
+Every program goodall runs (git, the secrets manager's command, `id`)
 goes through a `Runner` (ADR 0011, AGENTS.md invariant 9). A caller
 describes what to run as a `Command` and reads back a `CommandResult`. The
 runner also says whether a program is installed (`find_program`) without
@@ -114,7 +114,7 @@ class RequiredProgram:
 
     - `name` is the command, as found on the PATH.
     - `described` names it for a person, at the start of a sentence, such
-      as "gh, GitHub's command-line tool,".
+      as "op, 1Password's command-line tool,".
     - `why` says what goodall uses it for.
     - `how_to_install` says where to get it, as the end of a sentence.
 

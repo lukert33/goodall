@@ -47,7 +47,6 @@ from goodall.activitywatch_checks import ACTIVITYWATCH_CHECKS
 from goodall.checks import Check, CheckContext, run_checks
 from goodall.claude_code_checks import CLAUDE_CODE_CHECKS
 from goodall.program_checks import PROGRAM_CHECKS
-from goodall.remote_checks import REMOTE_CHECKS
 from goodall.runner import Runner
 from goodall.secrets_checks import CHECKS_UNVERIFIABLE_WITHOUT_A_SECRET, SECRETS_CHECKS
 from goodall.settings_checks import SETTINGS_CHECKS
@@ -60,18 +59,15 @@ DOCTOR_JSON_SCHEMA_VERSION = 1
 
 # Every check doctor runs, in order. The settings checks come first, because
 # they say which eval this account belongs to; then the checks that run
-# other programs (tools, the eval account, the record repo); then where the
-# record repo is shared (its remote, gh's sign-in, its visibility); then the
+# other programs (tools, the eval account, the record repo); then the
 # checks of the env file and the shared env file (secrets); then Claude
 # Code's hooks; then the active work block's telemetry receiver; last, the
 # eval account's ActivityWatch, which only an eval that includes it asks about. A check
-# is shown under its group's heading wherever it runs: gh's sign-in under
-# "Tools", and the secrets manager's command, which waits for the env file,
-# too.
+# is shown under its group's heading wherever it runs: the secrets
+# manager's command, which waits for the env file, is shown under "Tools".
 DOCTOR_CHECKS: list[Check] = [
     *SETTINGS_CHECKS,
     *PROGRAM_CHECKS,
-    *REMOTE_CHECKS,
     *SECRETS_CHECKS,
     *CLAUDE_CODE_CHECKS,
     *TELEMETRY_CHECKS,
@@ -79,15 +75,14 @@ DOCTOR_CHECKS: list[Check] = [
 ]
 
 
-def run_doctor(terminal: Terminal, runner: Runner, clock: Clock, as_json: bool, offline: bool = False) -> int:
+def run_doctor(terminal: Terminal, runner: Runner, clock: Clock, as_json: bool) -> int:
     """Run every check, show the results, and return the exit code.
 
     `runner` is how the checks start other programs (goodall.runner).
     `clock` says what time it is, once, so every check agrees on which work
-    block is active. `offline` leaves out every question to GitHub: those
-    checks are reported as unverified, which neither passes nor fails them.
+    block is active.
     """
-    results = run_checks(DOCTOR_CHECKS, CheckContext(runner=runner, offline=offline, now=clock()))
+    results = run_checks(DOCTOR_CHECKS, CheckContext(runner=runner, now=clock()))
     if as_json:
         terminal.write_json(doctor_document(results))
     else:

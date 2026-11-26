@@ -8,8 +8,8 @@ tickets, can import it as `goodall.fake_runner`.
 What it promises, and why (ADR 0011):
 
 - A command it was not told about fails the test, with an AssertionError
-  naming the command. So no test can reach the real `gh` or the real
-  secrets manager by accident: forgetting to script one is a loud failure,
+  naming the command. So no test can reach the real secrets manager, or
+  any other real program, by accident: forgetting to script one is a loud failure,
   never a silent call to the real world.
 - A test scripts an answer for an exact list of arguments with `answer`,
   and gets back the same answer every time that command runs.

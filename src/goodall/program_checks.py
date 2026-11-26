@@ -7,28 +7,31 @@ does, and git runs for real.
 
 They fall under three headings, each with its own id prefix:
 
-- "Tools": git and gh are installed. One check per program, so each
-  missing program is one failure naming it. The secrets manager's command
+- "Tools": git is installed. One check per program, so each missing
+  program is one failure naming it. The secrets manager's command
   is checked under this heading too, but by goodall.secrets_checks, because
   whether it is needed depends on the env file (ADR 0006: a secrets manager
   is required only when a secret exists).
 - "Eval account": this macOS user account is a standard account, not an
   administrator.
-- "Record repo": the record repo folder is a git repository. The checks of
-  where it is shared (its remote, and its visibility on GitHub) appear
-  under this heading too, from goodall.remote_checks.
+- "Record repo": the record repo folder is a git repository, and it stays
+  on this Mac. Goodall never pushes the record repo (ADR 0023), so that
+  check always passes; when someone has added a remote by hand, its note
+  says that goodall leaves the remote alone.
 
 The dependency edges, chosen so one broken thing is one failure:
 
-- git and gh need nothing else, so they are checked even when local
-  settings are missing.
+- git needs nothing else, so it is checked even when local settings are
+  missing.
 - The account check needs nothing else.
 - The git repository check waits for the record repo folder and for git:
   without git it cannot ask, and the report should say "git is missing"
-  once, not again under the record repo.
+  once, not again under the record repo. The stays-on-this-Mac check waits
+  for the git repository check.
 
 Like every check, these only look (AGENTS.md invariant 5): programs are looked for on
-the PATH without being run, `id -Gn` and `git rev-parse` only read, and no
+the PATH without being run, `id -Gn`, `git rev-parse` and `git remote` (which
+only lists the remotes' names) only read, and no
 check that could print a secret runs here.
 """
 
@@ -45,9 +48,9 @@ EVAL_ACCOUNT_GROUP = "Eval account"
 RECORD_REPO_GROUP = "Record repo"
 
 GIT_INSTALLED = "tools.git_installed"
-GH_INSTALLED = "tools.gh_installed"
 STANDARD_ACCOUNT = "eval_account.standard_account"
 RECORD_REPO_IS_GIT_REPOSITORY = "record_repo.is_git_repository"
+RECORD_REPO_STAYS_ON_THIS_MAC = "record_repo.stays_on_this_mac"
 
 # The command that lists this macOS user account's groups by name. It is
 # named by its full path, the same on macOS and Linux, so a program called
@@ -65,15 +68,8 @@ ADMINISTRATOR_GROUPS = ["admin", "wheel", "sudo"]
 GIT = RequiredProgram(
     name="git",
     described="git",
-    why="Goodall keeps the eval's records in the record repo with git, and commits and pushes them.",
+    why="Goodall keeps the eval's records in the record repo with git, and commits them.",
     how_to_install="with Apple's Command Line Tools, by running xcode-select --install in Terminal",
-)
-
-GH = RequiredProgram(
-    name="gh",
-    described="gh, GitHub's command-line tool,",
-    why="Goodall asks gh about the record repo on GitHub, so that goodall itself never holds a GitHub token.",
-    how_to_install="from https://cli.github.com",
 )
 
 
@@ -122,11 +118,6 @@ def program_missing_failure(program: RequiredProgram) -> Failure:
 def check_git_installed(context: CheckContext) -> CheckOutcome:
     """git is installed."""
     return check_program_installed(context, GIT)
-
-
-def check_gh_installed(context: CheckContext) -> CheckOutcome:
-    """gh is installed."""
-    return check_program_installed(context, GH)
 
 
 def check_standard_account(context: CheckContext) -> CheckOutcome:
@@ -273,6 +264,32 @@ def record_repo_git_unanswered_failure(local_settings: LocalSettings, problem: s
     )
 
 
+def check_record_repo_stays_on_this_mac(context: CheckContext) -> CheckOutcome:
+    """Goodall keeps the record repo on this Mac; a remote added by hand gets a note saying goodall leaves it alone.
+
+    Goodall has no code that pushes (ADR 0023), so this cannot fail. It
+    exists so a person who added a remote, or cloned the record repo from
+    one, learns in plain words that their records do not reach it. Only
+    the remotes' names are read: `git remote` without `-v` never prints an
+    address, which may hold a token.
+    """
+    local_settings = valid_local_settings(context)
+    result = context.runner.run(Command(["git", "remote"], working_directory=local_settings.record_repo.path))
+    remote_names = sorted(result.standard_output.split())
+    if not result.succeeded or not remote_names:
+        return passed()
+    if len(remote_names) == 1:
+        remotes = f"a remote added by hand ({remote_names[0]})"
+    else:
+        remotes = f"remotes added by hand ({', '.join(remote_names)})"
+    return passed(
+        note=(
+            f"The record repo has {remotes}. Goodall commits records here and never pushes them, so nothing "
+            "reaches a remote unless you push it yourself. Nothing needs doing."
+        )
+    )
+
+
 PROGRAM_CHECKS = [
     Check(
         id=GIT_INSTALLED,
@@ -280,13 +297,6 @@ PROGRAM_CHECKS = [
         summary="git is installed",
         prerequisites=[],
         run=check_git_installed,
-    ),
-    Check(
-        id=GH_INSTALLED,
-        group=TOOLS_GROUP,
-        summary="gh is installed",
-        prerequisites=[],
-        run=check_gh_installed,
     ),
     Check(
         id=STANDARD_ACCOUNT,
@@ -301,5 +311,12 @@ PROGRAM_CHECKS = [
         summary="The record repo folder is a git repository",
         prerequisites=[RECORD_REPO_FOUND, GIT_INSTALLED],
         run=check_record_repo_is_git_repository,
+    ),
+    Check(
+        id=RECORD_REPO_STAYS_ON_THIS_MAC,
+        group=RECORD_REPO_GROUP,
+        summary="The record repo stays on this Mac",
+        prerequisites=[RECORD_REPO_IS_GIT_REPOSITORY],
+        run=check_record_repo_stays_on_this_mac,
     ),
 ]
