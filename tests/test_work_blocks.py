@@ -437,6 +437,288 @@ def test_stop_whose_record_cannot_be_written_exits_0_warns_and_the_next_command_
 
 
 # ---------------------------------------------------------------------------
+# goodall pause: end the work block, and link the next one to it
+# ---------------------------------------------------------------------------
+
+
+def pause_file(eval_account: EvalAccount) -> Path:
+    return eval_account.log_directory / "work-blocks" / "pause.json"
+
+
+def test_pause_ends_the_work_block_and_the_next_start_begins_one_that_names_it(eval_account: EvalAccount) -> None:
+    run_goodall(eval_account, ["start", "--workstream", "engineering"])
+    eval_account.clock.advance(timedelta(minutes=40))
+
+    pause = run_goodall(eval_account, ["pause"])
+
+    assert pause.exit_code == exit_codes.SUCCESS, pause.standard_error
+    assert pause.standard_error == ""
+    assert "Paused your work block on engineering" in pause.everything_printed
+    assert "goodall start" in pause.everything_printed
+    [paused_record] = eval_account.work_block_records()
+    assert paused_record["ended_at"] == "2026-11-16T10:10:00Z"
+    assert paused_record["end_state"] == "clean"
+    assert "continues_work_block" not in paused_record
+    assert not marker_file(eval_account).exists()
+
+    eval_account.clock.advance(timedelta(minutes=5))
+    status = run_goodall(eval_account, ["status"])
+    assert status.exit_code == exit_codes.ERROR
+    assert "Goodall is not recording: recording is paused." in status.everything_printed
+    assert f"You paused your work block on engineering ({paused_record['id']})" in status.everything_printed
+    assert "Mon 16 Nov 2026, 10:10 GMT" in status.everything_printed
+    assert "goodall start" in status.everything_printed
+
+    prompt = send_prompt(eval_account)
+    assert prompt.exit_code == exit_codes.CLAUDE_CODE_REFUSES_PROMPT
+    assert "paused" in prompt.standard_error
+    assert "goodall start" in prompt.standard_error
+
+    eval_account.clock.advance(timedelta(minutes=15))
+    start = run_goodall(eval_account, ["start"])
+
+    # With no --workstream, the new work block is on the paused one's
+    # workstream, not this account's main workstream (research).
+    assert start.exit_code == exit_codes.SUCCESS, start.standard_error
+    assert "Started a work block on engineering" in start.everything_printed
+    assert "continues the one you paused" in start.everything_printed
+    running = json.loads(marker_file(eval_account).read_text())
+    assert running["continues_work_block"] == paused_record["id"]
+    assert running["id"] != paused_record["id"]
+    assert not pause_file(eval_account).exists()
+    assert send_prompt(eval_account).exit_code == exit_codes.SUCCESS
+
+    eval_account.clock.advance(timedelta(minutes=30))
+    run_goodall(eval_account, ["stop"])
+    [first_record, second_record] = eval_account.work_block_records()
+    assert second_record["continues_work_block"] == first_record["id"]
+    assert second_record["started_at"] == "2026-11-16T10:30:00Z"
+
+
+def test_status_json_while_paused_says_which_work_block_was_paused(eval_account: EvalAccount) -> None:
+    run_goodall(eval_account, ["start"])
+    eval_account.clock.advance(timedelta(minutes=40))
+    run_goodall(eval_account, ["pause"])
+    [paused_record] = eval_account.work_block_records()
+
+    status = run_goodall(eval_account, ["status", "--json"])
+
+    assert status.exit_code == exit_codes.ERROR
+    document = json.loads(status.standard_output)
+    assert document["work_block_active"] is False
+    assert document["work_block"] is None
+    assert document["paused"] is True
+    assert document["paused_work_block"] == {
+        "id": paused_record["id"],
+        "workstream": "research",
+        "paused_at": "2026-11-16T10:10:00Z",
+    }
+
+
+def test_status_json_says_not_paused_when_recording_and_when_stopped(eval_account: EvalAccount) -> None:
+    stopped = json.loads(run_goodall(eval_account, ["status", "--json"]).standard_output)
+    assert stopped["paused"] is False
+    assert stopped["paused_work_block"] is None
+
+    run_goodall(eval_account, ["start"])
+    recording = json.loads(run_goodall(eval_account, ["status", "--json"]).standard_output)
+    assert recording["paused"] is False
+    assert recording["paused_work_block"] is None
+
+
+def test_the_pause_file_names_the_paused_work_block_and_only_this_account_can_read_it(
+    eval_account: EvalAccount,
+) -> None:
+    run_goodall(eval_account, ["start"])
+    eval_account.clock.advance(timedelta(minutes=40))
+    run_goodall(eval_account, ["pause"])
+    [paused_record] = eval_account.work_block_records()
+
+    assert json.loads(pause_file(eval_account).read_text()) == {
+        "schema_version": 1,
+        "work_block": paused_record["id"],
+        "workstream": "research",
+        "paused_at": "2026-11-16T10:10:00Z",
+    }
+    assert stat.S_IMODE(pause_file(eval_account).stat().st_mode) == 0o600
+
+
+def test_start_while_paused_on_another_workstream_still_names_the_paused_work_block(
+    eval_account: EvalAccount,
+) -> None:
+    run_goodall(eval_account, ["start", "--workstream", "engineering"])
+    run_goodall(eval_account, ["pause"])
+    [paused_record] = eval_account.work_block_records()
+
+    start = run_goodall(eval_account, ["start", "--workstream", "go-to-market"])
+
+    assert start.exit_code == exit_codes.SUCCESS, start.standard_error
+    running = json.loads(marker_file(eval_account).read_text())
+    assert running["workstream"] == "go-to-market"
+    assert running["continues_work_block"] == paused_record["id"]
+
+
+def test_stop_while_paused_clears_the_pause_and_exits_0(eval_account: EvalAccount) -> None:
+    run_goodall(eval_account, ["start"])
+    run_goodall(eval_account, ["pause"])
+
+    stop = run_goodall(eval_account, ["stop"])
+
+    assert stop.exit_code == exit_codes.SUCCESS, stop.standard_error
+    assert stop.standard_error == ""
+    assert "Recording was paused, so there was no work block to end." in stop.everything_printed
+    assert not pause_file(eval_account).exists()
+    assert len(eval_account.work_block_records()) == 1
+
+    status = run_goodall(eval_account, ["status"])
+    assert "No work block is active" in status.everything_printed
+    assert "paused" not in status.everything_printed
+    assert "Goodall is not recording, so this prompt was not sent." in send_prompt(eval_account).standard_error
+
+    # The next work block continues nothing: the pause was given up.
+    run_goodall(eval_account, ["start"])
+    assert "continues_work_block" not in json.loads(marker_file(eval_account).read_text())
+
+
+def test_pause_while_already_paused_changes_nothing_and_exits_0(eval_account: EvalAccount) -> None:
+    run_goodall(eval_account, ["start"])
+    run_goodall(eval_account, ["pause"])
+    files_before = {path: path.read_bytes() for path in eval_account.files_in_log_directory()}
+    eval_account.clock.advance(timedelta(minutes=10))
+
+    again = run_goodall(eval_account, ["pause"])
+
+    assert again.exit_code == exit_codes.SUCCESS, again.standard_error
+    assert "Recording is already paused" in again.everything_printed
+    assert "Mon 16 Nov 2026, 09:30 GMT" in again.everything_printed
+    assert {path: path.read_bytes() for path in eval_account.files_in_log_directory()} == files_before
+
+
+def test_pause_with_no_work_block_active_says_so_and_exits_1(eval_account: EvalAccount) -> None:
+    pause = run_goodall(eval_account, ["pause"])
+
+    assert pause.exit_code == exit_codes.ERROR
+    assert pause.standard_error.startswith("FAIL  No work block is active, so there was nothing to pause.")
+    assert "goodall start" in pause.standard_error
+    assert not pause_file(eval_account).exists()
+
+
+def test_pausing_a_forgotten_work_block_closes_it_at_its_last_heartbeat_and_remembers_the_pause(
+    eval_account: EvalAccount,
+) -> None:
+    run_goodall(eval_account, ["start"])
+    work_blocks.record_heartbeat(eval_account.log_directory, MONDAY_MORNING + timedelta(hours=1), CLAUDE_SESSION)
+    eval_account.clock.now = datetime(2026, 11, 17, 9, 0, tzinfo=UTC)
+
+    pause = run_goodall(eval_account, ["pause"])
+
+    assert pause.exit_code == exit_codes.SUCCESS, pause.standard_error
+    assert "was left running" in pause.everything_printed
+    [forgotten_record] = eval_account.work_block_records()
+    assert forgotten_record["end_state"] == "inferred"
+    assert forgotten_record["ended_at"] == "2026-11-16T10:30:00Z"
+    assert json.loads(pause_file(eval_account).read_text())["work_block"] == forgotten_record["id"]
+
+    run_goodall(eval_account, ["start"])
+    assert json.loads(marker_file(eval_account).read_text())["continues_work_block"] == forgotten_record["id"]
+
+
+def test_a_pause_does_not_expire_by_itself(eval_account: EvalAccount) -> None:
+    run_goodall(eval_account, ["start"])
+    run_goodall(eval_account, ["pause"])
+    eval_account.clock.now = datetime(2026, 11, 20, 9, 0, tzinfo=UTC)
+
+    status = run_goodall(eval_account, ["status"])
+
+    assert "recording is paused" in status.everything_printed
+    assert pause_file(eval_account).exists()
+
+
+def test_a_pause_left_behind_is_cleared_once_a_work_block_is_running(eval_account: EvalAccount) -> None:
+    # A start interrupted between creating the marker and clearing the pause
+    # leaves both. The running work block wins: goodall is recording.
+    run_goodall(eval_account, ["start"])
+    run_goodall(eval_account, ["pause"])
+    left_behind = pause_file(eval_account).read_bytes()
+    run_goodall(eval_account, ["start"])
+    pause_file(eval_account).write_bytes(left_behind)
+
+    status = run_goodall(eval_account, ["status", "--json"])
+
+    assert status.exit_code == exit_codes.SUCCESS
+    assert json.loads(status.standard_output)["paused"] is False
+    assert not pause_file(eval_account).exists()
+
+
+def test_a_pause_file_goodall_cannot_read_counts_as_not_paused(eval_account: EvalAccount) -> None:
+    run_goodall(eval_account, ["start"])
+    run_goodall(eval_account, ["pause"])
+    pause_file(eval_account).write_text("{ not json")
+
+    status = run_goodall(eval_account, ["status"])
+    assert "No work block is active" in status.everything_printed
+
+    start = run_goodall(eval_account, ["start"])
+    assert start.exit_code == exit_codes.SUCCESS, start.standard_error
+    assert "continues_work_block" not in json.loads(marker_file(eval_account).read_text())
+    assert not pause_file(eval_account).exists()
+
+
+PAUSED_WORK_BLOCK_ID = "20261116T093000Z-ada-lovelace-0a1b2c3d"
+
+
+def test_a_pause_that_was_written_reads_back_and_clearing_it_leaves_none(tmp_path: Path) -> None:
+    assert work_blocks.read_pause(tmp_path) is None
+
+    work_blocks.write_pause(tmp_path, PAUSED_WORK_BLOCK_ID, "research", MONDAY_MORNING + timedelta(minutes=40))
+
+    assert work_blocks.read_pause(tmp_path) == work_blocks.Pause(
+        work_block_id=PAUSED_WORK_BLOCK_ID,
+        workstream="research",
+        paused_at=datetime(2026, 11, 16, 10, 10, tzinfo=UTC),
+    )
+    assert [path.name for path in (tmp_path / "work-blocks").iterdir() if path.is_file()] == ["pause.json"]
+
+    work_blocks.clear_pause(tmp_path)
+
+    assert work_blocks.read_pause(tmp_path) is None
+    # Clearing when nothing is paused is fine.
+    work_blocks.clear_pause(tmp_path)
+
+
+def test_writing_a_pause_again_replaces_the_earlier_one_whole(tmp_path: Path) -> None:
+    work_blocks.write_pause(tmp_path, PAUSED_WORK_BLOCK_ID, "research", MONDAY_MORNING)
+    later_work_block_id = "20261116T120000Z-ada-lovelace-9f8e7d6c"
+
+    work_blocks.write_pause(tmp_path, later_work_block_id, "engineering", MONDAY_MORNING + timedelta(hours=3))
+
+    pause = work_blocks.read_pause(tmp_path)
+    assert pause is not None
+    assert pause.work_block_id == later_work_block_id
+    assert pause.workstream == "engineering"
+
+
+@pytest.mark.parametrize(
+    "pause_text",
+    [
+        "",
+        "{ not json",
+        "[]",
+        '{"schema_version": 1, "work_block": "no id", "workstream": "research", "paused_at": "2026-11-16T10:10:00Z"}',
+        f'{{"schema_version": 1, "work_block": "{PAUSED_WORK_BLOCK_ID}", "workstream": 7, '
+        '"paused_at": "2026-11-16T10:10:00Z"}',
+        f'{{"schema_version": 1, "work_block": "{PAUSED_WORK_BLOCK_ID}", "workstream": "research", '
+        '"paused_at": "this morning"}',
+    ],
+)
+def test_a_pause_file_that_is_not_a_pause_reads_as_not_paused(tmp_path: Path, pause_text: str) -> None:
+    (tmp_path / "work-blocks").mkdir()
+    (tmp_path / "work-blocks" / "pause.json").write_text(pause_text)
+
+    assert work_blocks.read_pause(tmp_path) is None
+
+
+# ---------------------------------------------------------------------------
 # A work block nobody stopped: the inferred end
 # ---------------------------------------------------------------------------
 
@@ -1046,6 +1328,8 @@ def test_status_json_while_a_work_block_is_active_describes_it(eval_account: Eva
         },
         "ended_work_blocks": [],
         "work_blocks_waiting_for_workstream": [],
+        "paused": False,
+        "paused_work_block": None,
         "warnings": [],
         "failures": [],
     }

@@ -1,4 +1,4 @@
-"""`goodall start` and `goodall stop`: a contributor begins and ends a work block.
+"""`goodall start`, `goodall pause` and `goodall stop`: a contributor begins and ends a work block.
 
 Called by `cli.main`. A work block is a logged stretch of one contributor's
 work on one workstream; while one runs, its marker sits in the log
@@ -21,6 +21,15 @@ What each command does, in order:
   the record repo. If the record cannot be
   written yet it waits in the log directory, a warning says so, and the
   exit is still 0. With none active it says so and exits 1.
+- `goodall pause`: end the active work block exactly as `goodall stop`
+  does, then remember that recording is paused and which work block was
+  paused (goodall.work_blocks, `pause.json`). There is no paused state
+  inside a work block (ADR 0021): while paused goodall is not recording
+  and the prompt gate is closed. `goodall start` while paused starts a NEW
+  work block whose record names the paused one in `continues_work_block`,
+  on the paused one's workstream unless --workstream says another, and
+  forgets the pause. `goodall stop` while paused only forgets the pause,
+  says so, and exits 0. A pause never expires by itself.
 
 Settling, which `goodall status` does too: a work block nobody stopped is
 closed at its last heartbeat (end state `inferred`) once it is overdue; a
@@ -110,27 +119,40 @@ def run_start(
     if isinstance(eval_reading, list):
         terminal.show_failures(eval_reading)
         return exit_codes.ERROR
+    log_directory = eval_reading.local_settings.log_directory.path
+    # Read here for the workstream, which is checked before anything is changed.
+    pause = work_blocks.read_pause(log_directory)
+    if workstream is None and pause is not None and pause.workstream in eval_reading.eval_config.workstreams:
+        # Recording again after a pause carries on where the person left
+        # off, unless they name another workstream.
+        workstream = pause.workstream
     if workstream is None:
         workstream = eval_reading.local_settings.main_workstream
     if workstream not in eval_reading.eval_config.workstreams:
         terminal.show_failure(workstream_unknown_failure(eval_reading))
         return exit_codes.USAGE_ERROR
 
-    log_directory = eval_reading.local_settings.log_directory.path
     now = clock()
     settling = settle(runner, eval_reading, now)
     show_settling(terminal, settling)
+    # Read again: settling forgets a pause left behind by a work block that
+    # was still running, and the new work block must not name that one.
+    pause = work_blocks.read_pause(log_directory)
     active = work_blocks.active_work_block(log_directory, now)
     if active is not None:
         exit_code = report_already_active(terminal, active, workstream)
         make_sure_receiver_runs(terminal, runner, log_directory, active.id, telemetry_port, now)
         return exit_code
 
+    continues_work_block = None
+    if pause is not None:
+        continues_work_block = pause.work_block_id
     running_record = records.build_work_block_record(
         contributor=eval_reading.contributor.id,
         workstream=workstream,
         started_at=now,
         machine=observe_machine_facts(runner),
+        continues_work_block=continues_work_block,
     )
     created = work_blocks.create_marker(log_directory, running_record)
     if not created:
@@ -144,6 +166,11 @@ def run_start(
         # that did not happen.
         terminal.show_failure(marker_in_the_way_failure())
         return exit_codes.ERROR
+    # The pause is over now that a work block is running. Cleared after the
+    # marker exists, so the pause is never lost to a start that failed; a
+    # crash between the two leaves both, and settling then clears the pause.
+    # A pause file that could not be read is removed here too.
+    work_blocks.clear_pause(log_directory)
     work_blocks.record_heartbeat(log_directory, now)
     # Started after the marker, so a receiver never runs without a work
     # block. Trap: if goodall were killed between the two, the work block
@@ -152,10 +179,13 @@ def run_start(
     receiver_start = telemetry_receivers.start_receiver(
         runner, log_directory, running_record.id, port_or_any(telemetry_port), now
     )
-    terminal.show_paragraph(
-        f"Started a work block on {workstream} at {describe_moment(running_record.started_at)}. "
-        "Goodall is recording until you run goodall stop."
-    )
+    started = f"Started a work block on {workstream} at {describe_moment(running_record.started_at)}. "
+    if pause is not None:
+        started += (
+            f"It continues the one you paused on {pause.workstream} at {describe_moment(pause.paused_at)}, and its "
+            "record names that one. "
+        )
+    terminal.show_paragraph(started + "Goodall is recording until you run goodall stop.")
     show_receiver_start(terminal, receiver_start, telemetry_port)
     return exit_codes.SUCCESS
 
@@ -277,8 +307,10 @@ def run_stop(terminal: Terminal, runner: Runner, clock: Clock) -> int:
     Exit 0 once the work block has ended, whether its record is already in
     the record repo or is safely waiting in the log directory (a warning then
     says so: nothing needs running again, and the next goodall start, stop or
-    status writes it); 1 only when there was no work block to stop. The rule
-    is in "Command-line conventions" in AGENTS.md. The same holds for its
+    status writes it); 1 only when there was no work block to stop. While
+    recording is paused (`run_pause`) there is none either, but stop then
+    has something to do, which is to clear the pause, so it says so and
+    exits 0. The rule is in "Command-line conventions" in AGENTS.md. The same holds for its
     agent sessions: one that could not be copied yet is a warning, because
     its source application still holds it and goodall tries again. And for
     ActivityWatch's data, which ActivityWatch itself keeps: a copy that
@@ -312,11 +344,111 @@ def run_stop(terminal: Terminal, runner: Runner, clock: Clock) -> int:
         # That is what they asked for. If its record could not be written
         # yet, settling has already shown that as a warning, and the record
         # waits safely, so this is still success.
+        work_blocks.clear_pause(log_directory)
+        return exit_codes.SUCCESS
+    pause = work_blocks.read_pause(log_directory)
+    # Stopping always ends a pause as well: after goodall stop, the next
+    # work block continues nothing.
+    work_blocks.clear_pause(log_directory)
+    if active is None and pause is not None:
+        terminal.show_paragraph(
+            "Recording was paused, so there was no work block to end. The pause is cleared: goodall is not "
+            f"recording, and your next work block will not continue the one you paused on {pause.workstream}. "
+            "To begin one, run goodall start."
+        )
         return exit_codes.SUCCESS
     if active is None:
         terminal.show_failure(nothing_to_stop_failure())
         return exit_codes.ERROR
+    end_active_work_block(terminal, runner, eval_reading, active, now, "Stopped")
+    return exit_codes.SUCCESS
 
+
+def run_pause(terminal: Terminal, runner: Runner, clock: Clock) -> int:
+    """End the active work block cleanly and remember that recording is paused; return the exit code.
+
+    Pausing ends the work block just as goodall stop does (end state
+    `clean`, agent sessions copied, record written), because a paused
+    account is simply not recording (ADR 0021). What differs is one small
+    file saying which work block was paused, which the next goodall start
+    reads to name it in the new work block's record.
+
+    Exit codes, by the rule in "Command-line conventions" in AGENTS.md:
+
+    - 0 when a work block was ended and the pause remembered.
+    - 0 when recording is already paused: nothing is changed, and it says
+      so, as goodall start does when a work block is already active.
+    - 0 when the work block had been forgotten: settling has just closed
+      it at its last heartbeat (end state `inferred`) and said so, and the
+      pause is remembered for that work block, since the person has said
+      they mean to continue it.
+    - 1 when no work block is active and nothing is paused: there is
+      nothing to continue, so the pause did not happen, and the next step
+      is goodall start.
+    """
+    eval_reading = find_eval_for_work_blocks()
+    if isinstance(eval_reading, list):
+        terminal.show_failures(eval_reading)
+        return exit_codes.ERROR
+    log_directory = eval_reading.local_settings.log_directory.path
+    now = clock()
+    # Read before settling, which closes a forgotten work block: that is
+    # then the one this pause is for.
+    marker_before_settling = work_blocks.read_marker(log_directory)
+    settling = settle(runner, eval_reading, now, copy_activitywatch_now=False)
+    show_settling(terminal, settling)
+    active = work_blocks.active_work_block(log_directory, now)
+    if active is not None:
+        end_active_work_block(terminal, runner, eval_reading, active, now, "Paused")
+        work_blocks.write_pause(log_directory, active.id, active.record.workstream, now)
+        terminal.show_paragraph(RECORDING_IS_PAUSED + HOW_TO_RECORD_AGAIN)
+        return exit_codes.SUCCESS
+
+    # Nothing to end, but a work block that settling has just closed, or an
+    # earlier copy that failed, may still want its ActivityWatch copy.
+    show_activitywatch_copy(terminal, copy_activitywatch(runner, eval_reading, now))
+    forgotten = marker_before_settling
+    if isinstance(forgotten, work_blocks.RunningWorkBlock) and forgotten.is_overdue(now) and settling.closings:
+        work_blocks.write_pause(log_directory, forgotten.id, forgotten.record.workstream, now)
+        terminal.show_paragraph(RECORDING_IS_PAUSED + HOW_TO_RECORD_AGAIN)
+        return exit_codes.SUCCESS
+    pause = work_blocks.read_pause(log_directory)
+    if pause is not None:
+        terminal.show_paragraph(
+            f"Recording is already paused: you paused your work block on {pause.workstream} at "
+            f"{describe_moment(pause.paused_at)}, so nothing was changed. " + HOW_TO_RECORD_AGAIN
+        )
+        return exit_codes.SUCCESS
+    terminal.show_failure(nothing_to_pause_failure())
+    return exit_codes.ERROR
+
+
+# Said after a pause, so the person knows what it means and both ways out of it.
+RECORDING_IS_PAUSED = (
+    "Recording is paused: goodall is not recording, and Claude Code refuses prompts until you record again. "
+)
+HOW_TO_RECORD_AGAIN = (
+    "To record again, run goodall start, which starts a new work block that continues the paused one. To finish "
+    "instead, run goodall stop."
+)
+
+
+def end_active_work_block(
+    terminal: Terminal,
+    runner: Runner,
+    eval_reading: EvalForThisAccount,
+    active: work_blocks.RunningWorkBlock,
+    now: datetime,
+    ended_word: str,
+) -> None:
+    """End the active work block cleanly, copy what it captured, write its record, and say what happened.
+
+    What goodall stop and goodall pause share. `ended_word` begins the
+    sentence the person reads: "Stopped" or "Paused". Nothing is returned,
+    because the work block is ended either way: a record that could not be
+    written yet, or a copy that failed, is a warning (see `run_stop`).
+    """
+    log_directory = eval_reading.local_settings.log_directory.path
     telemetry = telemetry_receivers.finish_telemetry(runner, log_directory, active.id, now)
     ended_record = end_work_block(
         log_directory, active, now, "clean", telemetry, eval_reading.eval_config.activitywatch
@@ -338,10 +470,10 @@ def run_stop(terminal: Terminal, runner: Runner, clock: Clock) -> int:
         terminal.show_warnings(
             [record_waiting_failure(ended_record, waiting_file, write_of_this_block.failures), *copy_warnings]
         )
-        return exit_codes.SUCCESS
+        return
 
     terminal.show_paragraph(
-        f"Stopped your work block on {ended_record.workstream}. It ran from "
+        f"{ended_word} your work block on {ended_record.workstream}. It ran from "
         f"{describe_moment(ended_record.started_at)} to {describe_moment(now)} ({describe_length(ended_record)}). "
         + RECORD_COMMITTED
     )
@@ -358,7 +490,6 @@ def run_stop(terminal: Terminal, runner: Runner, clock: Clock) -> int:
         facts.append(("ActivityWatch", f"copied, {describe_buckets(activitywatch.bucket_count)}"))
     terminal.show_facts(facts)
     terminal.show_warnings(copy_warnings)
-    return exit_codes.SUCCESS
 
 
 def describe_telemetry(log_directory: Path, record: records.WorkBlockRecord) -> str | None:
@@ -575,6 +706,10 @@ def settle(
     log_directory = eval_reading.local_settings.log_directory.path
     closings = []
     marker = work_blocks.read_marker(log_directory)
+    if isinstance(marker, work_blocks.RunningWorkBlock):
+        # A work block is running, however it was started, so recording is
+        # not paused: forget a pause left behind (ADR 0021).
+        work_blocks.clear_pause(log_directory)
     if isinstance(marker, work_blocks.DamagedMarker):
         closing = close_damaged_work_block(runner, eval_reading, marker, now)
         if closing is not None:
@@ -926,6 +1061,16 @@ def nothing_to_stop_failure() -> Failure:
         kind="no_work_block_active",
         what_happened="No work block is active, so there was nothing to stop.",
         why="goodall stop ends the work block that goodall start began, and none is running now.",
+        what_to_do_next="To begin one, run goodall start. To check what goodall is recording, run goodall status.",
+    )
+
+
+def nothing_to_pause_failure() -> Failure:
+    """The failure for goodall pause with no work block active and nothing paused."""
+    return Failure(
+        kind="no_work_block_active",
+        what_happened="No work block is active, so there was nothing to pause.",
+        why="goodall pause ends the work block that goodall start began, so you can continue it later.",
         what_to_do_next="To begin one, run goodall start. To check what goodall is recording, run goodall status.",
     )
 

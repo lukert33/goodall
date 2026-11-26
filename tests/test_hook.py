@@ -138,6 +138,25 @@ def test_a_prompt_with_no_work_block_is_refused_with_the_command_to_run(tmp_path
     )
 
 
+def test_a_prompt_while_recording_is_paused_is_refused_and_told_how_to_record_again(tmp_path: Path) -> None:
+    eval_account = make_eval_account(tmp_path)
+    work_blocks.write_pause(
+        eval_account.log_directory,
+        "20261116T093000Z-ada-lovelace-0a1b2c3d",
+        "research",
+        datetime.now(UTC) - timedelta(days=2),
+    )
+
+    completed = run_hook(eval_account.config_directory, ["UserPromptSubmit"], prompt_input())
+
+    assert completed.returncode == 2
+    assert completed.stdout == ""
+    assert completed.stderr == (
+        "Goodall is paused, so it is not recording and this prompt was not sent. "
+        "Open a terminal, run goodall start to record again, then send your prompt again.\n"
+    )
+
+
 def test_a_prompt_is_refused_when_goodall_is_not_set_up(tmp_path: Path) -> None:
     empty_config_directory = tmp_path / "goodall-config"
     empty_config_directory.mkdir()
