@@ -85,9 +85,9 @@ class AppFamily:
       folder in the log directory that holds a copy of that one agent
       session and of nothing else, earlier copies kept aside included.
       Deleting them deletes the agent session's copies whole.
-    - `shared_copies_left` says, as a sentence for a person, which copies
-      several agent sessions share, which `goodall delete` therefore leaves
-      in place, or is empty when the family has none.
+    - `shared_copies_left` names, for a person and in the middle of a
+      sentence, the copies several agent sessions share, which `goodall
+      delete` therefore leaves in place; empty when the family has none.
     """
 
     name: str

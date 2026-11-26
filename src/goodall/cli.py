@@ -39,6 +39,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from goodall import __version__, exit_codes, records
+from goodall.delete_command import run_delete
 from goodall.doctor import run_doctor
 from goodall.entries import DECISION_MEANINGS, EntryRequest, InterventionDetails, run_intervene, run_journal
 from goodall.fixblock import run_fixblock
@@ -130,6 +131,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="The workstream the work block was for: one of the workstreams in eval.toml, never unknown.",
     )
     fixblock.set_defaults(command_name="fixblock")
+
+    # goodall delete (goodall.delete_command): optional id, so goodall reports a missing one itself.
+    delete = commands.add_parser(
+        "delete",
+        help="Delete what one work block captured. Shows what it would delete unless --delete-captured-data is given.",
+    )
+    delete.add_argument("work_block_id", nargs="?", metavar="<work block id>", help="The id of the work block.")
+    delete.add_argument("--delete-captured-data", action="store_true", help="Really delete; without it, nothing is.")
+    delete.add_argument("--json", action="store_true", help="Print the result as one JSON document on standard output.")
+    delete.set_defaults(command_name="delete")
 
     status = commands.add_parser("status", help="Show whether a work block is active.")
     status.add_argument(
@@ -386,6 +397,10 @@ def main(
         return run_stop(terminal, runner, clock)
     if command_name == "fixblock":
         return run_fixblock(terminal, runner, clock, arguments.work_block_id, arguments.workstream)
+    if command_name == "delete":
+        return run_delete(
+            terminal, runner, clock, arguments.work_block_id, arguments.delete_captured_data, arguments.json
+        )
     if command_name == "doctor":
         return run_doctor(terminal, runner, clock, as_json=arguments.json)
     if command_name == "journal":

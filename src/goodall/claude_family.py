@@ -517,13 +517,11 @@ def folders_inside(folder: Path) -> list[Path]:
     return found
 
 
-# What `goodall delete` leaves in place, and why, for a person to read.
+# The copies every Claude session shares, which `goodall delete` leaves in
+# place, named for a person.
 SHARED_COPIES_LEFT = (
-    "The copies of Claude Code's prompt history (history.jsonl, in claude-config/ in the log directory) and of each "
-    "project's memory (MEMORY.md and memory/, in transcripts/) were left in place: every Claude session shares them, "
-    "so deleting them would delete other work blocks' records too, and a raw record is deleted whole or not at all. "
-    "They hold the prompts of the deleted Claude sessions as well, and Claude Code keeps them in its own folder, "
-    "which goodall never changes, so the next work block that copies any Claude session copies them again."
+    "the copies of Claude Code's prompt history (history.jsonl, in claude-config/ in the log directory) and of "
+    "each project's memory (MEMORY.md and memory/, in transcripts/)"
 )
 
 # What the baseline needs to know about the Claude family (goodall.agent_session_copies).
