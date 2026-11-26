@@ -37,7 +37,31 @@ _Avoid_: Team list, members
 A named division of an eval's work, such as engineering or go-to-market, used to attribute effort and cost.
 _Avoid_: Lane, track, category
 
+**Administrator account**:
+A macOS user account that can install software for the whole Mac and create other accounts. Goodall is installed from one, and the eval account is created from one (ADR 0022). An eval account is never an administrator account.
+_Avoid_: Admin account, admin user, root, owner account
+
+**Own-account mode**:
+Recording work blocks in a macOS user account the person also uses for other things, offered as a second choice to an eval account so a person can try goodall on their own work (ADR 0021). On the setup page it is labeled "Try it out".
+_Avoid_: Try-it-out mode, personal mode, main-account mode, demo mode
+
+**First sign-in setup**:
+The setup goodall completes by itself the first time a person signs in to a new eval account, from pieces the administrator install put in place beforehand (ADR 0022).
+_Avoid_: First-login setup, first run, bootstrap
+
 ### Recording
+
+**Recording**:
+What goodall is doing while a work block is active. "Record" is the verb goodall uses with people ("goodall is recording", "record a work block"), chosen because it is the clearest word for consent (ADR 0021).
+_Avoid_: Tracking, monitoring, logging, capturing (in words shown to a person)
+
+**Recording indicator**:
+The sign, visible for as long as a work block is active, that goodall is recording.
+_Avoid_: Status light, badge, tray icon
+
+**Background start**, **background stop**:
+A work block started or stopped by something other than the person's own command: signing in, a schedule or script, or goodall ending a block by itself. Each shows a notification (ADR 0021).
+_Avoid_: Auto-start (as a noun for the event), silent start, automatic session
 
 **Work block**:
 A logged stretch of one contributor's work on one workstream, with a start and an end. Many agent sessions can fall inside one work block.
