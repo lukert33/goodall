@@ -55,7 +55,10 @@ the Claude desktop app's Code tab and Claude Code in a terminal
 ## Words used here
 
 - **Eval account**: a standard (non-admin) macOS user account used for one
-  eval and nothing else. It is the boundary of what the eval records.
+  eval and nothing else. It is the boundary of what the eval records:
+  nothing outside it is recorded, and inside it only work in a work block
+  is. You can sign in there with an AI provider account you already have,
+  such as your own Claude account; it does not need to be made for the eval.
 - **Work block**: a logged stretch of one contributor's work on one
   workstream, with a start and an end.
 - **Prompt gate**: the check that refuses a prompt to an agent while no work
