@@ -304,6 +304,8 @@ def test_the_marker_holds_the_running_work_block_and_only_this_account_can_read_
     assert marker["end_state"] is None
     assert marker["machine"]["claude_code_version"] == "2.3.4"
     assert marker["machine"]["goodall_version"] == "0.0.1"
+    # Local settings name no account mode, which means dedicated (ADR 0021).
+    assert marker["account_mode"] == "dedicated"
     assert "billing" not in json.dumps(marker)
     assert stat.S_IMODE(marker_file(eval_account).stat().st_mode) == 0o600
     assert stat.S_IMODE(marker_file(eval_account).parent.stat().st_mode) == 0o700
@@ -389,6 +391,45 @@ def test_stop_ends_the_work_block_cleanly_and_records_it_with_its_claude_session
     status = run_goodall(eval_account, ["status"])
     assert status.exit_code == exit_codes.ERROR
     assert "No work block is active" in status.everything_printed
+
+
+def use_mixed_account_mode(eval_account: EvalAccount) -> None:
+    """Add `account_mode = "mixed"` to the account's local settings (ADR 0021)."""
+    with (eval_account.config_directory / "local-settings.toml").open("a") as settings_file:
+        settings_file.write('account_mode = "mixed"\n')
+
+
+def test_a_work_block_recorded_in_mixed_account_mode_says_so_in_its_record_and_status_shows_the_mode(
+    eval_account: EvalAccount,
+) -> None:
+    use_mixed_account_mode(eval_account)
+    run_goodall(eval_account, ["start"])
+
+    status = run_goodall(eval_account, ["status"])
+    status_json = run_goodall(eval_account, ["status", "--json"])
+    eval_account.clock.advance(timedelta(minutes=45))
+    stop = run_goodall(eval_account, ["stop"])
+
+    assert stop.exit_code == exit_codes.SUCCESS, stop.standard_error
+    assert "Account mode        mixed\n" in status.standard_output
+    assert json.loads(status_json.standard_output)["account_mode"] == "mixed"
+    [record] = eval_account.work_block_records()
+    assert record["account_mode"] == "mixed"
+
+
+def test_a_work_block_keeps_the_account_mode_it_started_in_when_local_settings_change_before_it_ends(
+    eval_account: EvalAccount,
+) -> None:
+    # The mode is an observation made when the work block starts, like the
+    # machine facts, and the prompt gate was on for all of this one.
+    run_goodall(eval_account, ["start"])
+    use_mixed_account_mode(eval_account)
+    eval_account.clock.advance(timedelta(minutes=45))
+
+    run_goodall(eval_account, ["stop"])
+
+    [record] = eval_account.work_block_records()
+    assert record["account_mode"] == "dedicated"
 
 
 def test_stop_with_no_work_block_active_says_so_and_exits_1(eval_account: EvalAccount) -> None:
@@ -595,6 +636,7 @@ def test_a_damaged_marker_is_kept_aside_and_what_can_be_recovered_is_recorded_as
     assert record["ended_at"] == "2026-11-16T10:10:00Z"
     assert record["end_state"] == "abnormal"
     assert record["claude_sessions"] == [CLAUDE_SESSION]
+    assert record["account_mode"] == "dedicated"
 
     start = run_goodall(eval_account, ["start"])
     assert start.exit_code == exit_codes.SUCCESS
@@ -1034,6 +1076,7 @@ def test_status_json_while_a_work_block_is_active_describes_it(eval_account: Eva
     assert isinstance(running, work_blocks.RunningWorkBlock)
     assert document == {
         "work_block_active": True,
+        "account_mode": "dedicated",
         "eval": {"name": "goodall-pilot"},
         "contributor": {"id": "ada-lovelace", "display_name": "Ada Lovelace", "main_workstream": "research"},
         "work_block": {

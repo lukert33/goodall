@@ -159,6 +159,7 @@ def test_status_json_reports_the_same_failure_on_standard_output(empty_config_di
     # eval and the contributor are null until goodall has read them.
     assert set(document) == {
         "work_block_active",
+        "account_mode",
         "eval",
         "contributor",
         "work_block",
@@ -169,6 +170,7 @@ def test_status_json_reports_the_same_failure_on_standard_output(empty_config_di
     }
     assert document["work_block_active"] is False
     assert document["work_block"] is None
+    assert document["account_mode"] is None
     assert document["eval"] is None
     assert document["contributor"] is None
     assert len(document["failures"]) == 1
@@ -564,9 +566,10 @@ def test_valid_eval_reports_the_eval_the_contributor_and_no_work_block(eval_acco
     assert exit_code == exit_codes.ERROR
     assert standard_error == ""
     assert standard_output == (
-        "Eval         goodall-pilot\n"
-        "Contributor  Ada Lovelace (ada-lovelace)\n"
-        "Workstream   research, your main workstream\n"
+        "Eval          goodall-pilot\n"
+        "Contributor   Ada Lovelace (ada-lovelace)\n"
+        "Account mode  dedicated\n"
+        "Workstream    research, your main workstream\n"
         "\n"
         "No work block is active, so nothing is being recorded.\n"
         "\n"
@@ -599,6 +602,7 @@ def test_valid_eval_as_json_gives_the_same_facts(eval_account: EvalAccount) -> N
     assert standard_error == ""
     assert json.loads(standard_output) == {
         "work_block_active": False,
+        "account_mode": "dedicated",
         "eval": {"name": "goodall-pilot"},
         "contributor": {"id": "ada-lovelace", "display_name": "Ada Lovelace", "main_workstream": "research"},
         "work_block": None,

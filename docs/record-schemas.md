@@ -87,9 +87,14 @@ goodall writes, so it is JSON. Folder: `work-blocks/`.
 | `machine.claude_code_version` | no | `null` if Claude Code was not found. |
 | `claude_sessions` | yes | The Claude Code session ids of the Claude sessions that fell inside the work block; `[]` if none. |
 | `telemetry` | no | Whether the work block's telemetry was captured: `captured` (telemetry requests were stored and goodall never found its receiver down), `incomplete` (requests were stored, but the receiver was down for part of the work block), or `missing` (no request was stored at all). Left out while running, and in records written before goodall captured telemetry, which say nothing either way. PROVISIONAL. |
+| `account_mode` | no | The account mode the work block was recorded in, as local settings said when it started: `dedicated` (an eval account, with the prompt gate on) or `mixed` (a macOS user account the person also uses for other things, with the prompt gate off and ActivityWatch left out; ADR 0021). Left out only in records written before goodall recorded it, all of which were made in dedicated account mode, the only one there was. |
 
 The machine facts are observed, never configured (ADR 0009). There is no
 billing field: goodall does not track billing.
+
+`telemetry` and `account_mode` were added after records were already being
+written. Each is optional and left out when goodall does not say, so files
+already written still read, and `schema_version` stays `1`.
 
 <!-- example: work_block -->
 ```json
@@ -112,7 +117,8 @@ billing field: goodall does not track billing.
     "0f6c1d2e-3a4b-4c5d-8e9f-a0b1c2d3e4f5",
     "5b8e2a71-9c04-4d3f-b6a2-17e0c9d4f8a3"
   ],
-  "telemetry": "captured"
+  "telemetry": "captured",
+  "account_mode": "dedicated"
 }
 ```
 

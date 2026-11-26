@@ -78,7 +78,7 @@ from goodall.eval_config import (
     read_eval_for_this_account,
 )
 from goodall.folders import describe_folder_problem, log_directory_unreachable_failure, record_repo_missing_failure
-from goodall.local_settings import read_local_settings
+from goodall.local_settings import ACCOUNT_MODES, read_local_settings
 from goodall.record_repo import write_record
 from goodall.runner import Command, Runner
 from goodall.terminal import Failure, Terminal
@@ -132,6 +132,7 @@ def run_start(
         workstream=workstream,
         started_at=now,
         machine=observe_machine_facts(runner),
+        account_mode=eval_reading.local_settings.account_mode,
     )
     created = work_blocks.create_marker(log_directory, running_record)
     if not created:
@@ -675,7 +676,7 @@ def recover_work_block(
       even that, None is returned and nothing is recorded, because any
       start goodall wrote would be invented and would look real.
     - The machine facts, if lost, are observed again now, on what is the
-      same Mac.
+      same Mac. So is the account mode, read from local settings.
     """
     values = damaged.values
     workstream = values.get("workstream")
@@ -690,6 +691,9 @@ def recover_work_block(
         started_at = datetime.fromisoformat(started_at_text)
     if started_at is None:
         return None
+    account_mode = values.get("account_mode")
+    if account_mode not in ACCOUNT_MODES:
+        account_mode = eval_reading.local_settings.account_mode
     work_block_id = values.get("id")
     if not isinstance(work_block_id, str) or not records.RECORD_ID_PATTERN.fullmatch(work_block_id):
         work_block_id = records.make_record_id(started_at, contributor)
@@ -706,6 +710,7 @@ def recover_work_block(
         end_state="abnormal",
         machine=recover_machine_facts(runner, values.get("machine")),
         claude_sessions=work_blocks.read_claude_sessions(log_directory, work_block_id),
+        account_mode=account_mode,
     )
     if records.validate_record(recovered):
         return None

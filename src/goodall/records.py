@@ -55,6 +55,8 @@ from datetime import UTC, datetime
 from pathlib import PurePosixPath
 from typing import Any
 
+from goodall.local_settings import ACCOUNT_MODES
+
 # The version of the schemas in this file. A file with a higher number was
 # written by a newer goodall; one with a lower number needs migrating.
 SCHEMA_VERSION = 1
@@ -187,7 +189,12 @@ class WorkBlockRecord:
     a tuple, not a list, so a record cannot be changed after it is built.
     `telemetry` is one of TELEMETRY_STATES once the work block has ended, or
     None when goodall does not say (while running, and in records written
-    before goodall captured telemetry).
+    before goodall captured telemetry). `account_mode` is the account mode
+    local settings named when the work block started, one of
+    goodall.local_settings.ACCOUNT_MODES (ADR 0021): an observation, like the
+    machine facts, so an analyst can tell a work block recorded in an eval
+    account from one recorded in an account also used for other things. It
+    is None only in records written before account modes existed.
     """
 
     schema_version: int
@@ -200,6 +207,7 @@ class WorkBlockRecord:
     machine: MachineFacts
     claude_sessions: tuple[str, ...]
     telemetry: str | None = None
+    account_mode: str | None = None
 
 
 @dataclass(frozen=True)
@@ -337,6 +345,7 @@ def build_work_block_record(
     claude_sessions: Collection[str] = (),
     suffix: str | None = None,
     telemetry: str | None = None,
+    account_mode: str | None = None,
 ) -> WorkBlockRecord:
     """Build a work block record, giving it an id from the time it started.
 
@@ -357,6 +366,7 @@ def build_work_block_record(
         machine=machine,
         claude_sessions=tuple(claude_sessions),
         telemetry=telemetry,
+        account_mode=account_mode,
     )
 
 
@@ -461,10 +471,10 @@ def _render_work_block_record(record: WorkBlockRecord) -> str:
     """Write a work block record as indented JSON, one field per line.
 
     Unlike TOML, JSON has null, so an empty optional field is written as null
-    rather than left out: a reader sees every field the schema has. The one
-    exception is `telemetry`, added after records were already being
-    written: it is left out when goodall does not say, so a running work
-    block's marker, and any record without it, look exactly as before.
+    rather than left out: a reader sees every field the schema has. The
+    exceptions are `telemetry` and `account_mode`, added after records were
+    already being written: each is left out when goodall does not say, so
+    any record without it looks exactly as before.
     """
     ended_at = None
     if record.ended_at is not None:
@@ -488,6 +498,8 @@ def _render_work_block_record(record: WorkBlockRecord) -> str:
     }
     if record.telemetry is not None:
         values["telemetry"] = record.telemetry
+    if record.account_mode is not None:
+        values["account_mode"] = record.account_mode
     return json.dumps(values, indent=2, ensure_ascii=False) + "\n"
 
 
@@ -692,6 +704,7 @@ def parse_work_block_record(text: str) -> ParseResult[WorkBlockRecord]:
     machine = _read_machine_facts(reader)
     claude_sessions = reader.text_list("claude_sessions")
     telemetry = reader.optional_text("telemetry")
+    account_mode = reader.optional_text("account_mode")
     reader.report_unknown_keys()
 
     required_values = [schema_version, record_id, contributor, workstream, started_at, machine, claude_sessions]
@@ -712,6 +725,7 @@ def parse_work_block_record(text: str) -> ParseResult[WorkBlockRecord]:
         machine=machine,
         claude_sessions=tuple(claude_sessions),
         telemetry=telemetry,
+        account_mode=account_mode,
     )
     return ParseResult(record=work_block, problems=problems)
 
@@ -1016,6 +1030,12 @@ def _validate_work_block_record(
         checker.add(
             "telemetry",
             "telemetry must be captured, incomplete or missing, or left out when goodall does not say; correct it.",
+        )
+    if record.account_mode is not None and record.account_mode not in ACCOUNT_MODES:
+        checker.add(
+            "account_mode",
+            "account_mode must be dedicated or mixed, or left out in a record written before goodall recorded it; "
+            "correct it.",
         )
 
 
