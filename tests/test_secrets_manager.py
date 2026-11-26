@@ -35,7 +35,7 @@ def test_1password_references_in_the_documented_form_are_well_formed(reference: 
     "value",
     [
         # Raw keys pasted by mistake.
-        "sk-ant-api03-RECOGNISABLEFAKEVALUE",
+        "sk-ant-api03-RECOGNIZABLEFAKEVALUE",
         "ghp_0123456789abcdefghijklmnopqrstuvwxyz",
         # Too few or too many parts.
         "op://Eval/credential",

@@ -20,7 +20,7 @@ project folder) are not read: they apply only while Claude Code works in
 that folder, so a prompt gate there leaves every other folder in the eval
 account ungated, and doctor cannot know which folders the contributor will
 work in. Settings an administrator manages for every account on the Mac are
-not read either; hooks put there would be reported missing (a judgement
+not read either; hooks put there would be reported missing (a judgment
 call recorded for the owner).
 
 What is read, and what is never shown: from the whole settings file, only
@@ -30,7 +30,7 @@ ever appears in a message: not a command, not the path of the goodall a
 command names, not the line JSON could not read. Messages name the
 settings file, the events and the line number instead.
 
-How a hook command is recognised (`read_goodall_hook_command`): split as a
+How a hook command is recognized (`read_goodall_hook_command`): split as a
 shell would split it, it is a program called `goodall` followed by `hook`
 and, optionally, one event name. Anything else, such as a sound played on
 Stop, is some other hook and is left alone. A goodall command that names a

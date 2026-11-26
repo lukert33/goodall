@@ -60,7 +60,7 @@ filter them with `like`, for example
 | `goodall_workstream`, `goodall_workstreams` | all | The same, for effective workstreams |
 | `goodall_contributor`, `goodall_contributors` | all | The same, for contributors |
 | `goodall_interventions`, `goodall_intervention_categories`, `goodall_intervention_decisions` | all | How many interventions, and their categories and decisions |
-| `goodall_human_entries`, `goodall_ai_entries`, `goodall_harness_entries`, `goodall_unlabelled_entries` | Claude sessions | Entries of the session's own transcript by actor label (actor-label-rules.md) |
+| `goodall_human_entries`, `goodall_ai_entries`, `goodall_harness_entries`, `goodall_unlabeled_entries` | Claude sessions | Entries of the session's own transcript by actor label (actor-label-rules.md) |
 | `goodall_human_actions`, `goodall_human_actions_by_kind`, `goodall_refused_prompts`, `goodall_unfamiliar_entries` | Claude sessions | Human actions from the session and its subagents |
 | `goodall_started_at`, `goodall_ended_at`, `goodall_end_state`, `goodall_claude_sessions`, `goodall_journal_entries` | work blocks | From the work block record |
 | `goodall_actor_label_rules_version`, `goodall_human_action_rules_version`, `goodall_export_rules_version` | all | The rules that made the values |

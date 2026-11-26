@@ -109,7 +109,7 @@ def test_a_name_given_twice_is_not_shown_when_it_looks_like_a_token() -> None:
 
 def test_no_problem_ever_repeats_what_was_written_on_the_line() -> None:
     # Anything on a malformed line could be a key pasted by mistake.
-    pasted_value = "sk-ant-api03-RECOGNISABLEFAKEVALUE"
+    pasted_value = "sk-ant-api03-RECOGNIZABLEFAKEVALUE"
     text = (
         f"{pasted_value}\n"
         f"export NAME={pasted_value}\n"
@@ -122,7 +122,7 @@ def test_no_problem_ever_repeats_what_was_written_on_the_line() -> None:
 
     assert len(reading.problems) == 5
     for problem in reading.problems:
-        assert "RECOGNISABLEFAKEVALUE" not in problem.problem
+        assert "RECOGNIZABLEFAKEVALUE" not in problem.problem
 
 
 def test_a_missing_file_is_reported_as_missing_not_raised(tmp_path: Path) -> None:

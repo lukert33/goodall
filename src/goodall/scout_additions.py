@@ -84,7 +84,7 @@ WORK_BLOCK_TRANSCRIPT_PREFIX = "goodall-work-block-"
 HUMAN_APPROVER = "human"
 
 # Inspect's InterruptEvent has no value for "the person pressed Escape in
-# Claude Code". `user_cancel`, a client cancelling a running turn, is the
+# Claude Code". `user_cancel`, a client canceling a running turn, is the
 # nearest one.
 PERSON_INTERRUPTED = "user_cancel"
 
@@ -371,9 +371,9 @@ def session_additions(
         if action.kind == "blocked_prompt":
             refused_prompts += 1
 
-    labelled = label_transcript(session_file)
+    labeled = label_transcript(session_file)
     entries_by_label = {"human": 0, "ai": 0, "harness": 0}
-    for label in labelled.labels:
+    for label in labeled.labels:
         entries_by_label[label.actor_label] += 1
 
     session_interventions = []
@@ -404,7 +404,7 @@ def session_additions(
             "goodall_human_entries": entries_by_label["human"],
             "goodall_ai_entries": entries_by_label["ai"],
             "goodall_harness_entries": entries_by_label["harness"],
-            "goodall_unlabelled_entries": len(labelled.unmatched),
+            "goodall_unlabeled_entries": len(labeled.unmatched),
             "goodall_human_actions": len(actions),
             "goodall_human_actions_by_kind": actions_by_kind,
             "goodall_refused_prompts": refused_prompts,

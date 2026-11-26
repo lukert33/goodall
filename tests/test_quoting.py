@@ -130,7 +130,7 @@ def test_a_recognized_key_inside_a_longer_value_is_found(key: str, issuer: str) 
         "AIzaShort",
         # AWS key ids are exactly 16 characters after the prefix.
         "AKIA" + "SYNTHETIC000000",
-        "AKIA" + "RECOGNISABLEFAKEVALUE7",
+        "AKIA" + "RECOGNIZABLEFAKEVALUE7",
         # A prefix that is part of a longer word does not count.
         "task-" + "ant-api03-SYNTHETICsyntheticSYNTHETIC",
         "BEGIN PRIVATE KEY",

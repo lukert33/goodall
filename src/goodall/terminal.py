@@ -2,7 +2,7 @@
 
 Every command hands what it wants to say to a `Terminal`, which writes it to
 standard output or standard error. Nothing else calls `print`. That gives one
-place that decides layout, width and colour, and it gives tests one seam:
+place that decides layout, width and color, and it gives tests one seam:
 `cli.main` accepts a `Terminal`, so a test passes one built on `io.StringIO`
 and reads back exactly what a contributor would have seen.
 
@@ -21,7 +21,7 @@ AGENTS.md):
   `CheckResult`. The text screen and the JSON document are two renderings of
   the same record. `CheckResult` lives here, beside `Failure`, because ADR
   0012 makes "a check result" one of the things this module offers.
-- Colour is used only when the stream is a terminal, is switched off by the
+- Color is used only when the stream is a terminal, is switched off by the
   `NO_COLOR` environment variable (https://no-color.org), and is never the
   only signal: the words FAIL, and in a check report pass, warn, skip and
   unverified, are always printed.
@@ -55,7 +55,7 @@ MAXIMUM_WIDTH = 100
 # text is indented to match, so the three parts line up.
 LABEL_COLUMN_WIDTH = 6
 
-# ANSI escape sequences, in the basic eight colours, which every terminal
+# ANSI escape sequences, in the basic eight colors, which every terminal
 # theme maps to something readable on its own background.
 BOLD_RED = "\x1b[1;31m"
 BOLD_YELLOW = "\x1b[1;33m"
@@ -136,7 +136,7 @@ class CheckStatus(StrEnum):
 
 
 # The word printed for each status. FAIL is in capitals so it stands out with
-# colour off; the others stay lowercase so the eye lands on failures first.
+# color off; the others stay lowercase so the eye lands on failures first.
 STATUS_WORDS = {
     CheckStatus.PASS: "pass",
     CheckStatus.FAIL: "FAIL",
@@ -145,8 +145,8 @@ STATUS_WORDS = {
     CheckStatus.UNVERIFIED: "unverified",
 }
 
-# The colour of each status word, used only when colour is wanted.
-STATUS_COLOURS = {
+# The color of each status word, used only when color is wanted.
+STATUS_COLORS = {
     CheckStatus.PASS: GREEN,
     CheckStatus.FAIL: BOLD_RED,
     CheckStatus.WARN: BOLD_YELLOW,
@@ -286,10 +286,10 @@ def measure_width(stream: TextIO) -> int:
     return clamp_width(measured_columns)
 
 
-def colour_is_wanted(stream: TextIO) -> bool:
-    """Decide whether to colour text written to `stream`.
+def color_is_wanted(stream: TextIO) -> bool:
+    """Decide whether to color text written to `stream`.
 
-    Colour only on a terminal, because escape codes written to a file or a
+    Color only on a terminal, because escape codes written to a file or a
     pipe show up as garbage. An empty NO_COLOR counts as unset, as the
     convention says.
     """
@@ -331,8 +331,8 @@ class Terminal:
         # through if the window is resized.
         self.output_width = measure_width(standard_output)
         self.error_width = measure_width(standard_error)
-        self.error_colour = colour_is_wanted(standard_error)
-        self.output_colour = colour_is_wanted(standard_output)
+        self.error_color = color_is_wanted(standard_error)
+        self.output_color = color_is_wanted(standard_output)
 
         # True once anything has been written to standard output, so the
         # next block knows to start with a blank line.
@@ -356,7 +356,7 @@ class Terminal:
         return self.standard_input.read(maximum_characters + 1)
 
     def show_facts(self, facts: list[tuple[str, str]]) -> None:
-        """Write labelled facts to standard output, one per line, values lined up in one column.
+        """Write labeled facts to standard output, one per line, values lined up in one column.
 
         Each fact is a (label, value) pair, such as ("Eval", "goodall-pilot").
         The value column starts two spaces after the longest label.
@@ -400,7 +400,7 @@ class Terminal:
         )
 
     def show_warnings(self, warnings: list[Failure]) -> None:
-        """Write problems that did not stop the command to standard error, labelled WARN instead of FAIL.
+        """Write problems that did not stop the command to standard error, labeled WARN instead of FAIL.
 
         A warning has the same three parts as a failure, because it still
         needs a next step; only the label says the command itself succeeded.
@@ -408,26 +408,26 @@ class Terminal:
         for position, warning in enumerate(warnings):
             if position > 0:
                 self.standard_error.write("\n")
-            self.show_failure(warning, label="WARN", label_colour=BOLD_YELLOW)
+            self.show_failure(warning, label="WARN", label_color=BOLD_YELLOW)
 
-    def show_failure(self, failure: Failure, label: str = "FAIL", label_colour: str = BOLD_RED) -> None:
-        """Write a failure to standard error as three labelled paragraphs."""
+    def show_failure(self, failure: Failure, label: str = "FAIL", label_color: str = BOLD_RED) -> None:
+        """Write a failure to standard error as three labeled paragraphs."""
         paragraphs = [
-            self.labelled_paragraph(label, failure.what_happened, label_colour),
-            self.labelled_paragraph("Why", failure.why, BOLD),
-            self.labelled_paragraph("Next", failure.what_to_do_next, BOLD),
+            self.labeled_paragraph(label, failure.what_happened, label_color),
+            self.labeled_paragraph("Why", failure.why, BOLD),
+            self.labeled_paragraph("Next", failure.what_to_do_next, BOLD),
         ]
         if failure.commands_to_try:
-            paragraphs.append(self.commands_paragraph(failure.commands_to_try, self.error_colour))
+            paragraphs.append(self.commands_paragraph(failure.commands_to_try, self.error_color))
         self.standard_error.write("\n\n".join(paragraphs) + "\n")
 
-    def commands_paragraph(self, commands: tuple[str, ...], colour: bool) -> str:
-        """Commands to copy, labelled "Try", one per line and never wrapped, so each pastes as it stands.
+    def commands_paragraph(self, commands: tuple[str, ...], color: bool) -> str:
+        """Commands to copy, labeled "Try", one per line and never wrapped, so each pastes as it stands.
 
-        `colour` says whether the stream it goes to shows colour.
+        `color` says whether the stream it goes to shows color.
         """
         label = "Try".ljust(LABEL_COLUMN_WIDTH)
-        if colour:
+        if color:
             label = BOLD + "Try" + RESET + label[len("Try") :]
         lines = []
         for position, command in enumerate(commands):
@@ -444,14 +444,14 @@ class Terminal:
         and has a next step to suggest, such as opening what it made.
         """
         self.start_output_block()
-        self.standard_output.write(self.commands_paragraph(commands, self.output_colour) + "\n")
+        self.standard_output.write(self.commands_paragraph(commands, self.output_color) + "\n")
 
     def show_hook_message(self, message: str) -> None:
         """Write a message for Claude Code to show the person, as one unwrapped line on standard error.
 
         Used by `goodall hook` (goodall.hook). Claude Code shows a hook's
         standard error inside its own window, which wraps text itself, so
-        this adds no labels, line breaks or colour.
+        this adds no labels, line breaks or color.
         """
         self.standard_error.write(message + "\n")
 
@@ -506,7 +506,7 @@ class Terminal:
         for group_name in group_names:
             group_results = [result for result in results if result.group == group_name]
             heading = group_name
-            if self.output_colour:
+            if self.output_color:
                 heading = BOLD + group_name + RESET
             group_text = heading + "\n"
             for position, result in enumerate(group_results):
@@ -532,15 +532,15 @@ class Terminal:
     def check_entry(self, result: CheckResult, summaries_by_id: dict[str, str]) -> str:
         """The lines for one check: its status word and summary, then anything beneath it.
 
-        Trap: wrapping happens before the status word is coloured, so escape
+        Trap: wrapping happens before the status word is colored, so escape
         codes never count towards the line length.
         """
         word = STATUS_WORDS[result.status]
         status_column = CHECK_INDENT + word.ljust(len(CHECK_DETAIL_INDENT) - len(CHECK_INDENT))
         wrapped_summary = self.wrap(result.summary, self.output_width, CHECK_DETAIL_INDENT)
-        colour = STATUS_COLOURS[result.status]
-        if self.output_colour and colour != "":
-            status_column = status_column.replace(word, colour + word + RESET, 1)
+        color = STATUS_COLORS[result.status]
+        if self.output_color and color != "":
+            status_column = status_column.replace(word, color + word + RESET, 1)
         entry = status_column + wrapped_summary[len(CHECK_DETAIL_INDENT) :] + "\n"
 
         if result.waiting_for is not None:
@@ -568,14 +568,14 @@ class Terminal:
         """
         self.standard_output.write(json.dumps(document, indent=2) + "\n")
 
-    def labelled_paragraph(self, label: str, text: str, label_colour: str) -> str:
+    def labeled_paragraph(self, label: str, text: str, label_color: str) -> str:
         """Wrap `text` with `label` in the left column and the rest indented under it.
 
-        Wrapping happens before colour is added, so escape codes never count
+        Wrapping happens before color is added, so escape codes never count
         towards the line length.
         """
         wrapped = self.wrap(text, self.error_width, " " * LABEL_COLUMN_WIDTH)
         padded_label = label.ljust(LABEL_COLUMN_WIDTH)
-        if self.error_colour:
-            padded_label = label_colour + label + RESET + padded_label[len(label) :]
+        if self.error_color:
+            padded_label = label_color + label + RESET + padded_label[len(label) :]
         return padded_label + wrapped[LABEL_COLUMN_WIDTH:]

@@ -1,4 +1,4 @@
-# Actor labelling rules, version 3
+# Actor labeling rules, version 3
 
 These are the rules `goodall.actor_labels` uses to give every entry of one
 Claude Code transcript an actor label: `human` (the person), `ai` (a model) or
@@ -30,9 +30,9 @@ transcripts in November 2026.
 - `rules_version` and `human_action_rules_version`.
 
 Every non-blank line is in exactly one of the two lists. Blank lines hold no
-entry and are skipped. Labelling always carries on past a bad line.
+entry and are skipped. Labeling always carries on past a bad line.
 
-`summarise_labels(result)` counts entries per label, per rule (every rule
+`summarize_labels(result)` counts entries per label, per rule (every rule
 listed, zero when unused), mixed entries and unmatched entries.
 
 ## Three actors, with identity kept apart
@@ -90,13 +90,13 @@ synthetic and trimmed to the keys the rule looks at.
 3. **`person_rejected_tool_call`** → `human`, mixed. The person refused a tool
    call. The harness wrote the result, but the decision, and any feedback, is
    the person's. Since version 3 (human-action rules version 3) this also
-   covers a result whose text is not recognised but whose
+   covers a result whose text is not recognized but whose
    `permissionDecision` has source `user_reject`.
 
    `{"type":"user","message":{"content":[{"type":"tool_result","is_error":true,"content":"The user doesn't want to proceed with this tool use. ... the user said:\nKeep the file."}]}}`
 
 4. **`person_interrupted`** → `human`, mixed. The person stopped the agent.
-   The harness recorded it as a fixed marker or a cancelled tool result.
+   The harness recorded it as a fixed marker or a canceled tool result.
 
    `{"type":"user","message":{"content":[{"type":"text","text":"[Request interrupted by user]"}]}}`
 
@@ -115,7 +115,7 @@ synthetic and trimmed to the keys the rule looks at.
    | `person_queued_prompt` | `queued_prompt` (an `attachment` entry) | no | |
    | `person_prompt_blocked_by_hook` | `blocked_prompt` (a `system` entry) | yes | the hook's warning |
 
-   A tool result carrying an approval is labelled `human`, not `harness`,
+   A tool result carrying an approval is labeled `human`, not `harness`,
    because the entry exists only because the person let the call run; most of
    its words are the tool's output, which is why it is mixed.
 
@@ -199,14 +199,14 @@ waiting for evidence" in [human-action-rules.md](human-action-rules.md).
 
 ## Known to be wrong or unknowable in version 3
 
-- **`custom-title`** entries are labelled `ai` (rule 4c), but may record a
+- **`custom-title`** entries are labeled `ai` (rule 4c), but may record a
   name the person typed when renaming a Claude session; the entry does not
   say which, so `initiated_by` is empty.
 - **Messages from other sessions or a coordinator** (`origin.kind` `peer` or
-  `coordinator`) are labelled `ai` (rule 4b). The entry does not prove that
+  `coordinator`) are labeled `ai` (rule 4b). The entry does not prove that
   no person typed the message in the other session; the owner's direction is
   that what arrives from another agent is an agent's.
-- **Unfamiliar parts of a labelled entry** (an unknown content block beside a
+- **Unfamiliar parts of a labeled entry** (an unknown content block beside a
   tool result, for example) do not change its label; `goodall.human_actions`
   reports them in its own `unfamiliar_entries`.
 - **Which person.** A `human` label never names a person: a transcript does
