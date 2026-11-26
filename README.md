@@ -11,7 +11,7 @@ rather than a benchmark run in a sandbox. You do not need to be a software
 engineer to use it, but you do need a Mac, a terminal, and someone (possibly
 you) who can install programs on that Mac.
 
-## What goodall measures, and what it does not claim
+## Current scope of goodall
 
 Goodall is an instrument. It measures **delegation**: who did what, and
 where each error was caught. It does not judge whether a pattern is a person
