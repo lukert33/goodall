@@ -17,15 +17,11 @@
 When the eval does not include ActivityWatch (ADR 0016) all four pass,
 the first with a note saying so, and nothing is asked of anything.
 
-How it asks (ADR 0011, amended 2026-11-18): `curl` through the runner, to
-`http://127.0.0.1:<port>/api/0/...`, with no credentials (`--disable`, first,
-so curl does not read ~/.curlrc, where a line could add credentials or an
-output file), no proxy
-(`--noproxy '*'`, so a proxy setting cannot send a request for this Mac's
-own server elsewhere), a short limit (`--max-time 3`), and `--fail` so an
-error page is not mistaken for an answer. Only GET requests are made, so
-doctor changes nothing in ActivityWatch (AGENTS.md invariant 5). The
-answer is read from the runner's captured output; no file is written.
+How it asks (ADR 0011, amended 2026-11-18): with the `curl` command that
+goodall.activitywatch_server builds, which says why each of its flags is
+there. Only GET requests are made, so doctor changes nothing in
+ActivityWatch (AGENTS.md invariant 5). The answer is read from the runner's
+captured output; no file is written.
 
 Why the identifier is checked first: local ports are shared by every macOS
 user account on the Mac, and ActivityWatch's launcher silently adopts any
@@ -52,12 +48,18 @@ event with each heartbeat).
 
 import json
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
-from urllib.parse import quote
 
+from goodall.activitywatch_server import (
+    INFO_PATH,
+    answer_unfamiliar_failure,
+    curl_unavailable_failure,
+    device_id_changed_failure,
+    events_path,
+    local_get,
+    not_answering_failure,
+)
 from goodall.checks import Check, CheckContext, CheckOutcome, failed, passed, warned
-from goodall.local_settings import ACTIVITYWATCH_INFO_PATH
-from goodall.runner import Command, CommandOutcome
+from goodall.runner import CommandOutcome
 from goodall.settings_checks import ACTIVITYWATCH_SETTINGS_RECORDED, valid_eval_config, valid_local_settings
 from goodall.terminal import Failure
 
@@ -79,31 +81,7 @@ BROWSER_BUCKET_TYPE = "web.tab.current"
 # a watcher that has died.
 AFK_FRESH_WITHIN = timedelta(minutes=10)
 
-# How long `curl` may take, and how long the runner waits for `curl` itself.
-CURL_MAX_SECONDS = 3
-RUNNER_TIMEOUT_SECONDS = 5.0
-
 NOT_INCLUDED_NOTE = "This eval does not include ActivityWatch, so there is nothing to check."
-
-
-def local_get(port: int, path: str) -> Command:
-    """The `curl` that reads `path` from the ActivityWatch server on this Mac's `port`, with no credentials."""
-    return Command(
-        arguments=[
-            "curl",
-            # Must be first: curl then skips its settings file, ~/.curlrc,
-            # which could add credentials or an output file.
-            "--disable",
-            "--silent",
-            "--fail",
-            "--noproxy",
-            "*",
-            "--max-time",
-            str(CURL_MAX_SECONDS),
-            f"http://127.0.0.1:{port}{path}",
-        ],
-        timeout_seconds=RUNNER_TIMEOUT_SECONDS,
-    )
 
 
 def ask_activitywatch(context: CheckContext, port: int, path: str) -> object | Failure:
@@ -137,7 +115,7 @@ def check_server_is_this_accounts(context: CheckContext) -> CheckOutcome:
     if port is None or recorded_device_id is None:
         raise RuntimeError(f"{SERVER_IS_THIS_ACCOUNTS} must list {ACTIVITYWATCH_SETTINGS_RECORDED} as a prerequisite.")
 
-    answer = ask_activitywatch(context, port, ACTIVITYWATCH_INFO_PATH)
+    answer = ask_activitywatch(context, port, INFO_PATH)
     if isinstance(answer, Failure):
         return failed([answer])
     if not isinstance(answer, dict) or not isinstance(answer.get("device_id"), str):
@@ -197,9 +175,7 @@ def check_afk_bucket_is_recent(context: CheckContext) -> CheckOutcome:
     first_problem: Failure | None = None
     found_an_event = False
     for afk_bucket_id in afk_bucket_ids:
-        # The bucket id holds the Mac's hostname and may hold any character, so it is quoted.
-        events_path = f"/api/0/buckets/{quote(afk_bucket_id, safe='')}/events?limit=1"
-        answer = ask_activitywatch(context, port, events_path)
+        answer = ask_activitywatch(context, port, events_path(afk_bucket_id, limit=1))
         if isinstance(answer, Failure):
             problem = answer
         elif not isinstance(answer, list):
@@ -288,83 +264,6 @@ def read_event_end(event: object) -> datetime | None:
     if started.tzinfo is None:
         started = started.replace(tzinfo=UTC)
     return started + timedelta(seconds=duration)
-
-
-def curl_unavailable_failure() -> Failure:
-    """The failure for a Mac where `curl` cannot be run."""
-    return Failure(
-        kind="activitywatch_curl_unavailable",
-        what_happened="Goodall could not run curl, the program it uses to ask ActivityWatch questions.",
-        why=(
-            "curl ships with macOS, so it has probably been removed or blocked on this Mac. Without it goodall "
-            "cannot check ActivityWatch."
-        ),
-        what_to_do_next=(
-            "Check that curl runs in a terminal (curl --version). Ask whoever administers this Mac to restore it."
-        ),
-        commands_to_try=("curl --version",),
-    )
-
-
-def not_answering_failure(timed_out: bool, settings_file: Path) -> Failure:
-    """The failure for an ActivityWatch that does not answer on the port in local settings."""
-    if timed_out:
-        what_happened = "ActivityWatch did not answer within 3 seconds on the port recorded in local settings."
-    else:
-        what_happened = "Nothing answered as ActivityWatch on the port recorded in local settings."
-    return Failure(
-        kind="activitywatch_not_answering",
-        what_happened=what_happened,
-        why=(
-            "This eval includes ActivityWatch (ADR 0016), which goodall asks for what you did outside the agents. "
-            "If it is not running, nothing is recording that part of your work."
-        ),
-        what_to_do_next=(
-            "Start ActivityWatch in this eval account and run goodall doctor again. If it is running, check that "
-            f"the port in its own settings is the one in activitywatch_port in {settings_file}."
-        ),
-    )
-
-
-def answer_unfamiliar_failure() -> Failure:
-    """The failure for an answer that is not shaped as ActivityWatch's: another program may be on the port."""
-    return Failure(
-        kind="activitywatch_answer_unfamiliar",
-        what_happened="What answered on ActivityWatch's port was not shaped as ActivityWatch's answers are.",
-        why=(
-            "Another program may be using the port, or this is a version of ActivityWatch whose answers goodall "
-            "does not know. Goodall will not trust an answer it cannot read."
-        ),
-        what_to_do_next=(
-            "Check that the port in activitywatch_port in your local settings is the one ActivityWatch's own "
-            "settings use, and that no other program uses it. If ActivityWatch was just updated, tell whoever runs "
-            "the eval."
-        ),
-    )
-
-
-def device_id_changed_failure(settings_file: Path) -> Failure:
-    """The failure for a server whose identifier is not the one recorded: a new copy, or another account's."""
-    return Failure(
-        kind="activitywatch_device_id_changed",
-        what_happened=(
-            "The ActivityWatch on the recorded port reports a different device_id from the one in local settings."
-        ),
-        why=(
-            "The identifier tells this account's ActivityWatch from every other account's on this Mac (ADR 0016). "
-            "It changes when ActivityWatch is switched between its Python and Rust servers, or when its data folder "
-            "is deleted. It also differs when the port is answered by another macOS account's ActivityWatch, whose "
-            "data must never be recorded as yours."
-        ),
-        what_to_do_next=(
-            "Switching ActivityWatch between its Python and Rust servers, or deleting its data folder, changes the "
-            "identifier. If you did either, record the new one: run goodall onboard, or "
-            f"set activitywatch_device_id in {settings_file} to the device_id that ActivityWatch shows at "
-            f"{ACTIVITYWATCH_INFO_PATH} on your port. If you did neither, another account may be using your port: do "
-            "not record its identifier; give your own ActivityWatch a different port, in both of its settings files, "
-            "and record that port."
-        ),
-    )
 
 
 def buckets_missing_failure(missing: list[str]) -> Failure:
