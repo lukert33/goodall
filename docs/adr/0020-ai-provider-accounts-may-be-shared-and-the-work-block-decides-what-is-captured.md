@@ -1,0 +1,11 @@
+# AI provider accounts may be shared, and the work block decides what is captured
+
+A contributor may use an AI provider account they already have, such as their own Claude account, in an eval, and may use that same account for other things. Goodall does not ask for an account made for the eval and does not check which account is signed in. What decides whether work is captured is the work block alone: an agent session is copied only when it has a record inside a work block (ADR 0019). Being signed in to a particular AI provider account captures nothing, and neither does being signed in to the eval account. An earlier sketch of this project asked for a provider account per project, on the reasoning that the account marked what belonged to the eval. We rejected carrying that forward for two reasons. It is a real burden, since most people have one paid AI account and use it for everything. And it is redundant: goodall captures from the Mac, not from the provider, so the provider account never decided what goodall recorded. The cost we accept is that the provider's own history and usage figures mix eval work with other work, so they cannot stand in for the eval's record.
+
+## Consequences
+
+- The eval account stays as it is: a standard macOS user account for one eval (ADR 0008). The prompt gate also stays (the owner's decision, 2026-11-26): in the eval account, Claude Code refuses a prompt while no work block is active. In other source applications, work outside a work block is not refused and is left uncaptured (ADR 0019).
+- Raw records can name the contributor's own AI provider account. Claude Code's telemetry carries the account's email address and account ids on every event. This is one more reason raw records stay on the Mac (ADR 0017), and a release must drop or replace those values.
+- What a provider keeps on its own servers, such as chat history in the Claude desktop app, is outside the eval whether or not the account is shared. Goodall makes no network calls and holds no credentials, so it never reads it.
+- A contributor who wants a separate AI provider account for an eval may still use one. Goodall treats both cases the same.
+- Open question Q62 (`docs/open-questions/2026-11-16.md`) answered that goodall copies every Claude session in the eval account. ADR 0019 and this decision replace that answer.

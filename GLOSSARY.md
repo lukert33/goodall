@@ -19,8 +19,12 @@ One login on a Mac with its own home folder, the kind created under Users & Grou
 _Avoid_: Profile, user profile, macOS account, login
 
 **Eval account**:
-A standard (non-admin) macOS user account used for one eval and nothing else. It is the boundary of what the eval records.
+A standard (non-admin) macOS user account used for one eval and nothing else. It is the boundary of what the eval records: nothing outside it is recorded, and inside it only work in a work block is. The AI provider accounts signed in there need not be made for the eval (ADR 0020).
 _Avoid_: Project account, eval machine, eval profile, sandbox
+
+**AI provider account**:
+A person's account with a company that offers AI models, such as a Claude account. It may be shared between an eval and other uses; goodall neither requires one made for the eval nor checks which is signed in (ADR 0020). The one place "provider" is the right word: for an application, say source application or app family.
+_Avoid_: Project account, eval login, model account
 
 **Development account**:
 An ordinary account where goodall itself is developed. It is outside any eval.
