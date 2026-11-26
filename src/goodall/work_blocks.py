@@ -16,6 +16,7 @@ is active while nothing can be written.
 
     <log directory>/work-blocks/
         active-work-block.json      the marker: present exactly while a work block runs
+        pause.json                  the pause: present while recording is paused, naming the paused work block
         heartbeats/<id>.jsonl       one line per heartbeat of that work block
         unrecorded/<id>.json        an ended work block's record, until it is in the record repo
         damaged-markers/...         markers goodall could not read, moved aside and kept
@@ -49,6 +50,16 @@ Decisions a reader would otherwise reverse-engineer (all PROVISIONAL):
   then is the marker removed, so the work is never lost if the record repo
   cannot take it yet. A marker whose work block already has an unrecorded
   record has ended: it is not active.
+- A pause is not a state of a work block (ADR 0021). `goodall pause` ends
+  the work block like `goodall stop` does, then writes `pause.json`, which
+  only remembers which work block was paused, on which workstream and
+  when. While it is there goodall is simply not recording. The next
+  `goodall start` reads it to name the work block the new one continues,
+  and removes it; `goodall stop` removes it too. It never expires by
+  itself. Unlike the marker it may be replaced, so it is written to a
+  temporary file and renamed into place, and is seen whole or not at all.
+  A pause file goodall cannot read counts as no pause: the only thing lost
+  is the link from the next work block to the paused one.
 """
 
 import errno
@@ -71,6 +82,9 @@ IDLE_LIMIT = timedelta(hours=3)
 # The folder inside the log directory that holds everything in this module.
 WORK_BLOCKS_FOLDER_NAME = "work-blocks"
 MARKER_FILE_NAME = "active-work-block.json"
+PAUSE_FILE_NAME = "pause.json"
+# The version of the pause file's shape, written into it as `schema_version`.
+PAUSE_SCHEMA_VERSION = 1
 HEARTBEATS_FOLDER_NAME = "heartbeats"
 UNRECORDED_FOLDER_NAME = "unrecorded"
 DAMAGED_MARKERS_FOLDER_NAME = "damaged-markers"
@@ -101,6 +115,10 @@ class WorkBlockFiles:
     @property
     def marker(self) -> Path:
         return self.folder / MARKER_FILE_NAME
+
+    @property
+    def pause(self) -> Path:
+        return self.folder / PAUSE_FILE_NAME
 
     @property
     def heartbeats_folder(self) -> Path:
@@ -415,6 +433,73 @@ def remove_marker(log_directory: Path, work_block_id: str) -> None:
     if marker_record is None or marker_record.id != work_block_id:
         return
     files.marker.unlink(missing_ok=True)
+
+
+@dataclass(frozen=True)
+class Pause:
+    """What goodall remembers while recording is paused: which work block was paused, and when.
+
+    `work_block_id` is the work block `goodall pause` ended, `workstream`
+    the workstream it was on, and `paused_at` when it was paused.
+    """
+
+    work_block_id: str
+    workstream: str
+    paused_at: datetime
+
+
+def write_pause(log_directory: Path, work_block_id: str, workstream: str, paused_at: datetime) -> None:
+    """Remember that recording is paused, replacing any earlier pause.
+
+    Written in full to a temporary file, owner-only, then renamed over
+    `pause.json`: a rename is atomic, so the prompt gate reading at the same
+    moment sees the old pause, the new one, or none, never half of one.
+    """
+    files = WorkBlockFiles(log_directory)
+    make_folders(files)
+    values = {
+        "schema_version": PAUSE_SCHEMA_VERSION,
+        "work_block": work_block_id,
+        "workstream": workstream,
+        "paused_at": format_timestamp(paused_at),
+    }
+    temporary_file = files.folder / f".{PAUSE_FILE_NAME}.{secrets.token_hex(4)}.tmp"
+    write_new_file(temporary_file, json.dumps(values, indent=2) + "\n")
+    os.replace(temporary_file, files.pause)
+
+
+def read_pause(log_directory: Path) -> Pause | None:
+    """The pause in force, or None when recording is not paused.
+
+    The prompt gate calls this, only when it is about to refuse a prompt, to
+    say that recording is paused; it reads one small file. None too for a
+    pause file that cannot be read as one. Never raises for anything on the
+    disk.
+    """
+    try:
+        values = json.loads(WorkBlockFiles(log_directory).pause.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(values, dict):
+        return None
+    work_block_id = values.get("work_block")
+    workstream = values.get("workstream")
+    paused_at = values.get("paused_at")
+    if not isinstance(work_block_id, str) or not records.RECORD_ID_PATTERN.fullmatch(work_block_id):
+        return None
+    if not isinstance(workstream, str) or not records.IDENTIFIER_PATTERN.fullmatch(workstream):
+        return None
+    if not isinstance(paused_at, str) or not records.TIMESTAMP_PATTERN.fullmatch(paused_at):
+        return None
+    return Pause(work_block_id=work_block_id, workstream=workstream, paused_at=datetime.fromisoformat(paused_at))
+
+
+def clear_pause(log_directory: Path) -> None:
+    """Forget the pause: remove `pause.json`. Fine when there is none, or the log directory cannot be reached."""
+    try:
+        WorkBlockFiles(log_directory).pause.unlink(missing_ok=True)
+    except OSError:
+        pass
 
 
 def unrecorded_files(log_directory: Path) -> list[Path]:

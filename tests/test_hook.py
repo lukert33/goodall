@@ -145,6 +145,25 @@ def test_a_prompt_with_no_work_block_is_refused_with_the_command_to_run(tmp_path
     )
 
 
+def test_a_prompt_while_recording_is_paused_is_refused_and_told_how_to_record_again(tmp_path: Path) -> None:
+    eval_account = make_eval_account(tmp_path)
+    work_blocks.write_pause(
+        eval_account.log_directory,
+        "20261116T093000Z-ada-lovelace-0a1b2c3d",
+        "research",
+        datetime.now(UTC) - timedelta(days=2),
+    )
+
+    completed = run_hook(eval_account.config_directory, ["UserPromptSubmit"], prompt_input())
+
+    assert completed.returncode == 2
+    assert completed.stdout == ""
+    assert completed.stderr == (
+        "Goodall is paused, so it is not recording and this prompt was not sent. "
+        "Open a terminal, run goodall start to record again, then send your prompt again.\n"
+    )
+
+
 def test_a_prompt_is_refused_when_goodall_is_not_set_up(tmp_path: Path) -> None:
     empty_config_directory = tmp_path / "goodall-config"
     empty_config_directory.mkdir()
@@ -371,6 +390,63 @@ def test_in_mixed_account_mode_a_prompt_during_a_work_block_is_recorded_as_in_de
     assert completed.returncode == 0, completed.stderr
     assert completed.stdout == completed.stderr == ""
     assert heartbeat_sessions(mixed_account.log_directory, work_block) == [CLAUDE_SESSION]
+
+
+def pause_recording(log_directory: Path) -> None:
+    """Leave the note `goodall pause` leaves: recording was paused two days ago."""
+    work_blocks.write_pause(
+        log_directory,
+        "20261116T093000Z-ada-lovelace-0a1b2c3d",
+        "research",
+        datetime.now(UTC) - timedelta(days=2),
+    )
+
+
+def test_in_dedicated_account_mode_a_prompt_while_paused_is_refused_with_the_pause_message(tmp_path: Path) -> None:
+    # ADR 0021: a paused account is simply not recording, so in dedicated
+    # account mode the prompt gate is closed.
+    dedicated_account = make_eval_account(tmp_path, account_mode="dedicated")
+    pause_recording(dedicated_account.log_directory)
+
+    completed = run_hook(dedicated_account.config_directory, ["UserPromptSubmit"], prompt_input())
+
+    assert completed.returncode == 2
+    assert completed.stdout == ""
+    assert completed.stderr == (
+        "Goodall is paused, so it is not recording and this prompt was not sent. "
+        "Open a terminal, run goodall start to record again, then send your prompt again.\n"
+    )
+
+
+def test_in_mixed_account_mode_a_prompt_while_paused_goes_through_and_nothing_is_written(tmp_path: Path) -> None:
+    # The gate is off in mixed account mode, and a pause does not turn it
+    # on: paused is the same as any time outside a work block.
+    mixed_account = make_eval_account(tmp_path, account_mode="mixed")
+    pause_recording(mixed_account.log_directory)
+    files_before = files_in(mixed_account.log_directory)
+    pause_text = files_before[0].read_text()
+
+    completed = run_hook(mixed_account.config_directory, ["UserPromptSubmit"], prompt_input())
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout == completed.stderr == ""
+    # Only the pause itself is there, exactly as it was.
+    assert [path.name for path in files_before] == ["pause.json"]
+    assert files_in(mixed_account.log_directory) == files_before
+    assert files_before[0].read_text() == pause_text
+
+
+def test_in_mixed_account_mode_the_other_events_write_nothing_while_paused(tmp_path: Path) -> None:
+    mixed_account = make_eval_account(tmp_path, account_mode="mixed")
+    pause_recording(mixed_account.log_directory)
+    files_before = files_in(mixed_account.log_directory)
+
+    for event_name in ["PostToolUse", "Stop", "SessionEnd"]:
+        completed = run_hook(mixed_account.config_directory, [event_name], prompt_input())
+        assert completed.returncode == 0, completed.stderr
+        assert completed.stdout == completed.stderr == ""
+
+    assert files_in(mixed_account.log_directory) == files_before
 
 
 def test_an_account_mode_of_dedicated_written_out_keeps_the_prompt_gate_closed(tmp_path: Path) -> None:

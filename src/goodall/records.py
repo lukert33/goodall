@@ -195,6 +195,10 @@ class WorkBlockRecord:
     machine facts, so an analyst can tell a work block recorded in an eval
     account from one recorded in an account also used for other things. It
     is None only in records written before account modes existed.
+    `continues_work_block` is the id of the work block this one continues:
+    the one that was paused when this one started (`goodall pause`,
+    ADR 0021). None for a work block that continues none, which is most of
+    them.
     """
 
     schema_version: int
@@ -208,6 +212,7 @@ class WorkBlockRecord:
     claude_sessions: tuple[str, ...]
     telemetry: str | None = None
     account_mode: str | None = None
+    continues_work_block: str | None = None
 
 
 @dataclass(frozen=True)
@@ -346,11 +351,13 @@ def build_work_block_record(
     suffix: str | None = None,
     telemetry: str | None = None,
     account_mode: str | None = None,
+    continues_work_block: str | None = None,
 ) -> WorkBlockRecord:
     """Build a work block record, giving it an id from the time it started.
 
     Leave `ended_at` and `end_state` out for a work block that is still
-    running.
+    running. `continues_work_block` is the id of the paused work block this
+    one continues, when it continues one.
     """
     started_at = _as_utc(started_at)
     if ended_at is not None:
@@ -367,6 +374,7 @@ def build_work_block_record(
         claude_sessions=tuple(claude_sessions),
         telemetry=telemetry,
         account_mode=account_mode,
+        continues_work_block=continues_work_block,
     )
 
 
@@ -472,9 +480,10 @@ def _render_work_block_record(record: WorkBlockRecord) -> str:
 
     Unlike TOML, JSON has null, so an empty optional field is written as null
     rather than left out: a reader sees every field the schema has. The
-    exceptions are `telemetry` and `account_mode`, added after records were
-    already being written: each is left out when goodall does not say, so
-    any record without it looks exactly as before.
+    exceptions are `telemetry`, `account_mode` and `continues_work_block`,
+    added after records were already being written: each is left out when
+    it has nothing to say, so a record without it looks exactly as before,
+    and `schema_version` did not need raising.
     """
     ended_at = None
     if record.ended_at is not None:
@@ -500,6 +509,8 @@ def _render_work_block_record(record: WorkBlockRecord) -> str:
         values["telemetry"] = record.telemetry
     if record.account_mode is not None:
         values["account_mode"] = record.account_mode
+    if record.continues_work_block is not None:
+        values["continues_work_block"] = record.continues_work_block
     return json.dumps(values, indent=2, ensure_ascii=False) + "\n"
 
 
@@ -705,6 +716,7 @@ def parse_work_block_record(text: str) -> ParseResult[WorkBlockRecord]:
     claude_sessions = reader.text_list("claude_sessions")
     telemetry = reader.optional_text("telemetry")
     account_mode = reader.optional_text("account_mode")
+    continues_work_block = reader.optional_text("continues_work_block")
     reader.report_unknown_keys()
 
     required_values = [schema_version, record_id, contributor, workstream, started_at, machine, claude_sessions]
@@ -726,6 +738,7 @@ def parse_work_block_record(text: str) -> ParseResult[WorkBlockRecord]:
         claude_sessions=tuple(claude_sessions),
         telemetry=telemetry,
         account_mode=account_mode,
+        continues_work_block=continues_work_block,
     )
     return ParseResult(record=work_block, problems=problems)
 
@@ -1036,6 +1049,13 @@ def _validate_work_block_record(
             "account_mode",
             "account_mode must be dedicated or mixed, or left out in a record written before goodall recorded it; "
             "correct it.",
+        )
+    checker.optional_record_id("continues_work_block", record.continues_work_block)
+    if record.continues_work_block == record.id:
+        checker.add(
+            "continues_work_block",
+            "continues_work_block names this work block itself; it must name the earlier, paused work block, or be "
+            "left out.",
         )
 
 

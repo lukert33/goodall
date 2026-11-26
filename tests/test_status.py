@@ -165,6 +165,8 @@ def test_status_json_reports_the_same_failure_on_standard_output(empty_config_di
         "work_block",
         "ended_work_blocks",
         "work_blocks_waiting_for_workstream",
+        "paused",
+        "paused_work_block",
         "warnings",
         "failures",
     }
@@ -608,6 +610,8 @@ def test_valid_eval_as_json_gives_the_same_facts(eval_account: EvalAccount) -> N
         "work_block": None,
         "ended_work_blocks": [],
         "work_blocks_waiting_for_workstream": [],
+        "paused": False,
+        "paused_work_block": None,
         "warnings": [],
         "failures": [],
     }

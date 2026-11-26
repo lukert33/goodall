@@ -659,6 +659,44 @@ def test_in_mixed_account_mode_activitywatch_is_never_asked_and_nothing_of_it_is
     assert not eval_account.copies_folder.exists()
 
 
+def test_goodall_pause_copies_activitywatch_data_as_goodall_stop_does(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    eval_account = make_eval_account(tmp_path)
+    server = working_server()
+
+    run_goodall(eval_account, monkeypatch, ["start"], BLOCK_START, server)
+    pause = run_goodall(eval_account, monkeypatch, ["pause"], BLOCK_END, server)
+
+    assert pause.exit_code == 0, pause.standard_error
+    assert "ActivityWatch copied, 2 buckets" in pause.everything_printed
+    assert only_copy(eval_account).name == "20261116T103000.000000Z"
+
+
+def test_in_mixed_account_mode_pausing_and_continuing_never_asks_activitywatch_and_copies_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Pause ends a work block on its own path, and mixed account mode
+    # leaves ActivityWatch out on that path too (ADR 0021).
+    eval_account = make_eval_account(tmp_path, account_mode="mixed")
+
+    # With no server, any curl at all fails the test.
+    run_goodall(eval_account, monkeypatch, ["start"], BLOCK_START, None)
+    pause = run_goodall(eval_account, monkeypatch, ["pause"], BLOCK_END, None)
+    pause_again = run_goodall(eval_account, monkeypatch, ["pause"], BLOCK_END + timedelta(minutes=1), None)
+    status = run_goodall(eval_account, monkeypatch, ["status"], BLOCK_END + timedelta(minutes=5), None)
+    start = run_goodall(eval_account, monkeypatch, ["start"], BLOCK_END + timedelta(minutes=10), None)
+    stop = run_goodall(eval_account, monkeypatch, ["stop"], BLOCK_END + timedelta(minutes=30), None)
+
+    assert (pause.exit_code, pause_again.exit_code, start.exit_code, stop.exit_code) == (0, 0, 0, 0)
+    everything_printed = ""
+    for run in [pause, pause_again, status, start, stop]:
+        everything_printed += run.everything_printed
+    assert "ActivityWatch" not in everything_printed
+    assert not eval_account.copies_folder.exists()
+    assert not activitywatch_copies.wanted_file(eval_account.log_directory).exists()
+
+
 # ---------------------------------------------------------------------------
 # A copy that fails is tried again
 

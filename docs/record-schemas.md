@@ -88,13 +88,16 @@ goodall writes, so it is JSON. Folder: `work-blocks/`.
 | `claude_sessions` | yes | The Claude Code session ids of the Claude sessions that fell inside the work block; `[]` if none. |
 | `telemetry` | no | Whether the work block's telemetry was captured: `captured` (telemetry requests were stored and goodall never found its receiver down), `incomplete` (requests were stored, but the receiver was down for part of the work block), or `missing` (no request was stored at all). Left out while running, and in records written before goodall captured telemetry, which say nothing either way. PROVISIONAL. |
 | `account_mode` | no | The account mode the work block was recorded in, as local settings said when it started: `dedicated` (an eval account, with the prompt gate on) or `mixed` (a macOS user account the person also uses for other things, with the prompt gate off and ActivityWatch left out; ADR 0021). Left out only in records written before goodall recorded it, all of which were made in dedicated account mode, the only one there was. |
+| `continues_work_block` | no | The `id` of the work block this one continues: the one that was paused, with `goodall pause`, when this one started (ADR 0021). The two may be on different workstreams. Left out when the work block continues none. PROVISIONAL. |
 
 The machine facts are observed, never configured (ADR 0009). There is no
 billing field: goodall does not track billing.
 
-`telemetry` and `account_mode` were added after records were already being
-written. Each is optional and left out when goodall does not say, so files
-already written still read, and `schema_version` stays `1`.
+`telemetry`, `account_mode` and `continues_work_block` were added after
+records were already being written. Each is optional and left out when it
+has nothing to say, so files already written still read, and
+`schema_version` stays `1`. A work block started after a pause carries both
+`account_mode` and `continues_work_block`.
 
 <!-- example: work_block -->
 ```json
@@ -297,7 +300,7 @@ does not import Inspect. Checked against the `inspect_ai` source
 | `workstream` | `SpanBeginEvent.name` | |
 | `started_at` | `SpanBeginEvent.timestamp` | |
 | `ended_at` | `SpanEndEvent.timestamp` | No `SpanEndEvent` while the work block is running. |
-| `end_state`, `contributor`, `machine`, `claude_sessions`, `telemetry` | `metadata` | Inspect has no field for these. `claude_sessions` says which transcripts (Inspect samples) the span covers. |
+| `end_state`, `contributor`, `machine`, `claude_sessions`, `telemetry`, `account_mode`, `continues_work_block` | `metadata` | Inspect has no field for these. `claude_sessions` says which transcripts (Inspect samples) the span covers. |
 | **Journal entry** | `InfoEvent` | |
 | `record_type` | `InfoEvent.source` = `"goodall/journal_entry"` | |
 | `written_at` | `InfoEvent.timestamp` | |

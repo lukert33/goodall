@@ -36,21 +36,27 @@ In the order goodall checks:
    listens, or, when it is not running, a warning, and a note so the work
    block's record says its telemetry is incomplete
    (goodall.telemetry_receivers). `work_block.telemetry_receiver` in the
-   JSON holds `running` and `port`.
+   JSON holds `running` and `port`. With no work block active, it says
+   whether recording is paused (`goodall pause`, ADR 0021): the text names
+   the paused work block and its workstream, and the JSON has `paused`
+   (true or false) and `paused_work_block` (its `id`, `workstream` and
+   `paused_at`, or null). Paused is still "not recording", so the exit
+   code is 1 as for any account with no work block active.
 
 Each result is built once as records and then shown either as text (results
 on standard output, failures and warnings on standard error) or as one JSON
 document on standard output, so the two renderings cannot drift apart. The
 JSON document always has the keys `work_block_active`, `account_mode`, `eval`,
 `contributor`, `work_block`, `ended_work_blocks`,
-`work_blocks_waiting_for_workstream`, `warnings` and `failures`; `eval`,
-`contributor` and `account_mode` are null whenever `failures` is not empty,
-and `work_block` is null whenever no work block is active.
+`work_blocks_waiting_for_workstream`, `paused`, `paused_work_block`,
+`warnings` and `failures`; `eval`, `contributor` and `account_mode` are null
+whenever `failures` is not empty, `work_block` is null whenever no work
+block is active, and `paused_work_block` is null whenever `paused` is false.
 
 `account_mode` is `dedicated` or `mixed`, as local settings say now
 (ADR 0021). It is shown because it changes what "no work block is active"
-means for the person: in dedicated account mode the prompt gate refuses
-their prompts, in mixed account mode it does not.
+means for the person, paused or not: in dedicated account mode the prompt
+gate refuses their prompts, in mixed account mode it does not.
 
 The folder checks themselves live in goodall.folders, because
 `goodall doctor` asks the same questions and must word the answers the same
@@ -90,16 +96,23 @@ def run_status(terminal: Terminal, runner: Runner, clock: Clock, as_json: bool) 
             # Noted, so the work block's record says its telemetry is incomplete.
             telemetry_capture.note_receiver_down(log_directory, active.id, now, telemetry_capture.NOT_RUNNING)
             receiver_warnings.append(receiver_not_running_failure())
+    # Paused only while no work block is active: settling has already
+    # forgotten a pause left behind by a work block that is running.
+    pause = None
+    if active is None:
+        pause = work_blocks.read_pause(log_directory)
     waiting = waiting_work_blocks(eval_reading)
     if as_json:
-        terminal.write_json(status_document(eval_reading, settling, active, waiting, receiver, receiver_warnings))
+        terminal.write_json(
+            status_document(eval_reading, settling, active, waiting, receiver, receiver_warnings, pause)
+        )
     else:
         show_settling(terminal, settling)
         waiting_warnings = list(receiver_warnings)
         for waiting_work_block in waiting:
             waiting_warnings.append(waiting_work_block.as_warning())
         terminal.show_warnings(waiting_warnings)
-        show_status(terminal, eval_reading, active, receiver)
+        show_status(terminal, eval_reading, active, receiver, pause)
     if active is None:
         return exit_codes.ERROR
     return exit_codes.SUCCESS
@@ -110,14 +123,29 @@ def show_status(
     eval_for_this_account: EvalForThisAccount,
     active: work_blocks.RunningWorkBlock | None,
     receiver: telemetry_receivers.ReceiverStatus | None,
+    pause: work_blocks.Pause | None,
 ) -> None:
-    """Show the eval, the contributor, and the active work block or that there is none, as text."""
+    """Show the eval, the contributor, and the active work block, the pause, or that there is neither, as text."""
     contributor = eval_for_this_account.contributor
     facts = [
         ("Eval", eval_for_this_account.eval_config.name),
         ("Contributor", f"{contributor.display_name} ({contributor.id})"),
         ("Account mode", eval_for_this_account.local_settings.account_mode),
     ]
+    if active is None and pause is not None:
+        facts.append(("Workstream", pause.workstream))
+        facts.append(("Paused", describe_moment(pause.paused_at)))
+        facts.append(("Paused work block", pause.work_block_id))
+        terminal.show_facts(facts)
+        terminal.show_paragraph(
+            f"Goodall is not recording: recording is paused. You paused your work block on {pause.workstream} "
+            f"({pause.work_block_id}) at {describe_moment(pause.paused_at)}."
+        )
+        terminal.show_paragraph(
+            f"To record again, run goodall start, which starts a new work block on {pause.workstream} that "
+            "continues the paused one. To finish instead, run goodall stop."
+        )
+        return
     if active is None:
         main_workstream = eval_for_this_account.local_settings.main_workstream
         facts.append(("Workstream", f"{main_workstream}, your main workstream"))
@@ -177,13 +205,17 @@ def status_document(
     waiting: list[WaitingWorkBlock],
     receiver: telemetry_receivers.ReceiverStatus | None,
     receiver_warnings: list[Failure],
+    pause: work_blocks.Pause | None,
 ) -> dict[str, object]:
     """The `goodall status --json` document when the eval was found. Times are UTC, as in records.
 
     Work blocks waiting for their workstream are listed under their own key,
     not in `warnings`, so an agent can read each one's id and commands. The
     active work block's telemetry receiver is under `work_block`, and a
-    receiver not running is one of the `warnings`.
+    receiver not running is one of the `warnings`. `paused` is true while
+    recording is paused, and `paused_work_block` then says which work block
+    was paused; an agent that reads `work_block_active` alone still gets
+    the right answer, false.
     """
     contributor = eval_for_this_account.contributor
     log_directory = eval_for_this_account.local_settings.log_directory.path
@@ -211,6 +243,13 @@ def status_document(
                 "recorded": write.committed,
             }
         )
+    paused_work_block = None
+    if pause is not None:
+        paused_work_block = {
+            "id": pause.work_block_id,
+            "workstream": pause.workstream,
+            "paused_at": work_blocks.format_timestamp(pause.paused_at),
+        }
     waiting_documents = []
     for waiting_work_block in waiting:
         waiting_documents.append(waiting_work_block.as_json())
@@ -229,6 +268,8 @@ def status_document(
         "work_block": work_block,
         "ended_work_blocks": ended_work_blocks,
         "work_blocks_waiting_for_workstream": waiting_documents,
+        "paused": pause is not None,
+        "paused_work_block": paused_work_block,
         "warnings": warning_documents,
         "failures": [],
     }
@@ -240,7 +281,8 @@ def report_failures(terminal: Terminal, failures: list[Failure], as_json: bool) 
     The JSON document has the same keys whatever went wrong. No work block
     can be active while goodall is failing, so `work_block_active` is false
     and `work_block` null, and `eval`, `contributor` and `account_mode` are
-    null because goodall has not confirmed them.
+    null because goodall has not confirmed them. `paused` is false for the
+    same reason: goodall could not look.
     """
     if as_json:
         failure_documents = []
@@ -255,6 +297,8 @@ def report_failures(terminal: Terminal, failures: list[Failure], as_json: bool) 
                 "work_block": None,
                 "ended_work_blocks": [],
                 "work_blocks_waiting_for_workstream": [],
+                "paused": False,
+                "paused_work_block": None,
                 "warnings": [],
                 "failures": failure_documents,
             }

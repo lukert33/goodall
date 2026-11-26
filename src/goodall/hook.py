@@ -14,6 +14,9 @@ Two jobs, by event:
   a heartbeat naming the Claude session, prints nothing and exits 0, and the
   prompt goes through. Otherwise it refuses the prompt: it writes one or two
   plain sentences to standard error saying what to do, and exits 2.
+  While recording is paused (`goodall pause`) no work block is active, so
+  the prompt is refused the same way, with a message that says so (in
+  dedicated account mode; in mixed account mode a pause refuses nothing).
   When a work block is active but what Claude Code sent cannot be read, the
   prompt still goes through (see below).
 - Every other event leaves a heartbeat when a work block is active, and
@@ -131,6 +134,12 @@ HOOK_INPUT_LIMIT = 64 * 1024 * 1024
 NO_WORK_BLOCK_REFUSAL = (
     "Goodall is not recording, so this prompt was not sent. "
     "Open a terminal, run goodall start, then send your prompt again."
+)
+# The same refusal while recording is paused (`goodall pause`, ADR 0021):
+# no work block is active then either, and the person is told why.
+PAUSED_REFUSAL = (
+    "Goodall is paused, so it is not recording and this prompt was not sent. "
+    "Open a terminal, run goodall start to record again, then send your prompt again."
 )
 LOCAL_SETTINGS_MISSING_REFUSAL = (
     "Goodall is not set up in this macOS user account, so this prompt was not sent. "
@@ -404,7 +413,12 @@ def check_prompt(hook_input_text: str | None, now: datetime) -> GateDecision:
     work_block = work_blocks.record_heartbeat(log_directory, now, claude_session)
     if work_block is None:
         if gate_is_off:
+            # Mixed account mode: paused or not, nothing is refused and
+            # nothing is written, and the pause is not even read.
             return GateDecision()
+        # Asked only now, so a prompt that goes through reads no extra file.
+        if work_blocks.read_pause(log_directory) is not None:
+            return GateDecision(refusal=PAUSED_REFUSAL)
         return GateDecision(refusal=NO_WORK_BLOCK_REFUSAL)
     notices = []
     if hook_input is None:
