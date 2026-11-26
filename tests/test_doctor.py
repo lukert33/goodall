@@ -3126,8 +3126,8 @@ def curl_command(path: str) -> list[str]:
     """The exact `curl` goodall runs to ask ActivityWatch's local server for `path`."""
     return [
         "curl",
+        "--disable",
         "--silent",
-        "--show-error",
         "--fail",
         "--noproxy",
         "*",
@@ -3252,6 +3252,10 @@ def test_activitywatch_is_asked_only_through_credential_free_local_reads_that_sk
     assert len(curl_calls) >= 3
     for command in curl_calls:
         assert command.arguments[-1].startswith("http://127.0.0.1:5610/api/0/")
+        # curl reads ~/.curlrc, which could add credentials or an output
+        # file, unless --disable is its very first argument.
+        assert command.arguments[1] == "--disable"
+        assert "--show-error" not in command.arguments
         assert "--noproxy" in command.arguments
         assert command.timeout_seconds <= 5
         assert command.extra_environment == {}
@@ -3358,6 +3362,52 @@ def test_an_afk_bucket_that_stopped_updating_is_a_warning_with_a_next_step(healt
     assert activitywatch_statuses(document) == ["pass", "pass", "warn", "pass"]
     assert failure_kinds(document, RECENT_CHECK) == ["activitywatch_afk_bucket_stale"]
     assert "10 minutes" in " ".join(report.split())
+
+
+def test_an_old_afk_bucket_listed_before_a_fresh_one_does_not_cause_a_stale_warning(
+    healthy_account: EvalAccount,
+) -> None:
+    # A renamed Mac has an old and a new AFK bucket, because bucket ids
+    # carry the hostname. Only the latest end time counts.
+    include_activitywatch(healthy_account)
+    old_afk_bucket_id = "aw-watcher-afk_synthetic-old-hostname"
+    runner = activitywatch_runner()
+    all_buckets = {
+        old_afk_bucket_id: bucket_description(old_afk_bucket_id, "afkstatus"),
+        WINDOW_BUCKET_ID: bucket_description(WINDOW_BUCKET_ID, "currentwindow"),
+        AFK_BUCKET_ID: bucket_description(AFK_BUCKET_ID, "afkstatus"),
+    }
+    runner.answer(curl_command("/api/0/buckets"), standard_output=json.dumps(all_buckets))
+    stale_events = [afk_event(timedelta(days=30))]
+    runner.answer(
+        curl_command(f"/api/0/buckets/{old_afk_bucket_id}/events?limit=1"), standard_output=json.dumps(stale_events)
+    )
+
+    exit_code, report, document = run_doctor_at_noon(runner)
+
+    assert exit_code == exit_codes.SUCCESS
+    assert statuses(document)[RECENT_CHECK] == "pass"
+    assert "synthetic-old-hostname" not in report + json.dumps(document)
+
+
+def test_every_afk_bucket_stale_is_still_a_warning(healthy_account: EvalAccount) -> None:
+    include_activitywatch(healthy_account)
+    old_afk_bucket_id = "aw-watcher-afk_synthetic-old-hostname"
+    runner = activitywatch_runner(afk_events=[afk_event(timedelta(hours=2))])
+    all_buckets = {
+        old_afk_bucket_id: bucket_description(old_afk_bucket_id, "afkstatus"),
+        WINDOW_BUCKET_ID: bucket_description(WINDOW_BUCKET_ID, "currentwindow"),
+        AFK_BUCKET_ID: bucket_description(AFK_BUCKET_ID, "afkstatus"),
+    }
+    runner.answer(curl_command("/api/0/buckets"), standard_output=json.dumps(all_buckets))
+    stale_events = [afk_event(timedelta(days=30))]
+    runner.answer(
+        curl_command(f"/api/0/buckets/{old_afk_bucket_id}/events?limit=1"), standard_output=json.dumps(stale_events)
+    )
+
+    _, _, document = run_doctor_at_noon(runner)
+
+    assert statuses(document)[RECENT_CHECK] == "warn"
 
 
 def test_an_afk_bucket_whose_newest_event_ended_just_inside_the_limit_passes(healthy_account: EvalAccount) -> None:

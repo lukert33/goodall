@@ -8,7 +8,8 @@
    is the one recorded in local settings.
 2. "ActivityWatch has a window bucket and an AFK bucket": `/api/0/buckets`
    lists a bucket of type `currentwindow` and one of type `afkstatus`.
-3. "ActivityWatch's AFK bucket was updated in the last 10 minutes".
+3. "ActivityWatch's AFK bucket was updated in the last 10 minutes": the newest
+   event of any AFK bucket (a renamed Mac has an old one too) is recent.
 4. "No browser watcher is installed": a warning when a `web.tab.current`
    bucket exists, because ADR 0016 says the browser extension is not
    installed in an eval account.
@@ -17,7 +18,9 @@ When the eval does not include ActivityWatch (ADR 0016) all four pass,
 the first with a note saying so, and nothing is asked of anything.
 
 How it asks (ADR 0011, amended 2026-11-18): `curl` through the runner, to
-`http://127.0.0.1:<port>/api/0/...`, with no credentials, no proxy
+`http://127.0.0.1:<port>/api/0/...`, with no credentials (`--disable`, first,
+so curl does not read ~/.curlrc, where a line could add credentials or an
+output file), no proxy
 (`--noproxy '*'`, so a proxy setting cannot send a request for this Mac's
 own server elsewhere), a short limit (`--max-time 3`), and `--fail` so an
 error page is not mistaken for an answer. Only GET requests are made, so
@@ -88,8 +91,10 @@ def local_get(port: int, path: str) -> Command:
     return Command(
         arguments=[
             "curl",
+            # Must be first: curl then skips its settings file, ~/.curlrc,
+            # which could add credentials or an output file.
+            "--disable",
             "--silent",
-            "--show-error",
             "--fail",
             "--noproxy",
             "*",
@@ -168,11 +173,15 @@ def check_window_and_afk_buckets_exist(context: CheckContext) -> CheckOutcome:
 
 
 def check_afk_bucket_is_recent(context: CheckContext) -> CheckOutcome:
-    """The AFK bucket's newest event ended within `AFK_FRESH_WITHIN` of now.
+    """The newest event of any AFK bucket ended within `AFK_FRESH_WITHIN` of now.
 
-    A warning when it did not, when the bucket is empty, or when its newest
-    event cannot be read. Only the newest event is asked for, and only its
-    time is read from it.
+    Every AFK bucket is asked, not only the first: a bucket id carries the
+    Mac's hostname, so a renamed Mac has an old bucket beside the live one,
+    and the old one must not cause a warning. It passes when any bucket's
+    newest event is recent. Otherwise it warns: with the first problem met
+    (an answer that could not be read, say) or, when every answer was
+    readable, that the data is stale or empty. Only the newest event is
+    asked for, and only its time is read from it.
     """
     if not valid_eval_config(context).activitywatch:
         return passed()
@@ -181,26 +190,36 @@ def check_afk_bucket_is_recent(context: CheckContext) -> CheckOutcome:
         raise RuntimeError("Doctor must give the checks the time now, so they can tell whether data is recent.")
     if context.activitywatch_buckets is None:
         raise RuntimeError(f"{AFK_BUCKET_IS_RECENT} must list {WINDOW_AND_AFK_BUCKETS_EXIST} as a prerequisite.")
-    afk_bucket_id = first_bucket_of_type(context.activitywatch_buckets, AFK_BUCKET_TYPE)
-    if afk_bucket_id is None:
+    afk_bucket_ids = bucket_ids_of_type(context.activitywatch_buckets, AFK_BUCKET_TYPE)
+    if len(afk_bucket_ids) == 0:
         raise RuntimeError(f"{AFK_BUCKET_IS_RECENT} ran although {WINDOW_AND_AFK_BUCKETS_EXIST} found no AFK bucket.")
 
-    # The bucket id holds the Mac's hostname and may hold any character, so it is quoted.
-    events_path = f"/api/0/buckets/{quote(afk_bucket_id, safe='')}/events?limit=1"
-    answer = ask_activitywatch(context, port, events_path)
-    if isinstance(answer, Failure):
-        return warned([answer])
-    if not isinstance(answer, list):
-        return warned([answer_unfamiliar_failure()])
-    if len(answer) == 0:
-        return warned([afk_bucket_stale_failure(empty=True)])
-
-    ended = read_event_end(answer[0])
-    if ended is None:
-        return warned([answer_unfamiliar_failure()])
-    if context.now - ended > AFK_FRESH_WITHIN:
-        return warned([afk_bucket_stale_failure(empty=False)])
-    return passed()
+    first_problem: Failure | None = None
+    found_an_event = False
+    for afk_bucket_id in afk_bucket_ids:
+        # The bucket id holds the Mac's hostname and may hold any character, so it is quoted.
+        events_path = f"/api/0/buckets/{quote(afk_bucket_id, safe='')}/events?limit=1"
+        answer = ask_activitywatch(context, port, events_path)
+        if isinstance(answer, Failure):
+            problem = answer
+        elif not isinstance(answer, list):
+            problem = answer_unfamiliar_failure()
+        elif len(answer) == 0:
+            continue
+        else:
+            ended = read_event_end(answer[0])
+            if ended is None:
+                problem = answer_unfamiliar_failure()
+            elif context.now - ended <= AFK_FRESH_WITHIN:
+                return passed()
+            else:
+                found_an_event = True
+                continue
+        if first_problem is None:
+            first_problem = problem
+    if first_problem is not None:
+        return warned([first_problem])
+    return warned([afk_bucket_stale_failure(empty=not found_an_event)])
 
 
 def check_no_browser_watcher(context: CheckContext) -> CheckOutcome:
@@ -242,12 +261,13 @@ def read_bucket_types(answer: object) -> dict[str, str] | None:
     return bucket_types
 
 
-def first_bucket_of_type(bucket_types: dict[str, str], wanted_type: str) -> str | None:
-    """The id of the first bucket of `wanted_type`, or None."""
+def bucket_ids_of_type(bucket_types: dict[str, str], wanted_type: str) -> list[str]:
+    """The ids of every bucket of `wanted_type`, in the order ActivityWatch listed them."""
+    bucket_ids: list[str] = []
     for bucket_id, bucket_type in bucket_types.items():
         if bucket_type == wanted_type:
-            return bucket_id
-    return None
+            bucket_ids.append(bucket_id)
+    return bucket_ids
 
 
 def read_event_end(event: object) -> datetime | None:

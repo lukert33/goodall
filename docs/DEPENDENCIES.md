@@ -30,7 +30,7 @@ sections give the reasons and the checks behind each row.
 | [1Password's `op`](#programs-goodall-runs-or-works-alongside) | Required only when the eval uses secrets | Administrator | Looks up secrets the eval needs, without goodall storing them. |
 | [`inspect-ai` and `inspect-scout`](#adopted-optional-extra-for-the-export) | Optional, only for `goodall export scout` | Whoever installed goodall, as the `scout` extra | Turns records into a database the Inspect analysis tools read. Brings about 95 packages, so only those who export install them. |
 | [ActivityWatch](#activitywatch-the-highest-risk-recommendation) | Optional, recommended | Administrator | Notes which app and window were in use, to back up what the human did. |
-| curl | Used by `goodall doctor` when the eval includes ActivityWatch | Comes with macOS (`/usr/bin/curl`); nothing to install | Asks ActivityWatch's server on this Mac's own address (`127.0.0.1`) its status, with no credentials, no proxy and GET requests only (ADR 0011, ADR 0016). Not checked for advisories today: it is Apple's build, updated with macOS. |
+| curl | Used by `goodall doctor` when the eval includes ActivityWatch | Comes with macOS (`/usr/bin/curl`); nothing to install | Asks ActivityWatch's server on this Mac's own address (`127.0.0.1`) its status, with no credentials, no proxy, curl's own settings file (`~/.curlrc`) not read (`--disable`), and GET requests only (ADR 0011, ADR 0016). Not checked for advisories today: it is Apple's build, updated with macOS. |
 
 Signing in is separate from installing, and always happens inside the eval
 account: Claude Code, `gh` and, when the eval uses secrets, 1Password.
