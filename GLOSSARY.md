@@ -43,8 +43,20 @@ _Avoid_: Lane, track, category
 A logged stretch of one contributor's work on one workstream, with a start and an end. Many agent sessions can fall inside one work block.
 _Avoid_: Session (when a work block is meant), shift, timebox
 
+**Source application**:
+An application in which a contributor works with an agent, and whose own records of that work goodall copies: the Claude desktop app, for example.
+_Avoid_: Source (unqualified), provider, vendor, tool
+
+**App family**:
+The source applications from one maker that keep their records of agent sessions in the same place and form. Named for the product its applications carry, never for a model or a company: "the Claude family", "the Antigravity family", "the Codex family".
+_Avoid_: Provider, vendor, platform, ecosystem, OpenAI family, GPT family
+
+**Agent session**:
+One conversation with an agent in one source application, identified by that application's own id for it.
+_Avoid_: Session (unqualified), run, chat, thread
+
 **Claude session**:
-One conversation with Claude Code, identified by Claude Code's own session id.
+An agent session in Claude Code, identified by Claude Code's own session id.
 _Avoid_: Session (unqualified), run, chat
 
 **Prompt gate**:
@@ -75,8 +87,12 @@ _Avoid_: Raw log, source data
 Something computed from raw records and goodall's own records, which can always be regenerated.
 _Avoid_: Processed data, output
 
+**Timeline**:
+The derived record, one per eval, that lists in time order every entry from every source application's transcripts, from ActivityWatch, and from journal entries and interventions. Each entry holds only times, numbers and values from fixed lists, plus a pointer to its place in a raw record; anything a person or a website could have written stays in the raw record.
+_Avoid_: Rich local log, local log, event log, index
+
 **Transcript**:
-Claude Code's own file recording one Claude session.
+A source application's own file, or files, recording one agent session.
 _Avoid_: Log, conversation log, chat history
 
 **Telemetry**:
@@ -148,3 +164,39 @@ _Avoid_: System, scaffold, tool
 **Corroboration**:
 Checking an eval's own records against records someone else holds and the researcher cannot edit.
 _Avoid_: Verification, validation, audit
+
+**Delegation**:
+Handing a piece of work to an AI agent.
+_Avoid_: Amplification, disempowerment, automation rate
+
+**Mistake**:
+Something wrong in the work that was later noticed. Each mistake is recorded with where it was caught, as one of two values: **caught at review**, before the work left the person's hands, or **caught downstream**, after it had effects. It has three subtypes, by who made it.
+_Avoid_: Error, error catch, bug, failure, oversight score, over-reliance, quality of review
+
+**Agent mistake**:
+A mistake made in work an AI agent produced.
+_Avoid_: AI error, hallucination, model failure
+
+**Human mistake**:
+A mistake made in work the person produced, including an instruction they gave an agent.
+_Avoid_: User error, operator error
+
+**Hybrid mistake**:
+A mistake that the person and an agent both contributed to, such as an agent filling a gap in an unclear instruction the wrong way.
+_Avoid_: Shared error, joint failure
+
+**Off-agent work**:
+What a person does for the eval outside any agent session, such as searching, reading, or writing instructions for an agent to follow.
+_Avoid_: Manual work, human-only work
+
+**Outcome record**:
+A record of what actually went out into the world, such as a sent email, against which an agent's draft can be compared.
+_Avoid_: Final output, deliverable
+
+**Redaction policy**:
+The versioned rules that decide what is removed from records before they are shared. Goodall has a default, and each eval may make it stricter or looser.
+_Avoid_: Anonymization, scrubbing, sanitizing
+
+**Export**:
+A redacted or derived layer prepared for sharing, stamped with the versions of the redaction policy and derivation rules that produced it. A raw record is never an export.
+_Avoid_: Release, dump, dataset
