@@ -1,6 +1,6 @@
-"""Goodall's own records: work block records, journal entries, interventions and work block fixes.
+"""Goodall's own records: work blocks, journal entries, interventions, work block fixes and deleted work blocks.
 
-This module defines the four kinds of record that goodall and contributors
+This module defines the five kinds of record that goodall and contributors
 write into an eval's record repo, and turns each between a Python value and
 the text of its file. The commands that write records (`goodall journal`,
 `goodall intervene`, the work-block commands `goodall start` and
@@ -18,7 +18,12 @@ Design decisions a reader would otherwise have to reverse-engineer:
 - One file per record, so two contributors never edit the same file. A
   file's name is its record id: a UTC timestamp, the contributor id and a
   random suffix (see `make_record_id`).
-- Records are never rewritten (ADR 0003). A work block record that needs
+- Records are never rewritten (ADR 0003), with one exception the project
+  owner decided (ADR 0021): when a person deletes what a work block
+  captured (`goodall delete`, goodall.work_block_deletion), its record is
+  replaced by a deleted work block, which keeps only its id, who asked and
+  when. Git history is left alone, so the deletion itself stays visible.
+- A work block record that needs
   a value corrected, such as the workstream `unknown` that goodall records
   when it cannot tell, gets a work block fix: a new small record that names
   the work block and gives the corrected value (ADR 0014). Analysis asks
@@ -65,6 +70,7 @@ WORK_BLOCK_RECORD_TYPE = "work_block"
 JOURNAL_ENTRY_RECORD_TYPE = "journal_entry"
 INTERVENTION_RECORD_TYPE = "intervention"
 WORK_BLOCK_FIX_RECORD_TYPE = "work_block_fix"
+DELETED_WORK_BLOCK_RECORD_TYPE = "deleted_work_block"
 
 # The folder, inside the record repo, that holds each kind of record.
 WORK_BLOCKS_FOLDER = "work-blocks"
@@ -222,8 +228,29 @@ class WorkBlockFix:
     workstream: str | None
 
 
+@dataclass(frozen=True)
+class DeletedWorkBlock:
+    """What is left of a work block whose captured data a person deleted: that it was, and when.
+
+    It takes the work block record's place, at the same file name and with
+    the same `id`, so journal entries, interventions and fixes that name the
+    work block still name something. Everything else the record held (its
+    times, workstream, machine facts, Claude sessions) is dropped, because
+    a person asked for the work block to be forgotten. `contributor` is who
+    asked. `other_work_blocks_lost_transcripts` names the other work blocks
+    that lost a transcript with it: a transcript is deleted whole, and one
+    agent session can have records inside several work blocks.
+    """
+
+    schema_version: int
+    id: str
+    contributor: str
+    deleted_at: datetime
+    other_work_blocks_lost_transcripts: tuple[str, ...]
+
+
 # Any one of goodall's own records.
-Record = WorkBlockRecord | JournalEntry | Intervention | WorkBlockFix
+Record = WorkBlockRecord | JournalEntry | Intervention | WorkBlockFix | DeletedWorkBlock
 
 
 @dataclass(frozen=True)
@@ -383,6 +410,22 @@ def build_work_block_fix(
     )
 
 
+def build_deleted_work_block(
+    work_block: str,
+    contributor: str,
+    deleted_at: datetime,
+    other_work_blocks_lost_transcripts: Collection[str],
+) -> DeletedWorkBlock:
+    """Build the record that replaces a deleted work block's: its id is the work block's own."""
+    return DeletedWorkBlock(
+        schema_version=SCHEMA_VERSION,
+        id=work_block,
+        contributor=contributor,
+        deleted_at=_as_utc(deleted_at),
+        other_work_blocks_lost_transcripts=tuple(other_work_blocks_lost_transcripts),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Rendering records to the text of their files
 # ---------------------------------------------------------------------------
@@ -395,7 +438,7 @@ def relative_path_for(record: Record) -> PurePosixPath:
     path uses forward slashes whatever the machine, because it names a place
     inside a git repository.
     """
-    if isinstance(record, WorkBlockRecord):
+    if isinstance(record, WorkBlockRecord | DeletedWorkBlock):
         return PurePosixPath(WORK_BLOCKS_FOLDER) / f"{record.id}.json"
     if isinstance(record, JournalEntry):
         return PurePosixPath(JOURNAL_FOLDER) / f"{record.id}.md"
@@ -430,6 +473,8 @@ def _render_without_checks(record: Record) -> str:
         return _render_work_block_record(record)
     if isinstance(record, WorkBlockFix):
         return _render_work_block_fix(record)
+    if isinstance(record, DeletedWorkBlock):
+        return _render_deleted_work_block(record)
     if isinstance(record, JournalEntry):
         header_values: list[tuple[str, object]] = [
             ("schema_version", record.schema_version),
@@ -501,6 +546,19 @@ def _render_work_block_fix(record: WorkBlockFix) -> str:
         "written_at": _format_timestamp(record.written_at),
         "work_block": record.work_block,
         "workstream": record.workstream,
+    }
+    return json.dumps(values, indent=2, ensure_ascii=False) + "\n"
+
+
+def _render_deleted_work_block(record: DeletedWorkBlock) -> str:
+    """Write a deleted work block as indented JSON."""
+    values = {
+        "schema_version": record.schema_version,
+        "record_type": DELETED_WORK_BLOCK_RECORD_TYPE,
+        "id": record.id,
+        "contributor": record.contributor,
+        "deleted_at": _format_timestamp(record.deleted_at),
+        "other_work_blocks_lost_transcripts": list(record.other_work_blocks_lost_transcripts),
     }
     return json.dumps(values, indent=2, ensure_ascii=False) + "\n"
 
@@ -652,6 +710,55 @@ def parse_work_block_fix(text: str) -> ParseResult[WorkBlockFix]:
         workstream=workstream,
     )
     return ParseResult(record=fix, problems=problems)
+
+
+def parse_deleted_work_block(text: str) -> ParseResult[DeletedWorkBlock]:
+    """Read the text of a deleted work block's file."""
+    problems: list[RecordProblem] = []
+    values = _load_json_object(text, problems)
+    if values is None:
+        return ParseResult(record=None, problems=problems)
+
+    reader = _FieldReader(values, problems)
+    _check_record_type(reader, DELETED_WORK_BLOCK_RECORD_TYPE)
+    schema_version = reader.schema_version()
+    record_id = reader.text("id")
+    contributor = reader.text("contributor")
+    deleted_at = reader.timestamp("deleted_at")
+    other_work_blocks = reader.text_list("other_work_blocks_lost_transcripts")
+    reader.report_unknown_keys()
+
+    if None in [schema_version, record_id, contributor, deleted_at, other_work_blocks]:
+        return ParseResult(record=None, problems=problems)
+    # The checks above guarantee these; the asserts tell the type checker.
+    assert schema_version is not None and record_id is not None and contributor is not None
+    assert deleted_at is not None and other_work_blocks is not None
+    deleted = DeletedWorkBlock(
+        schema_version=schema_version,
+        id=record_id,
+        contributor=contributor,
+        deleted_at=deleted_at,
+        other_work_blocks_lost_transcripts=tuple(other_work_blocks),
+    )
+    return ParseResult(record=deleted, problems=problems)
+
+
+def json_record_type(text: str) -> str | None:
+    """The `record_type` a JSON record's text gives, or None when it is not a JSON object with one.
+
+    The `work-blocks/` folder holds work block records and deleted work
+    blocks side by side, so a reader asks this first to know which to parse.
+    """
+    try:
+        values = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(values, dict):
+        return None
+    record_type = values.get("record_type")
+    if not isinstance(record_type, str):
+        return None
+    return record_type
 
 
 def _load_json_object(text: str, problems: list[RecordProblem]) -> dict[str, Any] | None:
@@ -967,6 +1074,10 @@ def validate_record(
         _validate_work_block_record(checker, record, workstreams)
     elif isinstance(record, WorkBlockFix):
         _validate_work_block_fix(checker, record, workstreams)
+    elif isinstance(record, DeletedWorkBlock):
+        checker.timestamp("deleted_at", record.deleted_at)
+        for other_work_block in record.other_work_blocks_lost_transcripts:
+            checker.record_id("other_work_blocks_lost_transcripts", other_work_block)
     elif isinstance(record, JournalEntry):
         checker.timestamp("written_at", record.written_at)
         checker.optional_record_id("work_block", record.work_block)

@@ -71,6 +71,7 @@ RECORD_TYPE_NAMES = {
     records.JournalEntry: "journal entry",
     records.Intervention: "intervention",
     records.WorkBlockFix: "work block fix",
+    records.DeletedWorkBlock: "deleted work block",
 }
 
 

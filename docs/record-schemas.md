@@ -2,13 +2,13 @@
 
 This page describes the files goodall and contributors write into an eval's
 record repo: **work block records**, **journal entries**,
-**interventions** and **work block fixes**. These are goodall's own records,
+**interventions**, **work block fixes** and **deleted work blocks**. These are goodall's own records,
 the middle of the three
 layers in ADR 0003. Raw records (transcripts, telemetry) are kept elsewhere,
 byte for byte, and are not described here.
 
 The code that builds, writes, reads and checks these files is
-`src/goodall/records.py`. The four examples on this page are read by the
+`src/goodall/records.py`. The five examples on this page are read by the
 tests, so if this page and the code disagree, a test fails.
 
 > **Provisional.** Every shape on this page is a first draft, chosen so that
@@ -63,7 +63,7 @@ under the 255-byte limit.
 | Field | Required | Value |
 | --- | --- | --- |
 | `schema_version` | yes | `1` |
-| `record_type` | yes | `work_block`, `journal_entry`, `intervention` or `work_block_fix`. Makes a file self-describing if it is moved out of its folder. |
+| `record_type` | yes | `work_block`, `journal_entry`, `intervention`, `work_block_fix` or `deleted_work_block`. Makes a file self-describing if it is moved out of its folder. |
 | `id` | yes | The record id described above; the file name without its extension. |
 | `contributor` | yes | The contributor id from the roster in `eval.toml`: lowercase letters, digits and hyphens, at most 64 characters. A contributor is always a person; agents are never contributors. |
 
@@ -151,6 +151,43 @@ workstream a work block counts towards asks `effective_workstreams` in
   "written_at": "2026-11-16T14:02:10Z",
   "work_block": "20261116T090000Z-ada-lovelace-0a1b2c3d",
   "workstream": "research"
+}
+```
+
+## Deleted work block (JSON)
+
+What is left of a work block whose captured data a person deleted with
+`goodall delete <work block id> --delete-captured-data` (ADR 0021). It
+replaces the work block record, in the same file in `work-blocks/` and with
+the same `id`, so journal entries and interventions that name the work block
+still name something. It says only that a work block was deleted at the
+person's request, and when: the work block's times, workstream, machine facts
+and Claude sessions are dropped. This is the one time goodall replaces a
+record. The replacement is committed and git history is left alone, so the
+work block record stays in the repository's history and the fact of the
+deletion stays honest.
+
+| Field | Required | Value |
+| --- | --- | --- |
+| `deleted_at` | yes | When the captured data was deleted. |
+| `other_work_blocks_lost_transcripts` | yes | The ids of other work blocks that lost a transcript with this one, `[]` if none. A transcript is deleted whole, and one agent session can have records inside several work blocks. |
+
+`contributor` is who asked for the deletion. The work block fixes of a
+deleted work block are removed in the same commit, because each one names
+the workstream the record no longer gives. Code that reads `work-blocks/`
+asks `records.json_record_type` first and passes over a deleted work block.
+
+<!-- example: deleted_work_block -->
+```json
+{
+  "schema_version": 1,
+  "record_type": "deleted_work_block",
+  "id": "20261116T090000Z-ada-lovelace-0a1b2c3d",
+  "contributor": "ada-lovelace",
+  "deleted_at": "2026-11-17T08:12:30Z",
+  "other_work_blocks_lost_transcripts": [
+    "20261116T140000Z-ada-lovelace-9e8d7c6b"
+  ]
 }
 ```
 

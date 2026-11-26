@@ -163,6 +163,19 @@ def test_an_unreadable_record_is_left_out_with_a_warning_naming_the_file(tmp_pat
     assert len(additions.outside_work_blocks.events) == 1
 
 
+def test_a_deleted_work_block_is_left_out_of_the_export_without_a_warning(tmp_path: Path) -> None:
+    record_repo = tmp_path / "records"
+    deleted = records.build_deleted_work_block(
+        "20261116T090000Z-ada-lovelace-0a1b2c3d", "ada-lovelace", datetime(2026, 11, 17, tzinfo=UTC), []
+    )
+    write_record(record_repo, deleted)
+
+    additions = gather_additions(record_repo, tmp_path / "logs", "goodall-pilot")
+
+    assert additions.work_block_transcripts == []
+    assert additions.warnings == []
+
+
 def test_superseded_copies_are_never_read(tmp_path: Path) -> None:
     log_directory = tmp_path / "logs"
     superseded = log_directory / "superseded-transcripts" / "20261116T120000Z" / "-work-example"

@@ -279,6 +279,10 @@ def read_records[RecordType](
     be read, or that does not parse into a record, is left out with a
     warning naming it; problems that still let a record be built (an unknown
     key, say) are not the export's business, and `goodall doctor` reports them.
+
+    A deleted work block (`goodall delete`) sits in `work-blocks/` in place
+    of the record it replaced. It holds nothing to export, so it is passed
+    over without a warning.
     """
     reading: RecordReading[RecordType] = RecordReading(records=[], warnings=[])
     folder = record_repo / folder_name
@@ -289,6 +293,8 @@ def read_records[RecordType](
             text = record_file.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             reading.warnings.append(record_unreadable_warning(record_repo, record_file))
+            continue
+        if pattern == "*.json" and records.json_record_type(text) == records.DELETED_WORK_BLOCK_RECORD_TYPE:
             continue
         parse_result = parse(text)
         if parse_result.record is None:
