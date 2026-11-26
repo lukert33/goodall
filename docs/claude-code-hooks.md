@@ -9,7 +9,7 @@ built; until then, nothing installs them.
 
 | Event | What goodall does | Can it stop Claude Code? |
 | --- | --- | --- |
-| `UserPromptSubmit` | The prompt gate. With a work block active, it records a heartbeat linking the Claude session and the prompt goes through, even when it cannot read what Claude Code sent (see below). Otherwise it refuses the prompt and says what to run, usually `goodall start`. | Yes: it refuses the prompt. |
+| `UserPromptSubmit` | The prompt gate. With a work block active, it records a heartbeat linking the Claude session and the prompt goes through, even when it cannot read what Claude Code sent (see below). Otherwise it refuses the prompt and says what to run, usually `goodall start`. While recording is paused (`goodall pause`) no work block is active, so it refuses in the same way, and the message says that goodall is paused. | Yes: it refuses the prompt. |
 | `PostToolUse` | Records a heartbeat after each tool call, so a long reply still shows the work block was active. | Never. |
 | `Stop` | Records a heartbeat when Claude finishes a reply. | Never. |
 | `SessionEnd` | Records a heartbeat when the Claude session ends. | Never. |

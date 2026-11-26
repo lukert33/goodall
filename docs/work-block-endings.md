@@ -16,7 +16,7 @@ Every work block record carries an end state saying which of these happened.
 
 | End state | What happened | When the block is counted as ending |
 | --- | --- | --- |
-| `clean` | You ran `goodall stop`. | The moment you ran it. |
+| `clean` | You ran `goodall stop` or `goodall pause`. | The moment you ran it. |
 | `inferred` | Nobody ran `goodall stop`, and the block sat idle for longer than the idle limit. Goodall closed it for you. | Its last heartbeat: the last moment goodall saw work in it. |
 | `abnormal` | Goodall could not read the block's marker, so it could not tell whether the block was still running. It recorded what it could recover, keeps the damaged marker, and, if the marker no longer said which workstream, records the workstream as `unknown` for you to fix (below). | Its last heartbeat, or failing that the last time the marker file changed. |
 
@@ -63,13 +63,53 @@ Goodall tells you when it does this, in words like these:
 - **Nothing runs on a timer.** If you never run a goodall command again, an
   idle block is never closed and its record is never written. Run
   `goodall status` when you come back to a machine.
-- **A paused block cannot be picked up again.** Once a block has been idle
+- **An idle block cannot be picked up again.** Once a block has been idle
   for more than three hours, sending a prompt does not revive it. Claude Code
   refuses the prompt and tells you to run `goodall start`, which closes the
   old block and begins a new one.
-- **A pause shorter than three hours changes nothing.** The block stays open
-  and the pause is inside it. If a lunch break should not count, run
-  `goodall stop` before it and `goodall start` after.
+- **A break shorter than three hours changes nothing by itself.** The block
+  stays open and the break is inside it. If a lunch break should not count,
+  run `goodall pause` before it and `goodall start` after (see "Pausing"
+  below).
+
+## Pausing
+
+`goodall pause` is for a break you mean to come back from. It ends the work
+block exactly as `goodall stop` does: the end state is `clean`, the agent
+sessions are copied, and the record is written. There is no paused state
+inside a work block. While paused, goodall is simply not recording, so
+Claude Code refuses prompts, and the refusal says that recording is paused.
+
+What `goodall pause` adds is a small note in the log directory
+(`work-blocks/pause.json`) saying which work block was paused. Then:
+
+- **`goodall start`** begins a **new** work block. Its record names the
+  paused one in the field `continues_work_block`
+  (`docs/record-schemas.md`), so analysis can read the two as one stretch
+  of work with a gap. Without `--workstream` it is on the paused block's
+  workstream; with `--workstream` it can be on another, and still names the
+  paused block.
+- **`goodall stop`** clears the pause. There is no work block to end, and
+  it says so and exits successfully. The next work block continues nothing.
+- **`goodall status`** says that goodall is not recording and that
+  recording is paused, with the paused work block and its workstream. With
+  `--json`, `paused` is `true` and `paused_work_block` holds its `id`,
+  `workstream` and `paused_at`. The exit code is 1, as whenever no work
+  block is active.
+
+A pause does not expire: after a weekend, `goodall start` still continues
+the block you paused on Friday. Run `goodall stop` if that is not what you
+want.
+
+`goodall pause` when recording is already paused changes nothing and exits
+successfully. With no work block active and nothing paused it exits 1,
+because there is nothing to continue. If the work block had been left idle
+past the idle limit, goodall closes it at its last heartbeat (`inferred`,
+as above) and still remembers the pause, so the next work block names it.
+
+One thing a pause does not do: an agent session that runs across a pause is
+still copied whole, because copies are byte for byte (ADR 0019 and
+ADR 0021).
 
 ## If the record cannot be written
 
