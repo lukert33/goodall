@@ -40,7 +40,7 @@ import sys
 import textwrap
 from dataclasses import asdict, dataclass, field
 from enum import StrEnum
-from typing import TextIO
+from typing import BinaryIO, TextIO
 
 # Width used whenever output is not a terminal, and whenever a terminal's
 # size cannot be measured.
@@ -50,6 +50,9 @@ FIXED_WIDTH = 80
 # paragraph a column of single words, wider makes lines too long to read.
 MINIMUM_WIDTH = 40
 MAXIMUM_WIDTH = 100
+
+# How much of a raw file is read and written at a time when it is printed as it is.
+RAW_CHUNK_BYTES = 1024 * 1024
 
 # Each part of a failure starts with a label in a column this wide, and its
 # text is indented to match, so the three parts line up.
@@ -567,6 +570,31 @@ class Terminal:
         output, so an agent can parse the whole stream as one document.
         """
         self.standard_output.write(json.dumps(document, indent=2) + "\n")
+
+    def copy_bytes_to_output(self, source: BinaryIO) -> None:
+        """Write everything `source` holds to standard output, byte for byte, a megabyte at a time.
+
+        Used by `goodall logs --raw`, whose whole point is that nothing is
+        changed on the way. Trap: text streams re-encode, so the bytes go to
+        the stream's underlying binary `buffer`, after text already written
+        has been flushed so the two cannot swap places. A stream with no
+        `buffer` (an in-memory one in a test) gets the bytes decoded as UTF-8,
+        with U+FFFD for any byte that is not; the real standard output always
+        has a buffer.
+        """
+        self.standard_output.flush()
+        output_buffer = getattr(self.standard_output, "buffer", None)
+        while True:
+            chunk = source.read(RAW_CHUNK_BYTES)
+            if chunk == b"":
+                break
+            if output_buffer is not None:
+                output_buffer.write(chunk)
+            else:
+                self.standard_output.write(chunk.decode("utf-8", errors="replace"))
+        if output_buffer is not None:
+            output_buffer.flush()
+        self.output_started = True
 
     def labelled_paragraph(self, label: str, text: str, label_colour: str) -> str:
         """Wrap `text` with `label` in the left column and the rest indented under it.
