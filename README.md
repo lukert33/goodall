@@ -36,6 +36,7 @@ These commands work today:
 | `goodall start` | Begins a **work block**: a logged stretch of your work on one workstream. This opens the prompt gate. |
 | `goodall stop` | Ends the current work block, and copies every agent session that has a record inside it into the log directory. This closes the prompt gate. |
 | `goodall fixblock` | Corrects which workstream a work block was for, by recording a fix beside it. |
+| `goodall delete` | Shows what one work block captured; with `--delete-captured-data`, deletes it and leaves a record saying only that it was deleted. |
 | `goodall journal` | Adds a **journal entry**: your written note about what was decided or done. |
 | `goodall intervene` | Records an **intervention**: a moment you overrode, corrected or rescued an agent. |
 | `goodall doctor` | Checks the account and setup, and changes nothing. |

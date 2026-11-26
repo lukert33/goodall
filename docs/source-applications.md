@@ -77,3 +77,46 @@ held 485,685 records, dated from July to November 2026.
 What only Claude Code adds on top of the baseline, through its hooks: the
 prompt gate and heartbeats (`docs/claude-code-hooks.md`), and telemetry
 (ADR 0002). None of them is needed for an agent session to be copied.
+
+## Deleting what one work block captured
+
+`goodall delete <work block id>` shows what deleting that work block's
+captured data would remove, as kinds and counts, and changes nothing; add
+`--delete-captured-data` to delete it (ADR 0021). Files are removed whole and
+never edited, so what remains is still verbatim. Per kind:
+
+- **Agent sessions.** Each one with a record inside the work block (read
+  from goodall's copies, from the work block's own list of Claude sessions,
+  and from the application itself when its copy is still waiting) loses all
+  its copies: transcript, session folder, file-edit backups and earlier
+  copies kept aside. A transcript is never cut, so one that also has records
+  inside another work block is deleted all the same, and that work block is
+  named in the output and in the deleted work block record. Each one is
+  listed in `transcript-sync/deleted-agent-sessions.json` and never copied
+  again, even when used in a later work block.
+- **Telemetry**, **heartbeats** and goodall's bookkeeping about the work
+  block, all named after its id; and the Scout export in `exports/scout`,
+  which is derived from every transcript and is rebuilt with
+  `goodall export scout`.
+- **The record repo.** The work block's record is replaced by a deleted work
+  block (`docs/record-schemas.md`) and its fixes are removed, in one commit.
+  Git history is left alone.
+
+Left in place, and said so in the output with a next step:
+
+- **The application's own files.** Goodall never changes them. To remove an
+  agent session from the Mac altogether, delete it in the application.
+- **Copies every agent session shares**: the Claude family's prompt history
+  (`history.jsonl`) and project memory. Deleting them would delete other
+  work blocks' records, and they hold the deleted sessions' prompts too, so
+  the next work block that copies any Claude session copies them back from
+  Claude Code's own files. A deletion therefore does not fully stick for
+  these unless the person also removes those lines in Claude Code's files.
+- **ActivityWatch's copies**, each of which covers the stretch between two
+  copies whatever work blocks fell in it, so goodall cannot tell which part
+  is this work block's.
+- **Journal entries and interventions** that name the work block: they are
+  the person's own writing.
+
+It refuses the active work block (stop it first), and deletes nothing when
+it cannot read everything it needs to tell what belongs to the work block.
