@@ -25,7 +25,7 @@ sessions alongside the commits they led to.
 
 Checked from the repository and its README:
 
-- MIT licence; written in Go; created 2026-01-02; about 5,300 stars; newest
+- MIT license; written in Go; created 2026-01-02; about 5,300 stars; newest
   release v0.13.4 on 2026-11-13; several active contributors; two published
   security advisories (not yet read).
 - `entire enable` installs the agent's hooks and Entire's own git hooks.
@@ -37,23 +37,63 @@ Checked from the repository and its README:
   more". The SWE-chat paper also lists Gemini CLI, OpenCode and Factory
   Droid.
 
-Not confirmed from the README: line-level attribution of human versus agent
-authorship. The README describes a checkpoint trailer on each commit. The
-attribution claim comes from the SWE-chat paper, which mentions it without
-giving the method in the part we read.
+Checked by running it, on 2026-11-25 and 2026-11-26: Entire v0.13.4 with
+Claude Code, Codex and the Antigravity desktop app, in throwaway repos with
+fake secrets, pushing only to a bare repo on the same Mac. Each agent's own
+session files were compared with Entire's copies.
+
+- **Capture is tied to commits.** A checkpoint is made when a commit follows
+  agent work, and the commit gets an `Entire-Checkpoint:` trailer. Turns that
+  no commit follows stay in a local working folder and never reach a
+  checkpoint. Of an interrupted turn, Entire kept the prompt text at most.
+- **A checkpoint is an edited copy, not the agent's record.** For Claude Code
+  and Codex the system prompt is blanked and the text of instruction files
+  is removed. Codex's encrypted reasoning is removed, and Claude Code's
+  subagent transcripts are absent. For Antigravity the copy matches line for
+  line, but Antigravity's own record already lacks the system prompt and the
+  instruction files.
+- **Redaction is always on, and uneven.** Token-shaped secrets were replaced.
+  An AWS key ID, a plain password, an email address and a phone number
+  survived the default settings; a setting for personal details exists.
+  Turning every scanner off makes Entire's settings fail to load, and it
+  then captures nothing without saying so. The local working copy, before a
+  commit, is not redacted.
+- **It can fail silently.** Until the project was trusted inside Codex, Codex
+  ignored Entire's hooks: no trailer, no checkpoint, no message from Entire.
+- **It can change the session it records.** With Codex, Entire's
+  session-start hook adds a message telling the agent to run
+  `entire agent-help`, and Codex did so before starting on the prompt.
+- **Checkpoints can be kept local.** Uploading on `git push` is the default.
+  A manual mode and a `--skip-push-sessions` option keep them on the Mac.
+- **Attribution is per commit, not per line.** `entire blame` labels each
+  line with the agent of the checkpoint attached to that line's commit, and
+  says itself that this is not necessarily who wrote the line. We found no
+  record of which lines the person wrote and which the agent wrote.
+
+Not tested: Cursor, Copilot CLI, Pi and the other agents; a command the
+person refuses, with Codex or Antigravity (neither asked for permission).
+The two security advisories are still unread.
 
 **Decision (owner, 2026-11-19): evaluate building goodall on top of Entire's
-session logging and attribution, not from scratch.** This is an evaluation,
-not an adoption. Two things the evaluation must settle first:
+session logging and attribution, not from scratch.** This was an evaluation,
+not an adoption. It had two things to settle:
 
 1. **Entire pushes session transcripts to the git remote by default.**
-   Goodall's rule is that raw records stay on the Mac (ADR 0017). Either
-   Entire can be configured to keep checkpoints local, or goodall cannot use
-   its storage.
+   Goodall's rule is that raw records stay on the Mac (ADR 0017). Settled:
+   Entire can keep checkpoints local.
 2. **Entire would be a program goodall runs**, in the eval account, with the
    account's access. It needs the same provenance check as git or `op`
    before it is adopted (`docs/DEPENDENCIES.md`), including reading its two
-   advisories.
+   advisories. Not done, because Entire was not adopted.
+
+**Outcome (owner, 2026-11-26): goodall keeps its own capture and is not
+built on Entire.** Goodall's rule is that raw records stay verbatim, and
+Entire's checkpoints are edited copies that miss whatever no commit follows.
+Goodall's copy of a Claude Code session was byte for byte the agent's own
+files, subagent transcripts included. Two uses of Entire stay open: as an
+extra raw source for agents goodall does not yet capture, with uploading
+turned off and after the provenance check above; and its redaction layers
+as a reference for `goodall release`.
 
 ## SWE-chat
 
