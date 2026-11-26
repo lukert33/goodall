@@ -72,8 +72,7 @@ first.
    credentials and remote state untouched.
 6. **The record repo is local.** Goodall commits to the record repo and never
    pushes, fetches or adds a remote (ADR 0023). A person shares an eval only
-   by making an export. The push code that predates this rule is being
-   removed (`goodall-g1k.5`); add no new caller of it.
+   by making an export.
 7. **The hook path is standard library only.** Code run by a Claude Code hook
    imports nothing third-party, because the prompt gate runs on every prompt.
 8. **Capture is independent of analysis.** `inspect-ai` and `inspect-scout`

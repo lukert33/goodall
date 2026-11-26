@@ -49,7 +49,7 @@ Goodall tells you when it does this, in words like these:
 
 - **`goodall status`** is not a look-only command. If it finds an idle work
   block it closes it, and if a finished work block's record is still waiting
-  on this Mac it writes that record into the record repo and pushes it. It
+  on this Mac it writes that record into the record repo and commits it. It
   says so each time. If nothing needs tidying, it only reports. It also
   lists any of your work blocks still waiting for a workstream (see "Fixing
   an unknown workstream" below).
