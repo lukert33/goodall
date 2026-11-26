@@ -130,7 +130,7 @@ auto-approve in roughly 20% of sessions, rising to over 40% by 750 sessions;
 experienced users interrupt more often (about 9% of turns) than new ones
 (about 5%).
 
-## Davidson: a sceptic's reading of gradual disempowerment
+## Davidson: a skeptic's reading of gradual disempowerment
 
 [Thoughts on Gradual Disempowerment](https://alignmentforum.org/posts/ct6SMDuexe9uBwDoL/thoughts-on-gradual-disempowerment)
 (Tom Davidson, AI Alignment Forum, 15 August 2025) is a critique of the
