@@ -23,7 +23,7 @@ import pytest
 
 from goodall import records
 from goodall.fake_runner import FakeRunner
-from goodall.record_repo import write_record
+from goodall.record_repo import replace_with_deleted_work_block, write_record
 
 ADA = "ada-lovelace"
 MORNING = datetime(2026, 11, 16, 9, 30, 0, tzinfo=UTC)
@@ -270,3 +270,58 @@ def test_a_record_folder_goodall_may_not_write_in_gets_a_failure_not_an_exceptio
     assert [failure.kind for failure in outcome.failures] == ["record_not_written"]
     assert not outcome.written
     assert not outcome.committed
+
+
+# ---------------------------------------------------------------------------
+# Replacing a deleted work block's record
+
+
+def work_block_record() -> records.WorkBlockRecord:
+    machine = records.MachineFacts("eval-mac-01", "26.1", "0.0.1", None)
+    return records.build_work_block_record(
+        ADA, "research", MORNING, machine, ended_at=MORNING, end_state="clean", suffix="0a1b2c3d"
+    )
+
+
+def test_a_deleted_work_block_replaces_its_record_and_its_fixes_go_in_the_same_commit(tmp_path: Path) -> None:
+    record_repo = make_record_repo(tmp_path / "records")
+    work_block = work_block_record()
+    fix = records.build_work_block_fix(ADA, MORNING, work_block.id, "research", suffix="5e6f7a8b")
+    assert write_record(FakeRunner(), record_repo, work_block).committed
+    assert write_record(FakeRunner(), record_repo, fix).committed
+    deleted = records.build_deleted_work_block(work_block.id, ADA, MORNING, [])
+    fix_path = record_repo / records.relative_path_for(fix)
+
+    outcome = replace_with_deleted_work_block(FakeRunner(), record_repo, deleted, [fix_path])
+
+    assert (outcome.written, outcome.committed, outcome.failures) == (True, True, [])
+    assert outcome.path.read_text() == records.render_record(deleted)
+    assert not fix_path.exists()
+    assert git(record_repo, "status", "--porcelain") == ""
+    assert commit_subjects(record_repo)[0] == f"Replace work block record {work_block.id} with a deleted work block"
+    # History is left alone: the record as it was is still there.
+    assert "research" in git(record_repo, "show", f"HEAD~1:work-blocks/{work_block.id}.json")
+
+
+def test_a_deleted_work_block_whose_record_never_reached_the_record_repo_is_added(tmp_path: Path) -> None:
+    record_repo = make_record_repo(tmp_path / "records")
+    deleted = records.build_deleted_work_block(work_block_record().id, ADA, MORNING, [])
+
+    outcome = replace_with_deleted_work_block(FakeRunner(), record_repo, deleted, [])
+
+    assert outcome.committed
+    assert git(record_repo, "status", "--porcelain") == ""
+
+
+def test_only_the_replaced_record_and_its_fixes_are_committed(tmp_path: Path) -> None:
+    record_repo = make_record_repo(tmp_path / "records")
+    work_block = work_block_record()
+    assert write_record(FakeRunner(), record_repo, work_block).committed
+    (record_repo / "notes.txt").write_text("the contributor's own staged file\n")
+    git(record_repo, "add", "notes.txt")
+    deleted = records.build_deleted_work_block(work_block.id, ADA, MORNING, [])
+
+    outcome = replace_with_deleted_work_block(FakeRunner(), record_repo, deleted, [])
+
+    assert outcome.committed
+    assert git(record_repo, "status", "--porcelain") == "A  notes.txt\n"

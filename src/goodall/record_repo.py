@@ -16,6 +16,8 @@ Rules this module keeps, and why:
   what makes a later edit to one of goodall's records visible.
 - One file per record, and a record is never edited or deleted by goodall
   once written: a file that already exists is refused, never overwritten.
+  The one exception is `replace_with_deleted_work_block`, for a work block
+  whose captured data a person deleted (ADR 0021).
 - Only the file written is staged and committed. Anything else in the
   record repo, staged or not, belongs to the contributor and is left
   exactly as it was.
@@ -125,6 +127,76 @@ def write_record(runner: Runner, record_repo: Path, record: records.Record) -> R
     if not commit_result.succeeded:
         return written_not_committed(path, record_commit_failed_failure(record_repo, path, commit_result))
     return RecordWriteOutcome(path=path, written=True, committed=True)
+
+
+def replace_with_deleted_work_block(
+    runner: Runner, record_repo: Path, deleted: records.DeletedWorkBlock, fix_files: list[Path]
+) -> RecordWriteOutcome:
+    """Put a deleted work block in place of its work block's record, remove its fixes, and commit both at once.
+
+    The one time goodall replaces a record, decided by the project owner
+    (ADR 0021): a person deleted what the work block captured. The file
+    keeps its name, so whatever names the work block still names something.
+    `fix_files` are the work block's fixes, removed in the same commit
+    because each names the workstream the replacement no longer gives. Git
+    history is left alone: the commit adds to it, and the record as it was
+    stays in the commits before.
+
+    The new text is written to a temporary file and renamed over the old,
+    so the folder never holds half a record. Only these paths are staged
+    and committed, as `write_record` does.
+    """
+    text = records.render_record(deleted)
+    relative_path = records.relative_path_for(deleted)
+    path = record_repo / relative_path
+    readiness_failure = check_record_repo_ready(runner, record_repo)
+    if readiness_failure is not None:
+        return not_written(path, readiness_failure)
+    expected_folder = record_repo.resolve() / relative_path.parent
+    if path.parent.resolve() != expected_folder:
+        return not_written(path, record_path_outside_record_repo_failure(record_repo, path))
+    temporary_file = path.parent / f".{path.name}.goodall-tmp"
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary_file.write_text(text, encoding="utf-8")
+        temporary_file.replace(path)
+    except OSError as write_error:
+        temporary_file.unlink(missing_ok=True)
+        return not_written(path, record_not_written_failure(path, write_error))
+
+    paths_to_commit = [str(relative_path)]
+    for fix_file in fix_files:
+        fix_relative_path = str(fix_file.relative_to(record_repo))
+        # Trap: naming a path git does not know makes the commit fail, so
+        # a fix that was never committed is simply removed from the folder.
+        if not run_git(runner, record_repo, ["ls-files", "--error-unmatch", "--", fix_relative_path]).succeeded:
+            fix_file.unlink(missing_ok=True)
+            continue
+        remove_result = run_git(runner, record_repo, ["rm", "--quiet", "--", fix_relative_path])
+        if not remove_result.succeeded:
+            return written_not_committed(path, record_commit_failed_failure(record_repo, path, remove_result))
+        paths_to_commit.append(fix_relative_path)
+    add_result = run_git(runner, record_repo, ["add", "--", str(relative_path)])
+    if not add_result.succeeded:
+        return written_not_committed(path, record_commit_failed_failure(record_repo, path, add_result))
+    commit_result = run_git(
+        runner,
+        record_repo,
+        ["commit", "--quiet", "-m", replacement_commit_message(deleted), "--", *paths_to_commit],
+        timeout_seconds=COMMIT_TIMEOUT_SECONDS,
+    )
+    if not commit_result.succeeded:
+        return written_not_committed(path, record_commit_failed_failure(record_repo, path, commit_result))
+    return RecordWriteOutcome(path=path, written=True, committed=True)
+
+
+def replacement_commit_message(deleted: records.DeletedWorkBlock) -> str:
+    """The message of the commit that puts a deleted work block in place of its record."""
+    return (
+        f"Replace work block record {deleted.id} with a deleted work block\n\n"
+        f"Written by goodall at the request of contributor {deleted.contributor}, who deleted what the work block "
+        "captured."
+    )
 
 
 def check_record_repo_ready(runner: Runner, record_repo: Path) -> Failure | None:
