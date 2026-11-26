@@ -66,8 +66,9 @@ buckets, and `unfamiliar_records`. Every action has:
    and a `data` object.
 3. **Application focus** (`application_focus_from_window_event`). An event
    with a string `data.app`. `title` may be "excluded" (ActivityWatch's own
-   filter) or missing; `url` appears only from the macOS watcher for some
-   browsers.
+   filter), empty or missing; `url` appears only from the macOS watcher, only
+   for a browser in front, and is left out (not written as null) otherwise.
+   A `url` can come with an empty `title`.
 4. **Browser page focus** (`browser_page_focus_from_web_event`). An event
    with a string `data.url`. The browser watcher records the active tab even
    while the browser is not in front; lining it up with application focus is
@@ -85,8 +86,7 @@ a browser page at the same time) are separate actions; nothing is merged.
 
 ## What this was based on
 
-Nothing here could be checked against a running ActivityWatch. The format was
-read on 2026-11-17 from the `master` branch of each repository below (commit
+The format was read on 2026-11-17 from the `master` branch of each repository below (commit
 hashes could not be fetched), plus the documentation site.
 
 - Documentation: https://docs.activitywatch.net/ , the "Buckets and events"
@@ -119,14 +119,32 @@ hashes could not be fetched), plus the documentation site.
 - `ActivityWatch/aw-webui`: `src/views/Buckets.vue` (the Export button
   downloads the same endpoints' responses unchanged).
 
+## Checked against a running ActivityWatch
+
+On 2026-11-26 the hand test in Beads issue `goodall-fs9.19` ran ActivityWatch
+0.14.3 on macOS 26, in a standard account, and confirmed:
+
+- The Python server (`aw-server`) runs by default, not the Rust one.
+- Its export is `{"buckets": {<bucket_id>: {...}}}`, an object keyed by
+  bucket id, with bucket keys `client`, `created`, `data`, `events`,
+  `hostname`, `id`, `name`, `type`. Exported events have no `id`.
+- Timestamps are written `2026-11-26T15:04:05.123456+00:00`: six
+  fractional digits and `+00:00`, never `Z`.
+- Window events always have `app` and `title`. `title` can be empty (for
+  example Safari with its Automation permission denied). `url` is left out,
+  not written as null, when there is none. Safari and Chrome give a `url`
+  once ActivityWatch has the Automation permission for them; Firefox gives
+  one through Accessibility, with no prompt. Safari's private windows give
+  a `url` too, and nothing in the event marks them private.
+- AFK events have `status` only.
+
 ## Not confirmed
 
-- Which server, Python or Rust, current ActivityWatch releases ship by
-  default, and older servers' export shapes.
-- The Rust server's exact timestamp text (a `Z` suffix and how many
-  fractional digits); both forms are accepted.
-- Whether the macOS watcher omits `title` and `url` or writes them as null
-  when absent; both are accepted.
+- The Rust server's export shape and exact timestamp text; `Z` and
+  `+00:00` are both accepted.
+- Older servers' export shapes.
+- Chrome with its Automation permission denied (expected to match Safari:
+  empty title, no `url`).
 - Editor watchers other than VS Code's (vim, JetBrains, Neovim) and whether
   they write the same type and keys.
 - Any watcher not listed here: its buckets are reported as unfamiliar.
