@@ -1242,12 +1242,15 @@ def test_killing_the_receiver_during_a_work_block_loses_no_acknowledged_line_and
     assert record["claude_sessions"] == [CLAUDE_SESSION]
 
 
-def write_synthetic_transcript() -> Path:
-    """A one-line Claude Code transcript in this test's Claude config folder, as Claude Code would leave it."""
+def write_synthetic_transcript(written_at: datetime) -> Path:
+    """A one-record Claude Code transcript in this test's Claude config folder, written at `written_at`."""
     project_folder = Path(os.environ["CLAUDE_CONFIG_DIR"]) / "projects" / "-Users-ada-work"
     project_folder.mkdir(parents=True)
     transcript = project_folder / f"{CLAUDE_SESSION}.jsonl"
-    transcript.write_bytes(b'{"type":"user","message":"synthetic"}\n')
+    timestamp = written_at.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    transcript.write_text(json.dumps({"type": "user", "timestamp": timestamp, "message": "synthetic"}) + "\n")
+    # Goodall reads the modification time, so it must not be the real clock's.
+    os.utime(transcript, (written_at.timestamp(), written_at.timestamp()))
     return transcript
 
 
@@ -1268,8 +1271,8 @@ def test_a_work_block_whose_receiver_cannot_start_still_captures_transcripts_and
     assert "telemetry receiver did not start" in start.everything_printed
     assert f"another program is using port {taken_port}" in start.everything_printed
     assert str(eval_account.log_directory) not in start.everything_printed
-    # Transcripts are still copied as Claude works.
-    transcript = write_synthetic_transcript()
+    # The agent session is still copied when the work block ends.
+    transcript = write_synthetic_transcript(eval_account.clock())
     standard_input = io.StringIO(json.dumps({"session_id": CLAUDE_SESSION, "transcript_path": str(transcript)}))
     terminal = Terminal(standard_output=io.StringIO(), standard_error=io.StringIO(), standard_input=standard_input)
     assert cli.main(["hook", "PostToolUse"], terminal=terminal, clock=eval_account.clock) == exit_codes.SUCCESS

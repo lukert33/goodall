@@ -32,14 +32,16 @@ Claude Code changed the shape of its input, it lets the prompt through while
 a work block is active rather than block every prompt until goodall is
 updated, and records the gap so it can be reconciled later. The heartbeat
 it leaves names no Claude session, so the link between that Claude session
-and the work block is missing. It can be rebuilt afterwards by time: the
-sweep still copies every transcript in the eval account, and a transcript
-whose prompts fall between the work block's start and end, at the moments
-noted here, belongs to it. No tool does that reconciliation yet.
+and the work block is missing. Nothing is lost by that: an agent session
+is copied when it has a record inside the work block, whatever the
+heartbeats say (goodall.agent_session_copies), so its transcript is in the
+log directory, and the moments noted here say which prompts were let
+through. No tool lists such a Claude session in the work block's record
+yet.
 
 Decisions a reader would otherwise reverse-engineer (PROVISIONAL):
 
-- Reported once, as failed transcript copies are (goodall.transcripts): the
+- Reported once: the
   first command that settles reads the file, says how many times and since
   when, and moves the file into `reported/`, kept, not deleted. If it
   happens again, the next command says so again.

@@ -40,12 +40,12 @@ from pathlib import Path
 from typing import Any
 
 from goodall import exit_codes
+from goodall.claude_family import SUPERSEDED_FOLDER_NAME, TRANSCRIPTS_FOLDER_NAME
 from goodall.eval_config import read_eval_config
 from goodall.folders import describe_folder_problem, record_repo_missing_failure, where_goodall_looked
 from goodall.local_settings import LocalSettings, read_local_settings
 from goodall.scout_additions import gather_additions, rules_versions
 from goodall.terminal import Failure, Terminal
-from goodall.transcripts import SUPERSEDED_FOLDER_NAME, TRANSCRIPTS_FOLDER_NAME
 
 # Where the database goes unless --output says otherwise, inside the log directory.
 DEFAULT_EXPORT_FOLDER = Path("exports") / "scout"

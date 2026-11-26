@@ -54,6 +54,7 @@ from typing import Any, Literal
 
 from goodall import records
 from goodall.actor_labels import ACTOR_LABEL_RULES_VERSION, label_transcript
+from goodall.claude_family import TRANSCRIPTS_FOLDER_NAME
 from goodall.human_actions import (
     RULES_VERSION as HUMAN_ACTION_RULES_VERSION,
 )
@@ -68,7 +69,6 @@ from goodall.human_actions import (
 )
 from goodall.human_activity import HumanAction, MergedInterruption, category_of, merge_repeated_interruptions
 from goodall.terminal import Failure
-from goodall.transcripts import TRANSCRIPTS_FOLDER_NAME
 
 # Raise this whenever the mapping below changes (which record becomes which
 # event, or which metadata key means what), so a database says which mapping

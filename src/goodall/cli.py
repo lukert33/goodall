@@ -229,7 +229,9 @@ def build_parser() -> argparse.ArgumentParser:
     hook.add_argument("event_name", nargs="?", help="The Claude Code hook event, for example UserPromptSubmit.")
     hook.set_defaults(command_name="hook")
 
-    sync = commands.add_parser("sync", help="Copy any Claude Code transcripts not yet captured into the log directory.")
+    sync = commands.add_parser(
+        "sync", help="Copy what ended work blocks left in each application that is not yet in the log directory."
+    )
     sync.set_defaults(command_name="sync")
 
     logs = commands.add_parser("logs", help="Show where this eval's raw logs are and what they contain.")

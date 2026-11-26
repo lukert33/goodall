@@ -14,18 +14,21 @@ What each command does, in order:
   create the marker. With one already active it changes nothing, says which
   one and since when, and exits 0, so running it twice is harmless.
 - `goodall stop`: find the eval and settle, as above; then end the active
-  work block cleanly and write its record into the record repo. If the
-  record cannot be written yet it waits in the log directory, a warning
-  says so, and the exit is still 0. With none active it says so and exits 1.
+  work block cleanly, copy every agent session that has a record inside it
+  into the log directory (goodall.agent_session_copies), and write the
+  work block's record into the record repo. If the record cannot be
+  written yet it waits in the log directory, a warning says so, and the
+  exit is still 0. With none active it says so and exits 1.
 
 Settling, which `goodall status` does too: a work block nobody stopped is
 closed at its last heartbeat (end state `inferred`) once it is overdue; a
 marker goodall cannot read is moved aside and kept, and what can be
 recovered from it is recorded with end state `abnormal`; every ended
 work block's record still waiting in the log directory is written to the
-record repo; and every Claude Code transcript that changed since it was
-last copied is copied into the log directory (goodall.transcripts), which
-is said in one sentence only when something was copied; and any problem a
+record repo; the agent sessions of every ended work block that are still
+to be copied are copied into the log directory, which covers a work block
+goodall has just closed itself and any copy that failed earlier, and is
+said in one sentence only when something was copied; and any problem a
 hook noted (goodall.hook_problems), such as a prompt whose input goodall
 could not read, is reported once as a warning and filed away.
 
@@ -52,12 +55,13 @@ from pathlib import Path
 
 import goodall
 from goodall import (
+    agent_session_copies,
+    claude_family,
     exit_codes,
     hook_problems,
     records,
     telemetry_capture,
     telemetry_receivers,
-    transcripts,
     work_blocks,
 )
 from goodall.eval_config import EvalForThisAccount, read_eval_for_this_account
@@ -84,8 +88,9 @@ def run_start(
     `telemetry_port` is the port the person asked the receiver to listen
     on, or None for any free port (owner decision Q24). A receiver that
     does not start is a warning, not a failure: the work block has started
-    and its transcripts are copied (ADR 0002 calls them the record of last
-    resort), and refusing to record at all would lose more.
+    and its agent sessions are copied when it ends (ADR 0002 calls the
+    transcripts the record of last resort), and refusing to record at all
+    would lose more.
     """
     if telemetry_port is not None and not MINIMUM_PORT <= telemetry_port <= MAXIMUM_PORT:
         terminal.show_failure(telemetry_port_invalid_failure())
@@ -262,7 +267,13 @@ def run_stop(terminal: Terminal, runner: Runner, clock: Clock) -> int:
     the record repo or is safely waiting in the log directory (a warning then
     says so: nothing needs running again, and the next goodall start, stop or
     status writes it); 1 only when there was no work block to stop. The rule
-    is in "Command-line conventions" in AGENTS.md.
+    is in "Command-line conventions" in AGENTS.md. The same holds for its
+    agent sessions: one that could not be copied yet is a warning, because
+    its source application still holds it and goodall tries again.
+
+    `Claude sessions` counts those the work block's heartbeats named, which
+    only Claude Code's hooks leave; `Agent sessions copied` counts those,
+    of every source application, with a record inside the work block.
     """
     eval_reading = find_eval_for_work_blocks()
     if isinstance(eval_reading, list):
@@ -286,6 +297,10 @@ def run_stop(terminal: Terminal, runner: Runner, clock: Clock) -> int:
 
     telemetry = telemetry_receivers.finish_telemetry(runner, log_directory, active.id, now)
     ended_record = end_work_block(log_directory, active, now, "clean", telemetry)
+    copies = agent_session_copies.copy_work_block(log_directory, ended_record.id, now)
+    copy_warnings = []
+    if copies.problems:
+        copy_warnings.append(agent_sessions_not_copied_failure(copies))
     waiting_file = work_blocks.WorkBlockFiles(log_directory).unrecorded_file(ended_record.id)
     write_of_this_block = write_one_unrecorded_record(runner, eval_reading, waiting_file)
     if not write_of_this_block.committed:
@@ -293,7 +308,9 @@ def run_stop(terminal: Terminal, runner: Runner, clock: Clock) -> int:
         # asked for is done: a warning, not a failure, and exit 0. An agent
         # that saw exit 1 would run goodall stop again and be told no work
         # block is active.
-        terminal.show_warnings([record_waiting_failure(ended_record, waiting_file, write_of_this_block.failures)])
+        terminal.show_warnings(
+            [record_waiting_failure(ended_record, waiting_file, write_of_this_block.failures), *copy_warnings]
+        )
         return exit_codes.SUCCESS
 
     terminal.show_paragraph(
@@ -305,12 +322,13 @@ def run_stop(terminal: Terminal, runner: Runner, clock: Clock) -> int:
         ("Id", ended_record.id),
         ("File", str(write_of_this_block.path)),
         ("Claude sessions", str(len(ended_record.claude_sessions))),
+        ("Agent sessions copied", str(copies.agent_sessions_copied)),
     ]
     telemetry_description = describe_telemetry(log_directory, ended_record)
     if telemetry_description is not None:
         facts.append(("Telemetry", telemetry_description))
     terminal.show_facts(facts)
-    terminal.show_warnings(write_of_this_block.failures)
+    terminal.show_warnings(write_of_this_block.failures + copy_warnings)
     return exit_codes.SUCCESS
 
 
@@ -341,8 +359,10 @@ def end_work_block(
     The record gets every Claude session its heartbeats carried, and
     `telemetry`, which the caller works out once the work block's receiver
     has stopped (goodall.telemetry_receivers.finish_telemetry). The order
-    matters: the record is saved before the marker goes, so the work block
-    is never lost in between. Returns the finished record.
+    matters: first the note that its agent sessions are still to be copied
+    (goodall.agent_session_copies), then the record, and the marker goes
+    last, so neither the copy nor the work block is ever lost in between.
+    Returns the finished record.
     """
     ended_at = ended_at.astimezone(UTC).replace(microsecond=0)
     # A clock set back (by hand, or by a time-zone mistake) must not make a
@@ -355,6 +375,7 @@ def end_work_block(
         claude_sessions=work_blocks.read_claude_sessions(log_directory, running.id),
         telemetry=telemetry,
     )
+    agent_session_copies.note_work_block_to_copy(log_directory, ended_record.id, ended_record.started_at, ended_at)
     work_blocks.save_unrecorded(log_directory, ended_record)
     work_blocks.remove_marker(log_directory, running.id)
     return ended_record
@@ -434,18 +455,19 @@ def write_one_unrecorded_record(
 
 @dataclass(frozen=True)
 class Settling:
-    """What settling did before a command's own work: work blocks it closed, records it wrote, transcripts it copied.
+    """What settling did before a command's own work: work blocks closed, records written, agent sessions copied.
 
     `closings` are sentences for a person, one per work block goodall closed
     itself (forgotten or damaged); `writes` are the waiting records it tried
-    to write into the record repo; `transcript_sweep` is what the sweep of
-    Claude Code's transcripts into the log directory did; `noted_hook_problems` is
-    what hooks noted since a command last reported it, or None.
+    to write into the record repo; `copies` is what copying
+    the agent sessions of ended work blocks into the log directory did;
+    `noted_hook_problems` is what hooks noted since a command last reported
+    it, or None.
     """
 
     closings: list[str] = field(default_factory=list)
     writes: list[UnrecordedWrite] = field(default_factory=list)
-    transcript_sweep: transcripts.SweepResult = field(default_factory=transcripts.SweepResult)
+    copies: agent_session_copies.CopyResult = field(default_factory=agent_session_copies.CopyResult)
     noted_hook_problems: hook_problems.HookProblems | None = None
 
     @property
@@ -459,8 +481,8 @@ class Settling:
                 warnings.extend(write.failures)
             else:
                 warnings.append(record_waiting_failure(write.record, write.waiting_file, write.failures))
-        if self.transcript_sweep.problems:
-            warnings.append(transcripts_not_copied_failure(self.transcript_sweep))
+        if self.copies.problems:
+            warnings.append(agent_sessions_not_copied_failure(self.copies))
         if self.noted_hook_problems is not None and self.noted_hook_problems.unreadable_inputs > 0:
             warnings.append(hook_input_unreadable_failure(self.noted_hook_problems))
         if self.noted_hook_problems is not None and self.noted_hook_problems.unknown_events > 0:
@@ -478,9 +500,9 @@ class Settling:
                     f"{describe_moment(write.record.started_at)} to {describe_ended_at(write.record)}. "
                     + where_the_record_went(write.push_state)
                 )
-        transcript_paragraph = describe_transcript_sweep(self.transcript_sweep)
-        if transcript_paragraph is not None:
-            paragraphs.append(transcript_paragraph)
+        copies_paragraph = describe_agent_session_copies(self.copies)
+        if copies_paragraph is not None:
+            paragraphs.append(copies_paragraph)
         return paragraphs
 
 
@@ -493,10 +515,10 @@ def settle(runner: Runner, eval_reading: EvalForThisAccount, now: datetime) -> S
        does not count the night as work.
     2. Every ended work block's record still waiting in the log directory
        is written into the record repo.
-    3. Every Claude Code transcript that changed since it was last copied
-       is copied into the log directory (goodall.transcripts.sweep). The
-       hooks copy as Claude works, but a killed Claude Code fires none, so
-       this is what guarantees nothing is left behind.
+    3. The agent sessions of every ended work block that are still to be
+       copied are copied into the log directory
+       (goodall.agent_session_copies). That is a work block closed in
+       step 1, which nobody stopped, and any whose copy failed earlier.
     4. What hooks noted they could not do is taken, to be reported once.
 
     The telemetry receiver of each work block closed in step 1 is stopped
@@ -527,7 +549,7 @@ def settle(runner: Runner, eval_reading: EvalForThisAccount, now: datetime) -> S
     return Settling(
         closings=closings,
         writes=write_unrecorded_records(runner, eval_reading),
-        transcript_sweep=transcripts.sweep(transcripts.claude_projects_folder(), log_directory, now),
+        copies=agent_session_copies.copy_ended_work_blocks(log_directory, now),
         noted_hook_problems=hook_problems.take_hook_problems(log_directory, now),
     )
 
@@ -556,6 +578,8 @@ def close_damaged_work_block(
         )
     telemetry = telemetry_receivers.finish_telemetry(runner, log_directory, recovered.id, now)
     recovered = dataclasses.replace(recovered, telemetry=telemetry)
+    assert recovered.ended_at is not None
+    agent_session_copies.note_work_block_to_copy(log_directory, recovered.id, recovered.started_at, recovered.ended_at)
     work_blocks.save_unrecorded(log_directory, recovered)
     if recovered.workstream == records.UNKNOWN_WORKSTREAM:
         return message + (
@@ -644,31 +668,20 @@ def recover_machine_facts(runner: Runner, machine_values: object) -> records.Mac
     return observe_machine_facts(runner)
 
 
-def describe_transcript_sweep(sweep_result: transcripts.SweepResult) -> str | None:
-    """What a person reads about the transcripts the sweep copied, or None when there is nothing to say.
-
-    Something is said when the sweep copied a Claude session, or when it
-    succeeded after hooks had failed to copy: the person learns once that
-    copies had fallen behind, and that they are now complete.
-    """
+def describe_agent_session_copies(copies: agent_session_copies.CopyResult) -> str | None:
+    """What a person reads about the agent sessions settling copied, or None when there is nothing to say."""
     sentences = []
-    if sweep_result.claude_sessions_copied == 1:
-        sentences.append("Brought the copy of 1 Claude session's transcript up to date in the log directory.")
-    elif sweep_result.claude_sessions_copied > 1:
+    if copies.agent_sessions_copied == 1:
+        sentences.append("Copied 1 agent session of a work block that had ended into the log directory.")
+    elif copies.agent_sessions_copied > 1:
         sentences.append(
-            f"Brought the copies of {sweep_result.claude_sessions_copied} Claude sessions' transcripts up to date "
-            "in the log directory."
+            f"Copied {copies.agent_sessions_copied} agent sessions of work blocks that had ended into the log "
+            "directory."
         )
-    if sweep_result.earlier_copies_kept > 0:
+    if copies.earlier_copies_kept > 0:
         sentences.append(
-            f"{sweep_result.earlier_copies_kept} earlier copies no longer matched the start of their transcripts, "
-            f"so they were kept, unchanged, in {transcripts.SUPERSEDED_FOLDER_NAME} in the log directory."
-        )
-    if sweep_result.failed_hook_copies > 0 and not sweep_result.problems:
-        sentences.append(
-            f"Before this, goodall could not copy a transcript {describe_times(sweep_result.failed_hook_copies)} "
-            f"when a Claude Code hook fired; the reasons are kept in {sweep_result.failed_hook_copies_file}. "
-            "Every transcript has now been copied."
+            f"{copies.earlier_copies_kept} earlier copies no longer matched the start of their files, so they "
+            f"were kept, unchanged, in {claude_family.SUPERSEDED_FOLDER_NAME} in the log directory."
         )
     if not sentences:
         return None
@@ -857,27 +870,21 @@ def record_waiting_failure(
     )
 
 
-def transcripts_not_copied_failure(sweep_result: transcripts.SweepResult) -> Failure:
-    """The warning for Claude sessions whose transcripts the sweep could not copy into the log directory."""
-    what_happened = (
-        f"Goodall could not copy the transcripts of {len(sweep_result.problems)} Claude session(s) into the log "
-        "directory. " + " ".join(sweep_result.problems)
-    )
-    if sweep_result.failed_hook_copies > 0:
-        what_happened += (
-            f" Claude Code hooks could not copy a transcript {describe_times(sweep_result.failed_hook_copies)} "
-            f"either; the reasons are kept in {sweep_result.failed_hook_copies_file}."
-        )
+def agent_sessions_not_copied_failure(copies: agent_session_copies.CopyResult) -> Failure:
+    """The warning for an ended work block whose agent sessions could not all be copied into the log directory."""
     return Failure(
-        kind="transcripts_not_copied",
-        what_happened=what_happened,
+        kind="agent_sessions_not_copied",
+        what_happened=(
+            "Goodall could not copy everything of the agent sessions of a work block that has ended into the log "
+            "directory. " + " ".join(copies.problems)
+        ),
         why=(
-            "Transcripts are the record of what the agents did. Claude Code still holds them, so nothing is lost "
-            "yet, and goodall tries again each time a hook fires and each time you run goodall start, stop or status."
+            "The agent sessions are the record of what the agents did. Their source application still holds them, "
+            "so nothing is lost yet, and goodall tries again each time you run goodall start, stop or status."
         ),
         what_to_do_next=(
             "Check that the log directory has free space and that this account can write to it, then run goodall "
-            "status again. If it keeps failing, tell the researcher who runs the eval."
+            "status. If it keeps failing, tell the researcher who runs the eval."
         ),
     )
 

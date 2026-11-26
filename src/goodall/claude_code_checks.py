@@ -13,7 +13,7 @@ checks:
 
 Which settings file counts, and why: only Claude Code's user settings,
 `settings.json` in Claude Code's own folder (`~/.claude`, or the folder
-CLAUDE_CONFIG_DIR names; goodall.transcripts.claude_config_folder), which is
+CLAUDE_CONFIG_DIR names; goodall.claude_family.claude_config_folder), which is
 where docs/claude-code-hooks.md tells a person to put the hooks. A project's
 settings (`.claude/settings.json` or `.claude/settings.local.json` inside a
 project folder) are not read: they apply only while Claude Code works in
@@ -63,11 +63,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from goodall.checks import Check, CheckContext, CheckOutcome, failed, passed, warned
+from goodall.claude_family import claude_config_folder
 from goodall.hook import KNOWN_EVENTS
 from goodall.runner import Command, CommandOutcome, CommandResult, OutputMode
 from goodall.settings_checks import LOCAL_SETTINGS_VALID
 from goodall.terminal import Failure
-from goodall.transcripts import claude_config_folder
 
 GROUP = "Claude Code"
 
