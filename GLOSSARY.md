@@ -43,8 +43,16 @@ _Avoid_: Lane, track, category
 A logged stretch of one contributor's work on one workstream, with a start and an end. Many agent sessions can fall inside one work block.
 _Avoid_: Session (when a work block is meant), shift, timebox
 
+**Source application**:
+An application in which a contributor works with an agent, and whose own records of that work goodall copies: the Claude desktop app, for example.
+_Avoid_: Source (unqualified), provider, vendor, tool
+
+**Agent session**:
+One conversation with an agent in one source application, identified by that application's own id for it.
+_Avoid_: Session (unqualified), run, chat, thread
+
 **Claude session**:
-One conversation with Claude Code, identified by Claude Code's own session id.
+An agent session in Claude Code, identified by Claude Code's own session id.
 _Avoid_: Session (unqualified), run, chat
 
 **Prompt gate**:
@@ -76,7 +84,7 @@ Something computed from raw records and goodall's own records, which can always 
 _Avoid_: Processed data, output
 
 **Transcript**:
-Claude Code's own file recording one Claude session.
+A source application's own file, or files, recording one agent session.
 _Avoid_: Log, conversation log, chat history
 
 **Telemetry**:
