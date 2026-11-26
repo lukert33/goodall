@@ -143,8 +143,8 @@ in full on 2026-11-20 from a PDF of the post.
 - It treats thin oversight as the competitive default and not as harm in
   itself: an owner can let their AIs act with no checking in and still keep
   the gains, and handing decisions to well-aligned AI could be good. This is
-  a reason goodall records where mistakes are caught and judges nothing
-  (ADR 0018).
+  a reason goodall's research output records where mistakes are caught and
+  carries no oversight score (ADR 0018).
 - Its main complaint is that the paper stays abstract and never shows how
   strong the competitive pressure is. A firm-level record is the kind of
   concrete evidence it says is missing, though it does not ask for one.

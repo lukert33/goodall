@@ -150,7 +150,7 @@ Checking an eval's own records against records someone else holds and the resear
 _Avoid_: Verification, validation, audit
 
 **Delegation**:
-Handing a piece of work to an AI agent. Goodall measures it and does not judge it.
+Handing a piece of work to an AI agent.
 _Avoid_: Amplification, disempowerment, automation rate
 
 **Mistake**:
