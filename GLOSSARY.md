@@ -48,8 +48,8 @@ An application in which a contributor works with an agent, and whose own records
 _Avoid_: Source (unqualified), provider, vendor, tool
 
 **App family**:
-The source applications from one maker that keep their records of agent sessions in the same place and form. Named for the product and written "the Claude family", "the Antigravity family".
-_Avoid_: Provider, vendor, platform, ecosystem
+The source applications from one maker that keep their records of agent sessions in the same place and form. Named for the product its applications carry, never for a model or a company: "the Claude family", "the Antigravity family", "the Codex family".
+_Avoid_: Provider, vendor, platform, ecosystem, OpenAI family, GPT family
 
 **Agent session**:
 One conversation with an agent in one source application, identified by that application's own id for it.
@@ -86,6 +86,10 @@ _Avoid_: Raw log, source data
 **Derived record**:
 Something computed from raw records and goodall's own records, which can always be regenerated.
 _Avoid_: Processed data, output
+
+**Timeline**:
+The derived record, one per eval, that lists in time order every entry from every source application's transcripts, from ActivityWatch, and from journal entries and interventions. Each entry holds only times, numbers and values from fixed lists, plus a pointer to its place in a raw record; anything a person or a website could have written stays in the raw record.
+_Avoid_: Rich local log, local log, event log, index
 
 **Transcript**:
 A source application's own file, or files, recording one agent session.
