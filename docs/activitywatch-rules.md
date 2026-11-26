@@ -5,9 +5,12 @@ outside any agent, in an ActivityWatch export. Each rule is a function in
 `src/goodall/activitywatch.py`, named below. Change a rule, its function and
 this page in the same commit, and raise `RULES_VERSION` (ADR 0004).
 
-ActivityWatch is optional and recommended; goodall does not depend on it.
-Goodall does not yet capture its data into the log directory (Beads issue
-`goodall-fs9.15`); this is the reading side only.
+ActivityWatch is decided per eval, in the eval config (ADR 0016); goodall does
+not depend on it. When a work block ends, goodall copies ActivityWatch's data
+into the log directory; "Copies in the log directory" below says where and in
+what shape. The rules on this page read an ActivityWatch export. They do not
+yet read those copies, whose events are a bare list for each bucket and carry
+an `id`.
 
 ## Private text: read this first
 
@@ -83,6 +86,75 @@ buckets, and `unfamiliar_records`. Every action has:
 
 Durations are kept as written. Events that overlap (an application focus and
 a browser page at the same time) are separate actions; nothing is merged.
+
+## Copies in the log directory
+
+For an eval whose config says `activitywatch = true`, goodall copies what the
+eval account's ActivityWatch server answers into the log directory
+(`src/goodall/activitywatch_copies.py`, ADR 0016). A copy is taken by
+`goodall stop`, and by the next `goodall start` or `goodall status` for a work
+block that ended without one or whose copy failed. Nothing is asked of
+ActivityWatch while a work block simply runs, and never from a hook.
+
+```
+<log directory>/
+  activitywatch/                          raw records, byte for byte as answered
+    20261126T150405.123456Z/              one folder for each copy, named after its moment (UTC)
+      info.json                           GET /api/0/info
+      buckets.json                        GET /api/0/buckets/
+      events/
+        aw-watcher-window_<hostname>.json GET /api/0/buckets/<bucket id>/events
+        aw-watcher-afk_<hostname>.json
+  activitywatch-sync/                     goodall's own bookkeeping, never raw
+    copies/20261126T150405.123456Z.json   what goodall asked for that copy
+    copy-wanted.json                      present while a work block has ended and no copy was taken since
+    copy-in-progress/                     a copy being fetched; moved to activitywatch/ only when whole
+```
+
+Every folder is readable by the account only (mode 700) and every file too
+(mode 600). No file name ends in `.jsonl`. Nothing from these files is ever
+printed or written to the record repo.
+
+What a reader of the copies needs to know:
+
+- **Each events file is the server's answer, unchanged**: a JSON list, newest
+  event first, each event with an integer `id`, a `timestamp` ending in
+  `+00:00`, a `duration` in seconds and its `data`. The bucket's type is in
+  `buckets.json`, under the bucket's id.
+- **The file name is the bucket id, quoted** as in a web address
+  (`urllib.parse.quote(bucket_id, safe="")`, undone by `unquote`), because a
+  bucket id holds the Mac's hostname.
+- **A bucket's first copy holds everything the bucket has**, including events
+  from before the eval's first work block. A later copy holds the events from
+  ten minutes before the bucket's last copy to the moment of this one. The
+  note in `activitywatch-sync/copies/` gives, for each bucket, the `start` and
+  `end` goodall asked for (both null for a first copy), the events `file`, and
+  the `device_id` the copy came from.
+- **Copies overlap, so the same event can be in two of them.** ActivityWatch
+  lengthens its newest event while the same window stays in front, and the
+  server cuts an event that crosses the start of a range to fit, keeping its
+  `id`. So an event in a later copy can be a shortened piece of one in an
+  earlier copy, or a longer version of it. Take events with one `id` in one
+  bucket as one event, running from the earliest start to the latest end seen.
+- **An `id` means something only within one `device_id`.** Bucket ids are the
+  same in every macOS account's ActivityWatch, so two copies belong together
+  only when their `info.json` files report the same `device_id`.
+- **A copy can hold time outside any work block.** Goodall copies everything
+  since the last copy; which events fall inside which work block is worked out
+  later, from the copies.
+
+Before anything is kept, goodall asks the server for `/api/0/info` and
+compares its `device_id` with `activitywatch_device_id` in local settings. If
+they differ, nothing is copied, `goodall stop` still succeeds, and a warning
+says what to do. The same goes for an ActivityWatch that is not running: the
+copy is taken by the next `goodall start`, `stop` or `status`, and holds the
+same events, because ActivityWatch keeps its own history.
+
+Checked only against a simulated server in goodall's tests, built to answer as
+the hand test of 2026-11-26 found the real one does. Not yet run against a
+real ActivityWatch: `curl --output` writing into a file goodall created first;
+a first copy of a bucket holding months of events (the limit is two minutes
+for each bucket); and whether a range's `end` cuts the newest event.
 
 ## What this was based on
 

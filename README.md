@@ -46,9 +46,11 @@ These commands exist but are not built yet: `onboard` (setup), `sync`, `logs`,
 run it, and `goodall onboard` says how to do its job by hand.
 The full by-hand steps are in [docs/setup-by-hand.md](docs/setup-by-hand.md).
 
-Goodall does not yet record what apps and windows were in use (ActivityWatch
-is planned), and the telemetry receiver is written but not yet started and
-stopped by a command. Copying agent sessions works for the Claude family:
+For an eval that includes ActivityWatch, goodall copies what apps and windows
+were in use into the log directory when a work block ends
+(`docs/activitywatch-rules.md`); nothing reads those copies yet. The
+telemetry receiver is written but not yet started and stopped by a command.
+Copying agent sessions works for the Claude family:
 the Claude desktop app's Code tab and Claude Code in a terminal
 (`docs/source-applications.md`).
 
@@ -122,7 +124,7 @@ eval account.
 | GitHub's `gh` | Required: `goodall doctor` fails without it | Administrator | Lets `goodall doctor` check your GitHub sign-in, so that goodall never holds a GitHub token itself. |
 | 1Password's `op` | Required only if the eval uses secrets. An eval with no secrets does not need it. | Administrator | Looks up secrets the eval needs, without goodall storing them. |
 | The export extra | Optional | Whoever installed goodall | Turns records into the form the Inspect analysis tools read. It brings in `inspect-ai` and `inspect-scout`, about 95 packages, so install it only if you export. **Placeholder:** the install command is not decided, and the export is not built. |
-| ActivityWatch | Required in every eval account when the eval config says `activitywatch = true`; otherwise not used | Administrator | Notes which app and window were in use, to back up what the human did. Goodall reads its settings but does not yet copy its data. It records window titles, which can contain private text. |
+| ActivityWatch | Required in every eval account when the eval config says `activitywatch = true`; otherwise not used | Administrator | Notes which app and window were in use, to back up what the human did. Goodall copies its data into the log directory when a work block ends. It records window titles and page addresses, which can contain private text. |
 
 Signing in is separate from installing, and always happens inside the eval
 account: Claude Code, `gh` and, when the eval uses secrets, 1Password.

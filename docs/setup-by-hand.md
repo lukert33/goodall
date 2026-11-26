@@ -143,9 +143,11 @@ Know what ActivityWatch records before you rely on it:
   is in front, the eval account's copy keeps lengthening its last window
   and does not record the person as away.
 
-Goodall-fs9.15 makes goodall copy ActivityWatch's data. **Until that is
-built, goodall reads these settings but does not record ActivityWatch's
-data.**
+When a work block ends, goodall copies ActivityWatch's data into the
+`activitywatch` folder of the log directory
+(`docs/activitywatch-rules.md`, "Copies in the log directory"). **Not yet
+confirmed against a real ActivityWatch:** Part 6 has a check to run after
+your first `goodall stop`.
 
 ## Part 4: The record repo, the log directory and local settings
 
@@ -241,6 +243,29 @@ sessions yet (issues goodall-fs9.24 and goodall-fs9.25).
       one new file.
 - [ ] Try `goodall journal` and `goodall intervene` once each inside a work
       block.
+- [ ] If the eval includes ActivityWatch, check its copy. `goodall stop`
+      should have shown a line `ActivityWatch  copied, 2 buckets` and no
+      warning about ActivityWatch. Then, with the log directory from Part 4
+      (these commands print counts and file names only, never a title or an
+      address; the file names hold the Mac's name):
+
+      ```
+      cd ~/evals/domain-test-logs.noindex
+      ls -l activitywatch/*/ activitywatch/*/events/
+      for f in activitywatch/*/events/*.json; do jq length "$f"; done
+      jq '.buckets[] | {start, end}' activitywatch-sync/copies/*.json
+      ```
+
+      Expect one folder named after the moment of the stop, holding
+      `info.json`, `buckets.json` and one events file for each bucket; every
+      file `-rw-------`; a count of events above zero for each; and `start`
+      and `end` both `null`, because a bucket's first copy holds everything.
+      After a second work block, a second folder appears, and its `start` is
+      ten minutes before the first copy's moment.
+- [ ] To see the warning, quit ActivityWatch from its menu-bar icon, run
+      `goodall start` and `goodall stop`: stop should still succeed, with a
+      warning that ActivityWatch's data was not copied. Start ActivityWatch
+      again and run `goodall status`: it should say it copied the data.
 
 ## What goodall records today, and what it does not
 
@@ -251,7 +276,7 @@ sessions yet (issues goodall-fs9.24 and goodall-fs9.25).
 | Claude desktop app, Cowork and chat | No. Their sessions are kept in your Claude account, not on the Mac (ADR 0019) |
 | Antigravity | Not yet (goodall-fs9.24) |
 | Codex | Not yet (goodall-fs9.25) |
-| ActivityWatch (apps, windows, page addresses) | Not yet (goodall-fs9.15) |
+| ActivityWatch (apps, windows, page addresses) | Yes, copied when a work block ends, if the eval config says `activitywatch = true`. Not yet confirmed on a real eval account, and nothing reads the copies yet |
 | Journal entries and interventions | Yes |
 
 There is no timeline to read at the end of a work block yet

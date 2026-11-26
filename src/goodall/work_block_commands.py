@@ -15,8 +15,10 @@ What each command does, in order:
   one and since when, and exits 0, so running it twice is harmless.
 - `goodall stop`: find the eval and settle, as above; then end the active
   work block cleanly, copy every agent session that has a record inside it
-  into the log directory (goodall.agent_session_copies), and write the
-  work block's record into the record repo. If the record cannot be
+  into the log directory (goodall.agent_session_copies), copy
+  ActivityWatch's data there too when the eval includes it
+  (goodall.activitywatch_copies), and write the work block's record into
+  the record repo. If the record cannot be
   written yet it waits in the log directory, a warning says so, and the
   exit is still 0. With none active it says so and exits 1.
 
@@ -28,7 +30,10 @@ work block's record still waiting in the log directory is written to the
 record repo; the agent sessions of every ended work block that are still
 to be copied are copied into the log directory, which covers a work block
 goodall has just closed itself and any copy that failed earlier, and is
-said in one sentence only when something was copied; and any problem a
+said in one sentence only when something was copied; ActivityWatch's data
+is copied, for an eval that includes it, when a work block has ended since
+its last copy (never otherwise, so nothing is asked of ActivityWatch while
+a work block simply runs); and any problem a
 hook noted (goodall.hook_problems), such as a prompt whose input goodall
 could not read, is reported once as a warning and filed away.
 
@@ -55,6 +60,7 @@ from pathlib import Path
 
 import goodall
 from goodall import (
+    activitywatch_copies,
     agent_session_copies,
     claude_family,
     exit_codes,
@@ -64,7 +70,12 @@ from goodall import (
     telemetry_receivers,
     work_blocks,
 )
-from goodall.eval_config import EvalForThisAccount, read_eval_for_this_account
+from goodall.eval_config import (
+    EvalForThisAccount,
+    activitywatch_settings_missing_failure,
+    missing_activitywatch_settings,
+    read_eval_for_this_account,
+)
 from goodall.folders import describe_folder_problem, log_directory_unreachable_failure, record_repo_missing_failure
 from goodall.local_settings import read_local_settings
 from goodall.record_repo import PushState, write_record
@@ -269,7 +280,14 @@ def run_stop(terminal: Terminal, runner: Runner, clock: Clock) -> int:
     status writes it); 1 only when there was no work block to stop. The rule
     is in "Command-line conventions" in AGENTS.md. The same holds for its
     agent sessions: one that could not be copied yet is a warning, because
-    its source application still holds it and goodall tries again.
+    its source application still holds it and goodall tries again. And for
+    ActivityWatch's data, which ActivityWatch itself keeps: a copy that
+    fails is a warning saying it is taken at the next goodall start, stop
+    or status.
+
+    Settling is told to leave ActivityWatch alone here, because stop takes
+    that copy itself once the work block has ended: one copy, holding the
+    whole work block, not one before its end and another after.
 
     `Claude sessions` counts those the work block's heartbeats named, which
     only Claude Code's hooks leave; `Agent sessions copied` counts those,
@@ -281,9 +299,13 @@ def run_stop(terminal: Terminal, runner: Runner, clock: Clock) -> int:
         return exit_codes.ERROR
     log_directory = eval_reading.local_settings.log_directory.path
     now = clock()
-    settling = settle(runner, eval_reading, now)
+    settling = settle(runner, eval_reading, now, copy_activitywatch_now=False)
     show_settling(terminal, settling)
     active = work_blocks.active_work_block(log_directory, now)
+    if active is None:
+        # Nothing for stop to end, but a work block that settling has just
+        # closed, or an earlier copy that failed, may still want its copy.
+        show_activitywatch_copy(terminal, copy_activitywatch(runner, eval_reading, now))
     if active is None and settling.closings:
         # The work block the person meant to stop had been forgotten, and
         # settling has just closed it at its last heartbeat and said so.
@@ -296,11 +318,16 @@ def run_stop(terminal: Terminal, runner: Runner, clock: Clock) -> int:
         return exit_codes.ERROR
 
     telemetry = telemetry_receivers.finish_telemetry(runner, log_directory, active.id, now)
-    ended_record = end_work_block(log_directory, active, now, "clean", telemetry)
+    ended_record = end_work_block(
+        log_directory, active, now, "clean", telemetry, eval_reading.eval_config.activitywatch
+    )
     copies = agent_session_copies.copy_work_block(log_directory, ended_record.id, now)
     copy_warnings = []
     if copies.problems:
         copy_warnings.append(agent_sessions_not_copied_failure(copies))
+    activitywatch = copy_activitywatch(runner, eval_reading, now)
+    if activitywatch.problem is not None:
+        copy_warnings.append(activitywatch_not_copied_failure(activitywatch.problem))
     waiting_file = work_blocks.WorkBlockFiles(log_directory).unrecorded_file(ended_record.id)
     write_of_this_block = write_one_unrecorded_record(runner, eval_reading, waiting_file)
     if not write_of_this_block.committed:
@@ -327,6 +354,8 @@ def run_stop(terminal: Terminal, runner: Runner, clock: Clock) -> int:
     telemetry_description = describe_telemetry(log_directory, ended_record)
     if telemetry_description is not None:
         facts.append(("Telemetry", telemetry_description))
+    if activitywatch.copied:
+        facts.append(("ActivityWatch", f"copied, {describe_buckets(activitywatch.bucket_count)}"))
     terminal.show_facts(facts)
     terminal.show_warnings(write_of_this_block.failures + copy_warnings)
     return exit_codes.SUCCESS
@@ -353,6 +382,7 @@ def end_work_block(
     ended_at: datetime,
     end_state: str,
     telemetry: str | None,
+    activitywatch_included: bool,
 ) -> records.WorkBlockRecord:
     """End a running work block: save its finished record in the log directory, then remove its marker.
 
@@ -360,8 +390,10 @@ def end_work_block(
     `telemetry`, which the caller works out once the work block's receiver
     has stopped (goodall.telemetry_receivers.finish_telemetry). The order
     matters: first the note that its agent sessions are still to be copied
-    (goodall.agent_session_copies), then the record, and the marker goes
-    last, so neither the copy nor the work block is ever lost in between.
+    (goodall.agent_session_copies) and, when the eval includes ActivityWatch
+    (`activitywatch_included`), the note that its data is to be copied
+    (goodall.activitywatch_copies), then the record, and the marker goes
+    last, so neither the copies nor the work block are ever lost in between.
     Returns the finished record.
     """
     ended_at = ended_at.astimezone(UTC).replace(microsecond=0)
@@ -376,6 +408,8 @@ def end_work_block(
         telemetry=telemetry,
     )
     agent_session_copies.note_work_block_to_copy(log_directory, ended_record.id, ended_record.started_at, ended_at)
+    if activitywatch_included:
+        activitywatch_copies.note_copy_wanted(log_directory, ended_at)
     work_blocks.save_unrecorded(log_directory, ended_record)
     work_blocks.remove_marker(log_directory, running.id)
     return ended_record
@@ -461,6 +495,8 @@ class Settling:
     itself (forgotten or damaged); `writes` are the waiting records it tried
     to write into the record repo; `copies` is what copying
     the agent sessions of ended work blocks into the log directory did;
+    `activitywatch` is what copying ActivityWatch's data did, which is
+    nothing unless a work block had ended since its last copy;
     `noted_hook_problems` is what hooks noted since a command last reported
     it, or None.
     """
@@ -468,6 +504,7 @@ class Settling:
     closings: list[str] = field(default_factory=list)
     writes: list[UnrecordedWrite] = field(default_factory=list)
     copies: agent_session_copies.CopyResult = field(default_factory=agent_session_copies.CopyResult)
+    activitywatch: activitywatch_copies.CopyResult = field(default_factory=activitywatch_copies.CopyResult)
     noted_hook_problems: hook_problems.HookProblems | None = None
 
     @property
@@ -483,6 +520,8 @@ class Settling:
                 warnings.append(record_waiting_failure(write.record, write.waiting_file, write.failures))
         if self.copies.problems:
             warnings.append(agent_sessions_not_copied_failure(self.copies))
+        if self.activitywatch.problem is not None:
+            warnings.append(activitywatch_not_copied_failure(self.activitywatch.problem))
         if self.noted_hook_problems is not None and self.noted_hook_problems.unreadable_inputs > 0:
             warnings.append(hook_input_unreadable_failure(self.noted_hook_problems))
         if self.noted_hook_problems is not None and self.noted_hook_problems.unknown_events > 0:
@@ -503,10 +542,14 @@ class Settling:
         copies_paragraph = describe_agent_session_copies(self.copies)
         if copies_paragraph is not None:
             paragraphs.append(copies_paragraph)
+        if self.activitywatch.copied:
+            paragraphs.append(describe_activitywatch_copy(self.activitywatch))
         return paragraphs
 
 
-def settle(runner: Runner, eval_reading: EvalForThisAccount, now: datetime) -> Settling:
+def settle(
+    runner: Runner, eval_reading: EvalForThisAccount, now: datetime, copy_activitywatch_now: bool = True
+) -> Settling:
     """Tidy up what earlier work blocks left behind, before start, stop or status does its own work.
 
     1. A work block that is overdue (no heartbeat for longer than
@@ -519,7 +562,13 @@ def settle(runner: Runner, eval_reading: EvalForThisAccount, now: datetime) -> S
        copied are copied into the log directory
        (goodall.agent_session_copies). That is a work block closed in
        step 1, which nobody stopped, and any whose copy failed earlier.
-    4. What hooks noted they could not do is taken, to be reported once.
+    4. For an eval that includes ActivityWatch, its data is copied into the
+       log directory when a work block has ended since its last copy
+       (goodall.activitywatch_copies): again one closed in step 1, or one
+       whose copy failed earlier. `goodall stop` passes
+       `copy_activitywatch_now=False`, because it takes that copy itself
+       after ending the work block.
+    5. What hooks noted they could not do is taken, to be reported once.
 
     The telemetry receiver of each work block closed in step 1 is stopped
     before its record is written, and any other receiver whose work block
@@ -534,7 +583,14 @@ def settle(runner: Runner, eval_reading: EvalForThisAccount, now: datetime) -> S
             closings.append(closing)
     if isinstance(marker, work_blocks.RunningWorkBlock) and marker.is_overdue(now):
         telemetry = telemetry_receivers.finish_telemetry(runner, log_directory, marker.id, now)
-        end_work_block(log_directory, marker, marker.last_heartbeat_at, "inferred", telemetry)
+        end_work_block(
+            log_directory,
+            marker,
+            marker.last_heartbeat_at,
+            "inferred",
+            telemetry,
+            eval_reading.eval_config.activitywatch,
+        )
         closings.append(
             f"Your work block on {marker.record.workstream}, started {describe_moment(marker.record.started_at)}, "
             f"was left running: nobody ran goodall stop, and nothing happened in it for more than "
@@ -546,10 +602,14 @@ def settle(runner: Runner, eval_reading: EvalForThisAccount, now: datetime) -> S
     if active is not None:
         active_work_block_id = active.id
     telemetry_receivers.stop_receivers_left_running(runner, log_directory, active_work_block_id, now)
+    activitywatch = activitywatch_copies.CopyResult()
+    if copy_activitywatch_now:
+        activitywatch = copy_activitywatch(runner, eval_reading, now)
     return Settling(
         closings=closings,
         writes=write_unrecorded_records(runner, eval_reading),
         copies=agent_session_copies.copy_ended_work_blocks(log_directory, now),
+        activitywatch=activitywatch,
         noted_hook_problems=hook_problems.take_hook_problems(log_directory, now),
     )
 
@@ -580,6 +640,8 @@ def close_damaged_work_block(
     recovered = dataclasses.replace(recovered, telemetry=telemetry)
     assert recovered.ended_at is not None
     agent_session_copies.note_work_block_to_copy(log_directory, recovered.id, recovered.started_at, recovered.ended_at)
+    if eval_reading.eval_config.activitywatch:
+        activitywatch_copies.note_copy_wanted(log_directory, recovered.ended_at)
     work_blocks.save_unrecorded(log_directory, recovered)
     if recovered.workstream == records.UNKNOWN_WORKSTREAM:
         return message + (
@@ -686,6 +748,53 @@ def describe_agent_session_copies(copies: agent_session_copies.CopyResult) -> st
     if not sentences:
         return None
     return " ".join(sentences)
+
+
+def copy_activitywatch(
+    runner: Runner, eval_reading: EvalForThisAccount, now: datetime
+) -> activitywatch_copies.CopyResult:
+    """Copy ActivityWatch's data into the log directory, if the eval includes it and a copy is wanted.
+
+    For an eval without ActivityWatch nothing is asked or written (ADR
+    0016). Local settings that lack its port or identifier are a problem
+    like any other: the copy stays wanted until they are recorded.
+    """
+    if not eval_reading.eval_config.activitywatch:
+        return activitywatch_copies.CopyResult()
+    local_settings = eval_reading.local_settings
+    log_directory = local_settings.log_directory.path
+    if not activitywatch_copies.copy_is_wanted(log_directory):
+        return activitywatch_copies.CopyResult()
+    port = local_settings.activitywatch_port
+    device_id = local_settings.activitywatch_device_id
+    if port is None or device_id is None:
+        missing_settings = missing_activitywatch_settings(local_settings, eval_reading.eval_config)
+        return activitywatch_copies.CopyResult(
+            problem=activitywatch_settings_missing_failure(local_settings, eval_reading.eval_config, missing_settings)
+        )
+    return activitywatch_copies.copy_if_wanted(
+        runner, log_directory, port, device_id, local_settings.settings_file, now
+    )
+
+
+def show_activitywatch_copy(terminal: Terminal, activitywatch: activitywatch_copies.CopyResult) -> None:
+    """Say that ActivityWatch's data was copied, or warn that it was not; say nothing when no copy was wanted."""
+    if activitywatch.copied:
+        terminal.show_paragraph(describe_activitywatch_copy(activitywatch))
+    if activitywatch.problem is not None:
+        terminal.show_warnings([activitywatch_not_copied_failure(activitywatch.problem)])
+
+
+def describe_activitywatch_copy(activitywatch: activitywatch_copies.CopyResult) -> str:
+    """What a person reads about a copy of ActivityWatch's data that was taken. Nothing from the data is said."""
+    return f"Copied ActivityWatch's data ({describe_buckets(activitywatch.bucket_count)}) into the log directory."
+
+
+def describe_buckets(count: int) -> str:
+    """`1 bucket`, `2 buckets`."""
+    if count == 1:
+        return "1 bucket"
+    return f"{count} buckets"
 
 
 def describe_times(count: int) -> str:
@@ -886,6 +995,27 @@ def agent_sessions_not_copied_failure(copies: agent_session_copies.CopyResult) -
             "Check that the log directory has free space and that this account can write to it, then run goodall "
             "status. If it keeps failing, tell the researcher who runs the eval."
         ),
+    )
+
+
+def activitywatch_not_copied_failure(problem: Failure) -> Failure:
+    """The warning for ActivityWatch's data that could not be copied into the log directory yet.
+
+    `problem` is why, in the words of whichever module found it; its next
+    step is kept, since it is what puts things right. A warning, never a
+    failure: the work block is ended and recorded, and ActivityWatch keeps
+    its own history, so the copy taken later holds the same events.
+    """
+    return Failure(
+        kind="activitywatch_not_copied",
+        what_happened=("Goodall did not copy ActivityWatch's data into the log directory. " + problem.what_happened),
+        why=(
+            "ActivityWatch is the record of what you did outside the agents. It keeps its own history, so nothing "
+            "is lost yet and your work block is not affected: goodall takes the copy the next time you run goodall "
+            "start, stop or status, from where the last copy ended."
+        ),
+        what_to_do_next=problem.what_to_do_next + " Then run goodall status, which takes the copy.",
+        commands_to_try=("goodall status",),
     )
 
 

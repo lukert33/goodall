@@ -13,6 +13,12 @@ What it promises, and why (ADR 0011):
   never a silent call to the real world.
 - A test scripts an answer for an exact list of arguments with `answer`,
   and gets back the same answer every time that command runs.
+- A test can instead script a whole program with a function
+  (`answer_with`), which is given each command for that program that has no
+  exact answer and returns what it "does". The function may write a file
+  the command names, as `curl --output FILE` does, so a test can stand in
+  for a local server that goodall asks through `curl`. A program with no
+  such function and no exact answer still fails the test.
 - Every command it is asked to run is kept in `calls`, in order.
 - The programs named in `real_programs` (git, by default) run for real,
   through the real runner, because git's actual behavior is what tests
@@ -219,6 +225,8 @@ class FakeRunner:
     - `real_programs` are the programs that run for real.
     - `calls` is every command it was asked to run, in order, real ones too,
       background programs included.
+    - `answers` holds the answer scripted for each exact list of arguments,
+      and `programs` the function scripted for each whole program.
     - `background` holds the simulated background programs; hand the same
       one to every runner in a test.
     """
@@ -227,6 +235,7 @@ class FakeRunner:
     real_programs: list[str] = field(default_factory=lambda: ["git"])
     calls: list[Command] = field(default_factory=list)
     answers: dict[tuple[str, ...], ScriptedAnswer] = field(default_factory=dict)
+    programs: dict[str, Callable[[Command], ScriptedAnswer]] = field(default_factory=dict)
     background: FakeBackgroundPrograms = field(default_factory=FakeBackgroundPrograms)
 
     def answer_background(self, arguments_start: list[str], make_program: Callable[[], SimulatedProgram]) -> None:
@@ -303,12 +312,22 @@ class FakeRunner:
         """Script `arguments` as a program that never finishes, so it times out."""
         self.answers[tuple(arguments)] = ScriptedAnswer(outcome=CommandOutcome.TIMED_OUT)
 
+    def answer_with(self, program_name: str, respond: Callable[[Command], ScriptedAnswer]) -> None:
+        """Script every command that runs `program_name` and has no exact answer: `respond` says what it "does".
+
+        `respond` is given the command and may write a file the command
+        names, as the real program would.
+        """
+        self.programs[program_name] = respond
+
     def run(self, command: Command) -> CommandResult:
         """Answer `command` as scripted, or fail the test when it was not scripted."""
         self.calls.append(command)
         if command.arguments[0] in self.real_programs:
             return RealRunner().run(command)
         scripted_answer = self.answers.get(tuple(command.arguments))
+        if scripted_answer is None and command.arguments[0] in self.programs:
+            scripted_answer = self.programs[command.arguments[0]](command)
         if scripted_answer is None:
             raise AssertionError(
                 f"The fake runner was asked to run `{command.as_typed}`, which the test did not script. "

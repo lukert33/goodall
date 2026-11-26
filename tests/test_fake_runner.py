@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from goodall.fake_runner import FakeBackgroundPrograms, FakeRunner, PretendProgram
+from goodall.fake_runner import FakeBackgroundPrograms, FakeRunner, PretendProgram, ScriptedAnswer
 from goodall.runner import BackgroundOutcome, BackgroundState, BackgroundStop, Command, CommandOutcome, OutputMode
 
 
@@ -137,3 +137,29 @@ def test_a_simulated_background_program_can_end_by_itself_or_never_come_up() -> 
     assert broken.outcome == BackgroundOutcome.EXITED
     assert broken.program is None
     assert broken.problem == "`broken` exited with code 1: port in use"
+
+
+def test_a_whole_program_can_be_scripted_with_a_function_that_may_write_the_file_the_command_names(
+    tmp_path: Path,
+) -> None:
+    output_file = tmp_path / "answer.json"
+
+    def pretend_curl(command: Command) -> ScriptedAnswer:
+        output_file.write_bytes(b"[]")
+        return ScriptedAnswer(CommandOutcome.COMPLETED, exit_code=0, standard_output="not kept\n")
+
+    runner = FakeRunner()
+    runner.answer_with("curl", pretend_curl)
+    # An answer scripted for the exact arguments still wins.
+    runner.answer(["curl", "--version"], standard_output="curl 8\n")
+
+    written = runner.run(Command(["curl", "--output", str(output_file), "http://127.0.0.1:1/"], OutputMode.DISCARD))
+    exact = runner.run(Command(["curl", "--version"]))
+
+    assert output_file.read_bytes() == b"[]"
+    # The fake keeps the real runner's promise: discarded output never comes back.
+    assert (written.succeeded, written.standard_output) == (True, "")
+    assert exact.standard_output == "curl 8\n"
+    assert len(runner.calls) == 2
+    with pytest.raises(AssertionError, match="did not script"):
+        runner.run(Command(["gh", "auth", "status"]))
