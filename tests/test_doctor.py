@@ -3171,7 +3171,7 @@ def activitywatch_runner(
     buckets: dict[str, object] = {}
     for bucket_type in bucket_types:
         buckets[bucket_ids[bucket_type]] = bucket_description(bucket_ids[bucket_type], bucket_type)
-    runner.answer(curl_command("/api/0/buckets"), standard_output=json.dumps(buckets))
+    runner.answer(curl_command("/api/0/buckets/"), standard_output=json.dumps(buckets))
     afk_events_path = f"/api/0/buckets/{AFK_BUCKET_ID}/events?limit=1"
     runner.answer(curl_command(afk_events_path), standard_output=json.dumps(afk_events))
     # A window event whose title and page address must never reach doctor.
@@ -3377,7 +3377,7 @@ def test_an_old_afk_bucket_listed_before_a_fresh_one_does_not_cause_a_stale_warn
         WINDOW_BUCKET_ID: bucket_description(WINDOW_BUCKET_ID, "currentwindow"),
         AFK_BUCKET_ID: bucket_description(AFK_BUCKET_ID, "afkstatus"),
     }
-    runner.answer(curl_command("/api/0/buckets"), standard_output=json.dumps(all_buckets))
+    runner.answer(curl_command("/api/0/buckets/"), standard_output=json.dumps(all_buckets))
     stale_events = [afk_event(timedelta(days=30))]
     runner.answer(
         curl_command(f"/api/0/buckets/{old_afk_bucket_id}/events?limit=1"), standard_output=json.dumps(stale_events)
@@ -3399,7 +3399,7 @@ def test_every_afk_bucket_stale_is_still_a_warning(healthy_account: EvalAccount)
         WINDOW_BUCKET_ID: bucket_description(WINDOW_BUCKET_ID, "currentwindow"),
         AFK_BUCKET_ID: bucket_description(AFK_BUCKET_ID, "afkstatus"),
     }
-    runner.answer(curl_command("/api/0/buckets"), standard_output=json.dumps(all_buckets))
+    runner.answer(curl_command("/api/0/buckets/"), standard_output=json.dumps(all_buckets))
     stale_events = [afk_event(timedelta(days=30))]
     runner.answer(
         curl_command(f"/api/0/buckets/{old_afk_bucket_id}/events?limit=1"), standard_output=json.dumps(stale_events)

@@ -6,7 +6,8 @@
 1. "ActivityWatch answers and is this eval account's copy": the server on
    the recorded port answers `/api/0/info`, and the `device_id` it reports
    is the one recorded in local settings.
-2. "ActivityWatch has a window bucket and an AFK bucket": `/api/0/buckets`
+2. "ActivityWatch has a window bucket and an AFK bucket": `/api/0/buckets/`
+   (the trailing slash is needed, or the server answers with a redirect)
    lists a bucket of type `currentwindow` and one of type `afkstatus`.
 3. "ActivityWatch's AFK bucket was updated in the last 10 minutes": the newest
    event of any AFK bucket (a renamed Mac has an old one too) is recent.
@@ -50,6 +51,7 @@ import json
 from datetime import UTC, datetime, timedelta
 
 from goodall.activitywatch_server import (
+    BUCKETS_PATH,
     INFO_PATH,
     answer_unfamiliar_failure,
     curl_unavailable_failure,
@@ -132,7 +134,7 @@ def check_window_and_afk_buckets_exist(context: CheckContext) -> CheckOutcome:
         return passed()
     port = recorded_port(context)
 
-    answer = ask_activitywatch(context, port, "/api/0/buckets")
+    answer = ask_activitywatch(context, port, BUCKETS_PATH)
     if isinstance(answer, Failure):
         return failed([answer])
     bucket_types = read_bucket_types(answer)
