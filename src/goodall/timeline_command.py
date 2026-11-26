@@ -1,7 +1,7 @@
 """`goodall timeline`: read one work block from the timeline, in time order.
 
 Called by `cli.main`. It shows what happened in one ended work block, the
-last one unless `--work-block` names another: what the person did in each
+last one unless a work block's id is given: what the person did in each
 application, what they asked the agent, which tools the agent used and how
 they ended, and the journal entries and interventions written, each on one
 line at its time of day.
@@ -27,16 +27,23 @@ In order:
 Bookkeeping lines of a transcript (kind `entry`) are left out unless
 `--all` is given: there are many, and they say little about the work.
 
-Exit codes: 0 when a work block was shown, 1 when there is nothing to show
-or the timeline could not be read, 2 when `--work-block` names one that is
-not in the timeline.
+Exit codes, as `goodall fixblock` uses them: 0 when a work block was shown;
+1 when there is nothing to show, the timeline could not be read, or the id
+given is not an ended work block in it; 2 when what was given is not
+shaped like a work block id at all.
+
+How this sits beside the planned `logs` command (Beads issue goodall-acp.5,
+still a stub here): that command is to say what was recorded and whether
+it is intact, reading only. This one says what happened, in order, and may
+write the derived timeline file to do so. A work block is named the same
+way in both, by its id.
 """
 
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
-from goodall import exit_codes, timeline
+from goodall import exit_codes, records, timeline
 from goodall.terminal import Failure, Terminal
 from goodall.timeline_entries import KIND_ENTRY, KIND_UNFAMILIAR_ENTRY, TimelineEntry, TimelineWorkBlock
 from goodall.work_block_commands import (
@@ -70,6 +77,8 @@ class TimelineRequest:
 
 def run_timeline(terminal: Terminal, clock: Clock, request: TimelineRequest) -> int:
     """Show one work block's entries in time order, and return the exit code."""
+    if request.work_block_id is not None and not records.RECORD_ID_PATTERN.fullmatch(request.work_block_id):
+        return show_failures(terminal, request, [work_block_id_invalid_failure()], exit_codes.USAGE_ERROR)
     eval_reading = find_eval_for_work_blocks()
     if isinstance(eval_reading, list):
         return show_failures(terminal, request, eval_reading, exit_codes.ERROR)
@@ -89,9 +98,7 @@ def run_timeline(terminal: Terminal, clock: Clock, request: TimelineRequest) -> 
         if request.work_block_id is not None:
             chosen = find_work_block(work_blocks, request.work_block_id)
             if chosen is None:
-                return show_failures(
-                    terminal, request, [work_block_unknown_failure(work_blocks)], exit_codes.USAGE_ERROR
-                )
+                return show_failures(terminal, request, [work_block_unknown_failure(work_blocks)], exit_codes.ERROR)
             work_block = chosen
         entries = timeline.read_entries_overlapping(timeline_file, work_block.started_at, work_block.ended_at)
         information = timeline.read_information(timeline_file)
@@ -302,22 +309,39 @@ def no_work_block_failure() -> Failure:
 
 
 def work_block_unknown_failure(work_blocks: list[TimelineWorkBlock]) -> Failure:
-    """The failure for a --work-block that is not in the timeline. The id given is not repeated back."""
+    """The failure for an id that is not an ended work block in the timeline. The id given is not repeated back."""
     latest_ids = []
     for work_block in work_blocks[-LISTED_WORK_BLOCKS_LIMIT:]:
         latest_ids.append(work_block_id_of(work_block))
     return Failure(
         kind="work_block_not_in_timeline",
-        what_happened="The --work-block given is not the id of an ended work block in the timeline.",
+        what_happened="The id given is not the id of an ended work block in the timeline.",
         why=(
             "A work block's id is shown by goodall stop, and is the name of its file in the record repo's "
             "work-blocks folder."
         ),
         what_to_do_next=(
-            f"Use one of the latest: {', '.join(latest_ids)}; or leave --work-block out to see the last one. If the "
+            f"Use one of the latest: {', '.join(latest_ids)}; or leave the id out to see the last one. If the "
             "work block ended a moment ago, run goodall timeline --rebuild first."
         ),
-        commands_to_try=(f"goodall timeline --work-block {latest_ids[-1]}",),
+        commands_to_try=(f"goodall timeline {latest_ids[-1]}",),
+    )
+
+
+def work_block_id_invalid_failure() -> Failure:
+    """The failure for something given as a work block id that is not shaped like one. It is not repeated back."""
+    return Failure(
+        kind="timeline_work_block_invalid",
+        what_happened="The id given is not a work block id, so nothing was shown.",
+        why=(
+            f"A work block id looks like {records.EXAMPLE_RECORD_ID}: the UTC time it started, the contributor id "
+            "and eight random characters. It is the name of the work block's record file, without .json."
+        ),
+        what_to_do_next=(
+            "Copy the id from what goodall stop showed, or leave it out: goodall timeline then shows the last "
+            "work block that ended."
+        ),
+        commands_to_try=("goodall timeline",),
     )
 
 

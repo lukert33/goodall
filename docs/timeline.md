@@ -43,7 +43,7 @@ at its time of day, with who did it, what it was and where it came from.
 
 | Option | What it does |
 |---|---|
-| `--work-block ID` | Shows that work block instead of the last. The id is the one `goodall stop` shows. |
+| `<work block id>` | Given first, by itself, as for `goodall fixblock`: shows that work block instead of the last. The id is the one `goodall stop` shows. |
 | `--pointers` | Adds where each entry is in a raw record: the folder, the path inside it, and the line or the event. |
 | `--all` | Shows the bookkeeping lines of a transcript too (kind `entry`). |
 | `--rebuild` | Builds the timeline again from the raw records first. |
@@ -195,7 +195,9 @@ Read from `activitywatch/` in the log directory (`docs/activitywatch-rules.md`,
 ## Not in this version
 
 - Reading an entry's text through `goodall timeline`. The pointer says where
-  it is; a viewer is Beads issue `goodall-acp.5`.
+  it is. `goodall logs` (Beads issue `goodall-acp.5`, not built yet) is the
+  command for what was recorded and whether it is intact, and for printing
+  a raw record; `goodall timeline` is for what happened, in order.
 - Telemetry. It is copied, and is in no entry.
 - Any source application but the Claude family (`docs/source-applications.md`).
 - Searching text, redaction, a release, and `goodall export scout` built from

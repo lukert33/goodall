@@ -227,10 +227,11 @@ def build_parser() -> argparse.ArgumentParser:
     timeline = commands.add_parser(
         "timeline", help="Show one ended work block in time order: who did what, when, with no private text."
     )
+    # Named as goodall fixblock names one: the id by itself, first.
     timeline.add_argument(
-        "--work-block",
-        dest="work_block_id",
-        metavar="ID",
+        "work_block_id",
+        nargs="?",
+        metavar="<work block id>",
         help="The id of the work block to show, as goodall stop shows it. Leave it out for the last one.",
     )
     timeline.add_argument(

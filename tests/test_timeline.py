@@ -669,7 +669,7 @@ def test_rebuild_takes_in_what_was_written_after_the_work_block_ended(eval_accou
     assert len(rows_shown(rebuilt)) == 14
 
 
-def test_work_block_picks_an_earlier_work_block_and_an_unknown_id_is_a_usage_error_listing_the_latest(
+def test_an_id_picks_an_earlier_work_block_an_unknown_one_lists_the_latest_and_a_malformed_one_is_a_usage_error(
     eval_account: EvalAccount,
 ) -> None:
     run_a_work_block(eval_account)
@@ -680,16 +680,21 @@ def test_work_block_picks_an_earlier_work_block_and_an_unknown_id_is_a_usage_err
     assert len(work_block_ids) == 2
 
     latest = run_goodall(["timeline"], afternoon + timedelta(hours=2))
-    morning = run_goodall(["timeline", "--work-block", work_block_ids[0]], afternoon + timedelta(hours=2))
-    unknown = run_goodall(["timeline", "--work-block", "SYNTHETIC-not-an-id"], afternoon + timedelta(hours=2))
+    morning = run_goodall(["timeline", work_block_ids[0]], afternoon + timedelta(hours=2))
+    # Shaped like an id, as goodall fixblock checks it, but no work block has it.
+    unknown = run_goodall(["timeline", "20261116T093000Z-ada-lovelace-00000000"], afternoon + timedelta(hours=2))
+    not_an_id = run_goodall(["timeline", "SYNTHETIC-not-an-id"], afternoon + timedelta(hours=2))
 
     assert work_block_ids[1] in latest.standard_output
     assert rows_shown(latest) == []
     assert work_block_ids[0] in morning.standard_output
     assert len(rows_shown(morning)) == 13
-    assert unknown.exit_code == 2
-    assert f"goodall timeline --work-block {work_block_ids[1]}" in " ".join(unknown.standard_error.split())
-    assert "SYNTHETIC" not in unknown.everything_printed
+    assert unknown.exit_code == 1
+    assert f"goodall timeline {work_block_ids[1]}" in " ".join(unknown.standard_error.split())
+    assert "00000000" not in unknown.everything_printed
+    assert not_an_id.exit_code == 2
+    assert "is not a work block id" in " ".join(not_an_id.standard_error.split())
+    assert "SYNTHETIC" not in not_an_id.everything_printed
 
 
 def test_with_no_ended_work_block_goodall_timeline_says_so_and_exits_1(eval_account: EvalAccount) -> None:
