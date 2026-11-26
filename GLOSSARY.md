@@ -47,6 +47,10 @@ _Avoid_: Session (when a work block is meant), shift, timebox
 An application in which a contributor works with an agent, and whose own records of that work goodall copies: the Claude desktop app, for example.
 _Avoid_: Source (unqualified), provider, vendor, tool
 
+**App family**:
+The source applications from one maker that keep their records of agent sessions in the same place and form. Named for the product and written "the Claude family", "the Antigravity family".
+_Avoid_: Provider, vendor, platform, ecosystem
+
 **Agent session**:
 One conversation with an agent in one source application, identified by that application's own id for it.
 _Avoid_: Session (unqualified), run, chat, thread
