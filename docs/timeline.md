@@ -74,7 +74,11 @@ sqlite3 timeline/timeline.sqlite3 "SELECT actor, kind, count(*) FROM entries GRO
 A build writes a new file and then puts it in place of the old one, so a
 build that fails or is interrupted leaves the last good timeline. A problem
 while building is a warning: the raw records are untouched, and `goodall
-timeline --rebuild` builds it again.
+timeline --rebuild` builds it again. That holds for an error nobody
+expected too, such as a raw record in a shape no rule has met: `goodall
+stop` still succeeds, and the warning names the kind of error and never its
+message, which could quote the record. `goodall timeline` reports the same
+as a failure and exits 1.
 
 Building reads every copied transcript. On a synthetic eval of 300 Claude
 sessions and 420 MB of transcripts it took about 10 seconds and gave a 100 MB
@@ -181,7 +185,9 @@ Read from `activitywatch/` in the log directory (`docs/activitywatch-rules.md`,
    `device_id`) are one entry, from the earliest start seen to the latest end
    seen, because copies overlap. Its pointer leads to the longest of them.
 3. An event without an `id` is an entry of its own.
-4. An event no rule can read is in no entry and is counted.
+4. An event no rule can read is in no entry and is counted: one in a bucket
+   of an unknown type, one with no time, and one whose duration cannot be
+   added to its start (not a number, or thousands of years long).
 
 ### The record repo (`src/goodall/timeline_records.py`)
 

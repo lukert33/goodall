@@ -148,3 +148,24 @@ def test_entries_at_one_moment_come_out_in_the_same_order_on_every_build(log_dir
     in_time_order = sorted(unsorted, key=timeline.time_order)
 
     assert in_time_order == [unsorted[3], unsorted[2], unsorted[0], unsorted[1]]
+
+
+def test_an_error_nobody_expected_while_building_names_its_kind_never_its_message_and_keeps_the_last_good_file(
+    log_directory: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    record_repo = tmp_path / "records"
+    record_repo.mkdir()
+    timeline_file = write(log_directory, [prompt(NINE, 1)])
+    good_bytes = timeline_file.read_bytes()
+
+    def raise_unexpected(log_directory: Path) -> SourceEntries:
+        raise KeyError("SYNTHETIC text quoted from a raw record")
+
+    monkeypatch.setattr(timeline_claude, "entries_from_transcripts", raise_unexpected)
+
+    build = timeline.build_timeline(log_directory, record_repo, (), NINE)
+
+    assert not build.built
+    assert build.problems == ["Goodall met an error it did not expect while building it (KeyError)."]
+    assert timeline_file.read_bytes() == good_bytes
+    assert [path.name for path in timeline_file.parent.iterdir()] == ["timeline.sqlite3"]

@@ -22,8 +22,10 @@ How events become entries:
    the earliest start seen to the latest end seen. Its pointer leads to
    the longest of them, the later copy's when two are as long.
 3. An event without an `id` is an entry of its own.
-4. An event no rule can read (an unknown bucket type, no time) is in no
-   entry and is counted.
+4. An event no rule can read is in no entry and is counted: one in a
+   bucket of an unknown type, one with no time, and one whose duration
+   cannot be added to its start (not a number, or so long that the end
+   would be past the last date there is).
 
 What is kept: the time, the duration, the kind, and the name of the
 application in front when goodall lists it. A window's title, a page's
@@ -33,8 +35,9 @@ holds the Mac's hostname.
 """
 
 import json
+import math
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path, PurePosixPath
 from typing import Any
 from urllib.parse import quote
@@ -143,6 +146,9 @@ def read_copy(
         raw_record = RawRecordPointer(IN_LOG_DIRECTORY, events_path)
         for started_at, action in actions:
             sighting = sighting_of(started_at, action, raw_record)
+            if sighting is None:
+                gathered.without_a_time += 1
+                continue
             if action.event_id is None:
                 seen_without_id.append(sighting)
                 continue
@@ -160,14 +166,29 @@ def read_json(path: Path) -> Any:
         return json.load(json_file)
 
 
-def sighting_of(started_at: datetime, action: ActivityWatchAction, raw_record: RawRecordPointer) -> SeenEvent:
-    """One event as one copy holds it."""
+def sighting_of(started_at: datetime, action: ActivityWatchAction, raw_record: RawRecordPointer) -> SeenEvent | None:
+    """One event as one copy holds it; None when its duration cannot be added to its start (rule 4).
+
+    JSON can hold `Infinity`, `NaN` and numbers of any size, and Python
+    raises rather than add such a duration to a time. An event like that
+    is one no rule can read, not a reason to stop.
+    """
     seconds = 0.0
-    if action.duration_seconds is not None and action.duration_seconds > 0:
-        seconds = action.duration_seconds
+    if action.duration_seconds is not None:
+        if not math.isfinite(action.duration_seconds):
+            return None
+        if action.duration_seconds > 0:
+            seconds = action.duration_seconds
+    try:
+        ended_at = started_at + timedelta(seconds=seconds)
+        # The timeline writes times in UTC, which the edge of the calendar can also refuse.
+        started_at.astimezone(UTC)
+        ended_at.astimezone(UTC)
+    except OverflowError:
+        return None
     return SeenEvent(
         started_at=started_at,
-        ended_at=started_at + timedelta(seconds=seconds),
+        ended_at=ended_at,
         has_duration=action.duration_seconds is not None,
         longest_seconds=seconds,
         action=action,

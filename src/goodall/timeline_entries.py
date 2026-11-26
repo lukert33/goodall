@@ -39,7 +39,7 @@ Decisions a reader would otherwise reverse-engineer:
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import PurePosixPath
 
 from goodall import records
@@ -314,8 +314,21 @@ def entry_problems(entry: TimelineEntry, intervention_categories: tuple[str, ...
     problems = []
     if entry.started_at.tzinfo is None:
         problems.append("started_at has no time zone")
+    # The timeline writes every time in UTC and keeps when an entry ended.
+    # A time at the very edge of the calendar, or a duration of thousands of
+    # years, cannot be written that way, and Python raises rather than
+    # answer. A raw record can hold either, so each is a problem here.
+    try:
+        entry.started_at.astimezone(UTC)
+    except (OverflowError, ValueError):
+        problems.append("started_at cannot be written as a time in UTC")
     if entry.duration_seconds is not None and entry.duration_seconds < 0:
         problems.append("duration_seconds is negative")
+    elif entry.duration_seconds is not None:
+        try:
+            (entry.started_at + timedelta(seconds=entry.duration_seconds)).astimezone(UTC)
+        except (OverflowError, ValueError):
+            problems.append("duration_seconds cannot be added to started_at")
     if entry.position is not None and entry.position < 0:
         problems.append("position is negative")
     if entry.raw_record.kept_in not in KEPT_IN:

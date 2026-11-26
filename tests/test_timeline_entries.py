@@ -1,7 +1,7 @@
 """Unit tests for goodall.timeline_entries: the column rule, and the words that stand for names off the lists."""
 
 import dataclasses
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import PurePosixPath
 
 import pytest
@@ -80,6 +80,21 @@ def test_a_time_without_a_zone_a_missing_kind_and_a_pointer_that_leaves_its_fold
     assert entry_problems(dataclasses.replace(A_GOOD_ENTRY, duration_seconds=-1.0), INTERVENTION_CATEGORIES) == [
         "duration_seconds is negative"
     ]
+
+
+@pytest.mark.parametrize("duration_seconds", [1e12, float("inf"), float("nan")])
+def test_a_duration_that_cannot_be_added_to_the_start_is_a_problem_not_an_error(duration_seconds: float) -> None:
+    entry = dataclasses.replace(A_GOOD_ENTRY, duration_seconds=duration_seconds)
+
+    assert entry_problems(entry, INTERVENTION_CATEGORIES) == ["duration_seconds cannot be added to started_at"]
+
+
+def test_a_time_that_cannot_be_written_in_utc_is_a_problem_not_an_error() -> None:
+    # The first moment there is, in a zone ahead of UTC: in UTC it would be before the first date.
+    ahead_of_utc = timezone(timedelta(hours=14))
+    entry = dataclasses.replace(A_GOOD_ENTRY, started_at=datetime(1, 1, 1, tzinfo=ahead_of_utc))
+
+    assert entry_problems(entry, INTERVENTION_CATEGORIES) == ["started_at cannot be written as a time in UTC"]
 
 
 def test_a_tool_goodall_lists_keeps_its_name_an_mcp_tool_and_any_other_do_not() -> None:

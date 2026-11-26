@@ -209,3 +209,30 @@ def test_with_no_copies_there_are_no_entries_and_no_problems(log_directory: Path
     gathered = timeline_activitywatch.entries_from_activitywatch_copies(log_directory)
 
     assert (gathered.entries, gathered.problems, gathered.without_a_time) == ([], [], 0)
+
+
+@pytest.mark.parametrize("duration", [1e12, float("inf"), float("nan"), 1e308])
+def test_an_event_whose_duration_cannot_be_added_to_its_start_is_counted_like_any_event_no_rule_can_read(
+    log_directory: Path, duration: float
+) -> None:
+    # json.dumps writes inf and nan as Infinity and NaN, which Python's json reads back, as a server might send.
+    write_copy(
+        log_directory,
+        FIRST_COPY,
+        {WINDOW_BUCKET_ID: [window(2, NINE + timedelta(minutes=5), duration), window(1, NINE, 60.0)]},
+    )
+
+    gathered = timeline_activitywatch.entries_from_activitywatch_copies(log_directory)
+
+    assert in_brief(gathered.entries) == [(NINE, 60.0, "application_focus", "Safari")]
+    assert gathered.without_a_time == 1
+    assert gathered.problems == []
+
+
+def test_an_event_so_late_that_its_end_is_past_the_last_date_there_is_is_counted_too(log_directory: Path) -> None:
+    last_day = datetime(9999, 12, 31, 23, 59, tzinfo=UTC)
+    write_copy(log_directory, FIRST_COPY, {WINDOW_BUCKET_ID: [window(1, last_day, 3600.0)]})
+
+    gathered = timeline_activitywatch.entries_from_activitywatch_copies(log_directory)
+
+    assert (gathered.entries, gathered.without_a_time, gathered.problems) == ([], 1, [])

@@ -28,7 +28,7 @@ from urllib.parse import quote
 
 import pytest
 
-from goodall import cli, records, timeline, timeline_entries
+from goodall import cli, records, timeline, timeline_activitywatch, timeline_entries
 from goodall.fake_runner import FakeRunner, PretendProgram
 from goodall.terminal import Terminal
 
@@ -750,3 +750,77 @@ def test_a_transcript_goodall_cannot_read_is_a_warning_at_stop_and_the_rest_is_s
     assert "5b8e2a71-9c04-4d3f-b6a2-17e0c9d4f8a3.jsonl: Permission denied." in everything
     assert "goodall timeline --rebuild" in everything
     assert len(rows_shown(run_goodall(["timeline"], BLOCK_END + timedelta(minutes=1)))) == 8
+
+
+def make_the_build_meet_an_error_nobody_expected(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make reading ActivityWatch's copies raise an error no rule handles, whose message holds private text.
+
+    A raw record in a shape nobody foresaw is how this would happen for
+    real, and the message of such an error can quote the record.
+    """
+
+    def raise_unexpected(log_directory: Path) -> None:
+        raise RuntimeError(f"could not make sense of {PROMPT_TEXT}")
+
+    monkeypatch.setattr(timeline_activitywatch, "entries_from_activitywatch_copies", raise_unexpected)
+
+
+def test_an_unexpected_error_while_building_the_timeline_is_a_warning_at_stop_never_a_traceback(
+    eval_account: EvalAccount, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert run_goodall(["start"], BLOCK_START).exit_code == 0
+    write_claude_session(eval_account, BLOCK_START + timedelta(minutes=5))
+    make_the_build_meet_an_error_nobody_expected(monkeypatch)
+
+    stop = run_goodall(["stop"], BLOCK_END)
+
+    # The work block is stopped and its record written, so stop succeeded (AGENTS.md, "Command-line conventions").
+    assert stop.exit_code == 0
+    assert "Stopped your work block" in stop.standard_output
+    assert len(list((eval_account.record_repo / "work-blocks").glob("*.json"))) == 1
+    everything = " ".join(stop.everything_printed.split())
+    assert "WARN" in stop.standard_error
+    assert "The timeline could not be built." in everything
+    # The kind of error is named, never its message, which could quote a raw record.
+    assert "RuntimeError" in everything
+    assert "goodall timeline --rebuild" in everything
+    assert "Traceback" not in everything
+    assert_nothing_private_in(stop.standard_error)
+    assert not eval_account.timeline_file.exists()
+
+
+def test_an_unexpected_error_while_building_does_not_stop_the_next_goodall_start_from_starting(
+    eval_account: EvalAccount, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert run_goodall(["start"], BLOCK_START).exit_code == 0
+    make_the_build_meet_an_error_nobody_expected(monkeypatch)
+
+    # Nobody stopped the work block; the next start closes it, which builds the timeline.
+    next_morning = run_goodall(["start"], BLOCK_START + timedelta(hours=24))
+
+    assert next_morning.exit_code == 0
+    everything = " ".join(next_morning.everything_printed.split())
+    assert "was left running" in everything
+    assert "Started a work block" in everything
+    assert "The timeline could not be built." in everything and "RuntimeError" in everything
+    assert "Traceback" not in everything
+    assert_nothing_private_in(next_morning.standard_error)
+
+
+def test_goodall_timeline_reports_an_unexpected_error_while_building_as_a_failure_and_exits_1(
+    eval_account: EvalAccount, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_a_work_block(eval_account)
+    make_the_build_meet_an_error_nobody_expected(monkeypatch)
+
+    as_text = run_goodall(["timeline", "--rebuild"], BLOCK_END + timedelta(minutes=1))
+    as_json = run_goodall(["timeline", "--rebuild", "--json"], BLOCK_END + timedelta(minutes=1))
+
+    assert (as_text.exit_code, as_json.exit_code) == (1, 1)
+    assert "FAIL" in as_text.standard_error and "RuntimeError" in as_text.standard_error
+    assert [failure["kind"] for failure in json.loads(as_json.standard_output)["failures"]] == ["timeline_not_built"]
+    for run in [as_text, as_json]:
+        assert "Traceback" not in run.everything_printed
+        assert_nothing_private_in(run.everything_printed)
+    # The timeline goodall stop built is still there, untouched.
+    assert len(everything_in(eval_account.timeline_file)["entries"]) == 14

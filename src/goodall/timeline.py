@@ -40,6 +40,9 @@ Times are text in UTC, always written the same way
 
 Decisions a reader would otherwise reverse-engineer:
 
+- Building never raises (build_timeline). It runs when a work block has
+  just ended, and nothing that goes wrong with a derived file may make
+  `goodall stop` fail.
 - An entry that breaks the column rule is left out and counted, and the
   build says so. It is never written with the value blanked: a rule that
   produced a value off its list is a rule to fix.
@@ -193,10 +196,41 @@ def build_timeline(
 ) -> BuildResult:
     """Build the eval's timeline again from its raw records, and replace the file with the new one.
 
-    Never raises for anything on the disk or in the database: what goes
-    wrong becomes one of the result's problems.
+    Never raises, whatever goes wrong: it becomes one of the result's
+    problems, and the last good file stays in place.
     """
     result = BuildResult(timeline_file_in(log_directory))
+    try:
+        gather_and_write(result, log_directory, record_repo, intervention_categories, now)
+    except Exception as error:
+        # Catching every error is deliberate, and this is the one place the
+        # timeline does it. The timeline is built once a work block has
+        # ended and its record is written, so a build that raised would
+        # make `goodall stop` fail after it had done what was asked, which
+        # AGENTS.md's exit code rule forbids. And the build reads raw
+        # records in shapes nobody has seen yet: the rules below turn the
+        # shapes they know of into problems, and this turns the rest into
+        # one. Only the kind of error is said, never its message, because a
+        # message can quote the raw record that caused it.
+        result.built = False
+        result.entry_count = 0
+        result.problems.append(f"Goodall met an error it did not expect while building it ({type(error).__name__}).")
+    return result
+
+
+def gather_and_write(
+    result: BuildResult,
+    log_directory: Path,
+    record_repo: Path,
+    intervention_categories: tuple[str, ...],
+    now: datetime,
+) -> None:
+    """Read every raw record, check every entry against the column rule, and write the new file; fill in `result`.
+
+    What it expects to go wrong (a file that cannot be read, an entry off
+    its lists, a disk that is full) becomes one of the result's problems
+    here. Anything else is raised, for build_timeline to turn into one.
+    """
     gathered = SourceEntries()
     gathered.add(timeline_claude.entries_from_transcripts(log_directory))
     gathered.add(timeline_activitywatch.entries_from_activitywatch_copies(log_directory))
@@ -217,7 +251,8 @@ def build_timeline(
     if refused_count > 0:
         result.problems.append(
             f"{refused_count} entries were left out of the timeline because they broke its rule about what an entry "
-            f"may hold ({'; '.join(sorted(columns_off_their_lists))}). This is a fault in goodall's rules."
+            f"may hold ({'; '.join(sorted(columns_off_their_lists))}). Either one of goodall's rules is at fault "
+            "or a raw record holds something no rule expected."
         )
 
     information = dict(VERSIONS)
@@ -228,10 +263,9 @@ def build_timeline(
         write_timeline(log_directory, information, work_blocks, entries)
     except (OSError, sqlite3.Error) as error:
         result.problems.append(f"The timeline could not be written: {describe_database_error(error)}.")
-        return result
+        return
     result.built = True
     result.entry_count = len(entries)
-    return result
 
 
 def time_order(entry: TimelineEntry) -> tuple[datetime, int, str, int]:
