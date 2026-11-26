@@ -316,7 +316,10 @@ def git(working_directory: Path, *arguments: str) -> str:
 
 
 def make_eval_account(
-    tmp_path: Path, includes_activitywatch: bool = True, device_id: str | None = DEVICE_ID
+    tmp_path: Path,
+    includes_activitywatch: bool = True,
+    device_id: str | None = DEVICE_ID,
+    account_mode: str | None = None,
 ) -> EvalAccount:
     """Local settings, a record repo holding the eval config, and a log directory."""
     config_directory = tmp_path / "goodall-config"
@@ -344,6 +347,8 @@ def make_eval_account(
     )
     if device_id is not None:
         settings_text += f'activitywatch_port = {PORT}\nactivitywatch_device_id = "{device_id}"\n'
+    if account_mode is not None:
+        settings_text += f'account_mode = "{account_mode}"\n'
     (config_directory / "local-settings.toml").write_text(settings_text)
     return EvalAccount(config_directory, record_repo, log_directory)
 
@@ -634,6 +639,24 @@ def test_local_settings_without_the_port_and_identifier_are_a_warning_that_names
     assert stop.exit_code == 0
     assert "activitywatch_port" in stop.everything_printed
     assert "activitywatch_device_id" in stop.everything_printed
+
+
+def test_in_mixed_account_mode_activitywatch_is_never_asked_and_nothing_of_it_is_copied(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # ADR 0021: ActivityWatch records the whole account all the time, so it
+    # is left out where the account is also used for other things, even
+    # when the eval config includes it and local settings hold its port.
+    eval_account = make_eval_account(tmp_path, account_mode="mixed")
+
+    # With no server, any curl at all fails the test.
+    run_goodall(eval_account, monkeypatch, ["start"], BLOCK_START, None)
+    stop = run_goodall(eval_account, monkeypatch, ["stop"], BLOCK_END, None)
+    status = run_goodall(eval_account, monkeypatch, ["status"], BLOCK_END + timedelta(minutes=5), None)
+
+    assert stop.exit_code == 0, stop.standard_error
+    assert "ActivityWatch" not in stop.everything_printed + status.everything_printed
+    assert not eval_account.copies_folder.exists()
 
 
 # ---------------------------------------------------------------------------

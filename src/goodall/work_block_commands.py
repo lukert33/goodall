@@ -72,6 +72,7 @@ from goodall import (
 )
 from goodall.eval_config import (
     EvalForThisAccount,
+    activitywatch_is_used,
     activitywatch_settings_missing_failure,
     missing_activitywatch_settings,
     read_eval_for_this_account,
@@ -319,7 +320,7 @@ def run_stop(terminal: Terminal, runner: Runner, clock: Clock) -> int:
 
     telemetry = telemetry_receivers.finish_telemetry(runner, log_directory, active.id, now)
     ended_record = end_work_block(
-        log_directory, active, now, "clean", telemetry, eval_reading.eval_config.activitywatch
+        log_directory, active, now, "clean", telemetry, activitywatch_is_used_by(eval_reading)
     )
     copies = agent_session_copies.copy_work_block(log_directory, ended_record.id, now)
     copy_warnings = []
@@ -391,7 +392,7 @@ def end_work_block(
     has stopped (goodall.telemetry_receivers.finish_telemetry). The order
     matters: first the note that its agent sessions are still to be copied
     (goodall.agent_session_copies) and, when the eval includes ActivityWatch
-    (`activitywatch_included`), the note that its data is to be copied
+    and the account mode uses it (`activitywatch_included`), the note that its data is to be copied
     (goodall.activitywatch_copies), then the record, and the marker goes
     last, so neither the copies nor the work block are ever lost in between.
     Returns the finished record.
@@ -587,7 +588,7 @@ def settle(
             marker.last_heartbeat_at,
             "inferred",
             telemetry,
-            eval_reading.eval_config.activitywatch,
+            activitywatch_is_used_by(eval_reading),
         )
         closings.append(
             f"Your work block on {marker.record.workstream}, started {describe_moment(marker.record.started_at)}, "
@@ -638,7 +639,7 @@ def close_damaged_work_block(
     recovered = dataclasses.replace(recovered, telemetry=telemetry)
     assert recovered.ended_at is not None
     agent_session_copies.note_work_block_to_copy(log_directory, recovered.id, recovered.started_at, recovered.ended_at)
-    if eval_reading.eval_config.activitywatch:
+    if activitywatch_is_used_by(eval_reading):
         activitywatch_copies.note_copy_wanted(log_directory, recovered.ended_at)
     work_blocks.save_unrecorded(log_directory, recovered)
     if recovered.workstream == records.UNKNOWN_WORKSTREAM:
@@ -754,10 +755,11 @@ def copy_activitywatch(
     """Copy ActivityWatch's data into the log directory, if the eval includes it and a copy is wanted.
 
     For an eval without ActivityWatch nothing is asked or written (ADR
-    0016). Local settings that lack its port or identifier are a problem
-    like any other: the copy stays wanted until they are recorded.
+    0016), and nor is it in mixed account mode, which leaves ActivityWatch
+    out (ADR 0021). Local settings that lack its port or identifier are a
+    problem like any other: the copy stays wanted until they are recorded.
     """
-    if not eval_reading.eval_config.activitywatch:
+    if not activitywatch_is_used_by(eval_reading):
         return activitywatch_copies.CopyResult()
     local_settings = eval_reading.local_settings
     log_directory = local_settings.log_directory.path
@@ -773,6 +775,11 @@ def copy_activitywatch(
     return activitywatch_copies.copy_if_wanted(
         runner, log_directory, port, device_id, local_settings.settings_file, now
     )
+
+
+def activitywatch_is_used_by(eval_reading: EvalForThisAccount) -> bool:
+    """True when ActivityWatch's data is part of this account's record (goodall.eval_config.activitywatch_is_used)."""
+    return activitywatch_is_used(eval_reading.local_settings, eval_reading.eval_config)
 
 
 def show_activitywatch_copy(terminal: Terminal, activitywatch: activitywatch_copies.CopyResult) -> None:
