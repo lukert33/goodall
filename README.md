@@ -44,6 +44,7 @@ These commands work today:
 These commands exist but are not built yet: `onboard` (setup), `sync`, `logs`,
 `export scout`, `dry-run`, `teardown` and `release`. Each tells you so when you
 run it, and `goodall onboard` says how to do its job by hand.
+The full by-hand steps are in [docs/setup-by-hand.md](docs/setup-by-hand.md).
 
 Goodall does not yet record what apps and windows were in use (ActivityWatch
 is planned), and the telemetry receiver is written but not yet started and
