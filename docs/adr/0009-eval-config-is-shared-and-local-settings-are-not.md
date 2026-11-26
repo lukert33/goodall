@@ -5,3 +5,5 @@ Settings are split by one test: is this true for every contributor to the eval? 
 ## Consequences
 
 The declared scope names repositories by identity, never by a local path. The record repo's remote is read from git and stored nowhere else. Facts about a machine (hostname, operating system, tool versions) are written onto each work block as observations and appear in neither file.
+
+Amended 2026-11-26 (owner): the record repo has no remote that goodall uses (ADR 0023), so for now an eval is one person's record and the eval config is shared with nobody. The split stays as it is, ready for the day several people's records are associated.
