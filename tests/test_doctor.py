@@ -19,6 +19,7 @@ import subprocess
 import sys
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -346,8 +347,17 @@ Telemetry
               No work block is active, so there is no receiver to check. Running
               goodall start begins a work block and its receiver.
 
+ActivityWatch
+  pass        ActivityWatch answers and is this eval account's copy
+              This eval does not include ActivityWatch, so there is nothing to
+              check.
+
+  pass        ActivityWatch has a window bucket and an AFK bucket
+  pass        ActivityWatch's AFK bucket was updated in the last 10 minutes
+  pass        No ActivityWatch browser watcher is installed
+
 All checks passed. One thing goodall cannot check without reading a secret.
-25 passed, 0 warned, 0 failed, 0 skipped, 1 unverified
+29 passed, 0 warned, 0 failed, 0 skipped, 1 unverified
 """
 
 
@@ -435,7 +445,17 @@ Telemetry
   skip        The telemetry receiver is running for the active work block
               Waiting for: Local settings are found
 
-3 passed, 0 warned, 1 failed, 22 skipped, 0 unverified
+ActivityWatch
+  skip        ActivityWatch answers and is this eval account's copy
+              Waiting for: Local settings are found
+  skip        ActivityWatch has a window bucket and an AFK bucket
+              Waiting for: Local settings are found
+  skip        ActivityWatch's AFK bucket was updated in the last 10 minutes
+              Waiting for: Local settings are found
+  skip        No ActivityWatch browser watcher is installed
+              Waiting for: Local settings are found
+
+3 passed, 0 warned, 1 failed, 26 skipped, 0 unverified
 """
 
 
@@ -504,6 +524,10 @@ ALL_CHECK_IDS = [
     "claude_code.hooks_installed",
     "claude_code.hooks_run_goodall",
     "telemetry.receiver_running",
+    "activitywatch.server_is_this_accounts",
+    "activitywatch.window_and_afk_buckets_exist",
+    "activitywatch.afk_bucket_is_recent",
+    "activitywatch.no_browser_watcher",
 ]
 
 
@@ -512,7 +536,7 @@ def test_healthy_setup_as_json_gives_the_same_results(healthy_account: EvalAccou
 
     assert exit_code == exit_codes.SUCCESS
     assert document["schema_version"] == 1
-    assert document["summary"] == {"passed": 25, "warned": 0, "failed": 0, "skipped": 0, "unverified": 1}
+    assert document["summary"] == {"passed": 29, "warned": 0, "failed": 0, "skipped": 0, "unverified": 1}
     checks = document["checks"]
     assert isinstance(checks, list)
     assert checks[0] == {
@@ -538,7 +562,7 @@ def test_missing_local_settings_as_json_names_what_each_skip_waited_for(settings
     exit_code, document = doctor_json()
 
     assert exit_code == exit_codes.ERROR
-    assert document["summary"] == {"passed": 3, "warned": 0, "failed": 1, "skipped": 22, "unverified": 0}
+    assert document["summary"] == {"passed": 3, "warned": 0, "failed": 1, "skipped": 26, "unverified": 0}
     checks = document["checks"]
     assert isinstance(checks, list)
     failed_check = checks[0]
@@ -572,7 +596,7 @@ def test_invalid_local_settings_fail_once_and_name_every_problem(healthy_account
     assert "favorite_color" in standard_output
     assert standard_output.count("        Next: ") == 2
     assert "Waiting for: Local settings are valid" in standard_output
-    assert standard_output.endswith("4 passed, 0 warned, 1 failed, 21 skipped, 0 unverified\n")
+    assert standard_output.endswith("4 passed, 0 warned, 1 failed, 25 skipped, 0 unverified\n")
 
 
 def test_relative_settings_folder_override_fails_the_found_check(
@@ -642,6 +666,10 @@ def test_missing_record_repo_skips_the_eval_config_but_still_checks_the_log_dire
         "claude_code.hooks_run_goodall": "pass",
         # The receiver writes to the log directory, not the record repo.
         "telemetry.receiver_running": "pass",
+        "activitywatch.server_is_this_accounts": "skip",
+        "activitywatch.window_and_afk_buckets_exist": "skip",
+        "activitywatch.afk_bucket_is_recent": "skip",
+        "activitywatch.no_browser_watcher": "skip",
     }
     checks = document["checks"]
     assert isinstance(checks, list)
@@ -663,7 +691,7 @@ def test_unreachable_log_directory_is_a_warning_with_a_next_step_and_exits_0(hea
     assert exit_code == exit_codes.SUCCESS
     assert "  warn        The log directory can be written to\n              Not recording:" in standard_output
     assert "        Next: If the log directory is on an external drive, connect it." in standard_output
-    assert standard_output.endswith("24 passed, 1 warned, 0 failed, 0 skipped, 1 unverified\n")
+    assert standard_output.endswith("28 passed, 1 warned, 0 failed, 0 skipped, 1 unverified\n")
 
     json_exit_code, document = doctor_json()
     assert json_exit_code == exit_code
@@ -690,7 +718,7 @@ def test_contributor_and_main_workstream_are_reported_as_separate_checks(healthy
     exit_code, document = doctor_json()
 
     assert exit_code == exit_codes.ERROR
-    assert document["summary"] == {"passed": 23, "warned": 0, "failed": 2, "skipped": 0, "unverified": 1}
+    assert document["summary"] == {"passed": 27, "warned": 0, "failed": 2, "skipped": 0, "unverified": 1}
     checks = document["checks"]
     assert isinstance(checks, list)
     assert [failure["kind"] for failure in checks[5]["failures"]] == ["contributor_not_in_roster"]
@@ -865,7 +893,7 @@ def test_missing_gh_is_one_failure_naming_it_and_saying_an_administrator_account
 
     assert exit_code == exit_codes.ERROR
     document = json.loads(standard_output)
-    assert document["summary"] == {"passed": 22, "warned": 0, "failed": 1, "skipped": 2, "unverified": 1}
+    assert document["summary"] == {"passed": 26, "warned": 0, "failed": 1, "skipped": 2, "unverified": 1}
     gh_check = check_document(document, "tools.gh_installed")
     assert gh_check["status"] == "fail"
     assert isinstance(gh_check["detail"], str)
@@ -885,7 +913,7 @@ def test_missing_git_is_one_failure_and_the_record_repo_check_waits_for_it(healt
 
     assert exit_code == exit_codes.ERROR
     document = json.loads(standard_output)
-    assert document["summary"] == {"passed": 20, "warned": 0, "failed": 1, "skipped": 4, "unverified": 1}
+    assert document["summary"] == {"passed": 24, "warned": 0, "failed": 1, "skipped": 4, "unverified": 1}
     git_check = check_document(document, "tools.git_installed")
     assert git_check["status"] == "fail"
     assert isinstance(git_check["next_step"], str)
@@ -901,7 +929,7 @@ def test_missing_op_fails_the_secrets_manager_check_naming_1password(healthy_acc
 
     assert exit_code == exit_codes.ERROR
     document = json.loads(standard_output)
-    assert document["summary"] == {"passed": 22, "warned": 0, "failed": 1, "skipped": 3, "unverified": 0}
+    assert document["summary"] == {"passed": 26, "warned": 0, "failed": 1, "skipped": 3, "unverified": 0}
     secrets_manager_check = check_document(document, "tools.secrets_manager_installed")
     assert secrets_manager_check["status"] == "fail"
     assert isinstance(secrets_manager_check["detail"], str)
@@ -978,7 +1006,7 @@ def test_an_administrator_account_fails_with_why_a_standard_account_is_required(
     # The reason, so a researcher does not wave it away as fussiness.
     assert "cannot reach other accounts' files or install software" in report_text
     assert "safe to hand to an agent" in report_text
-    assert standard_output.endswith("24 passed, 0 warned, 1 failed, 0 skipped, 1 unverified\n")
+    assert standard_output.endswith("28 passed, 0 warned, 1 failed, 0 skipped, 1 unverified\n")
 
 
 @pytest.mark.parametrize(
@@ -1012,7 +1040,7 @@ def test_a_record_repo_folder_that_is_not_a_git_repository_fails(healthy_account
 
     assert exit_code == exit_codes.ERROR
     document = json.loads(standard_output)
-    assert document["summary"] == {"passed": 21, "warned": 0, "failed": 1, "skipped": 3, "unverified": 1}
+    assert document["summary"] == {"passed": 25, "warned": 0, "failed": 1, "skipped": 3, "unverified": 1}
     git_repository_check = check_document(document, "record_repo.is_git_repository")
     assert git_repository_check["status"] == "fail"
     assert isinstance(git_repository_check["detail"], str)
@@ -1084,7 +1112,7 @@ def test_an_account_check_that_never_finishes_is_reported_as_timed_out_and_docto
     assert isinstance(account_check["detail"], str)
     assert "`/usr/bin/id -Gn` timed out after 10 s" in account_check["detail"]
     # Every other check still ran.
-    assert document["summary"] == {"passed": 24, "warned": 0, "failed": 1, "skipped": 0, "unverified": 1}
+    assert document["summary"] == {"passed": 28, "warned": 0, "failed": 1, "skipped": 0, "unverified": 1}
 
 
 # A recognisable fake key. If any part of it shows up in goodall's output,
@@ -1676,7 +1704,7 @@ def test_a_report_whose_only_unverified_check_needs_a_secret_reads_as_healthy(he
     last_lines = standard_output.splitlines()[-2:]
     assert last_lines == [
         "All checks passed. One thing goodall cannot check without reading a secret.",
-        "25 passed, 0 warned, 0 failed, 0 skipped, 1 unverified",
+        "29 passed, 0 warned, 0 failed, 0 skipped, 1 unverified",
     ]
     # The check itself keeps its status and says when a wrong field shows up.
     assert "  unverified  Each secret reference names a field that exists\n" in standard_output
@@ -1685,7 +1713,7 @@ def test_a_report_whose_only_unverified_check_needs_a_secret_reads_as_healthy(he
         report_text
     )
     # --json is unchanged: the count is still there, and nothing calls it a pass.
-    assert document["summary"] == {"passed": 25, "warned": 0, "failed": 0, "skipped": 0, "unverified": 1}
+    assert document["summary"] == {"passed": 29, "warned": 0, "failed": 0, "skipped": 0, "unverified": 1}
     assert check_document(document, "secrets.referenced_fields_exist")["status"] == "unverified"
 
 
@@ -1710,7 +1738,7 @@ def test_a_report_with_a_warning_has_no_all_passed_line(healthy_account: EvalAcc
 
     assert exit_code == exit_codes.SUCCESS
     assert "All checks passed" not in standard_output
-    assert standard_output.splitlines()[-1] == "24 passed, 1 warned, 0 failed, 0 skipped, 1 unverified"
+    assert standard_output.splitlines()[-1] == "28 passed, 1 warned, 0 failed, 0 skipped, 1 unverified"
 
 
 def test_an_env_file_with_no_references_has_no_field_to_leave_unverified(healthy_account: EvalAccount) -> None:
@@ -2769,7 +2797,7 @@ def test_an_eval_with_activitywatch_and_both_settings_recorded_passes(healthy_ac
         healthy_account.settings_text() + ACTIVITYWATCH_PORT_LINE + ACTIVITYWATCH_DEVICE_ID_LINE
     )
 
-    exit_code, document = doctor_json()
+    exit_code, document = doctor_json(activitywatch_runner())
 
     assert exit_code == exit_codes.SUCCESS
     assert statuses(document)[ACTIVITYWATCH_CHECK] == "pass"
@@ -3066,3 +3094,398 @@ def test_doctor_tries_the_receipt_log_lock_only_while_the_recorded_receiver_runs
     doctor_json(runner_with(background_programs))
 
     assert lock_attempts == []
+
+
+# The ActivityWatch checks (ADR 0016, goodall-ayy.6). Goodall asks the
+# eval account's ActivityWatch with credential-free `curl` requests through
+# the runner, and the fake runner scripts the answers. The answers are
+# synthetic and shaped as ActivityWatch's source says its servers answer
+# (not recorded from a running copy): /info holds a device_id; /buckets is
+# an object keyed by bucket id; a bucket's events come newest first. The
+# window titles, page addresses, hostnames and identifiers below are
+# synthetic and must never be printed.
+ACTIVITYWATCH_ORIGIN = "http://127.0.0.1:5610"
+ACTIVITYWATCH_DEVICE_ID = "8d3f2c1e-4b5a-4c6d-9e7f-0a1b2c3d4e5f"
+ACTIVITYWATCH_OTHER_DEVICE_ID = "11111111-2222-4333-8444-555555555555"
+SYNTHETIC_WINDOW_TITLE = "SYNTHETIC-TITLE-quarterly-numbers.xlsx"
+SYNTHETIC_PAGE_ADDRESS = "https://synthetic.example/private/SYNTHETIC-PAGE"
+SYNTHETIC_HOSTNAME = "synthetic-hostname-7"
+WINDOW_BUCKET_ID = f"aw-watcher-window_{SYNTHETIC_HOSTNAME}"
+AFK_BUCKET_ID = f"aw-watcher-afk_{SYNTHETIC_HOSTNAME}"
+BROWSER_BUCKET_ID = f"aw-watcher-web-chrome_{SYNTHETIC_HOSTNAME}"
+ACTIVITYWATCH_NOW = datetime(2026, 11, 18, 12, 0, 0, tzinfo=UTC)
+
+SERVER_CHECK = "activitywatch.server_is_this_accounts"
+BUCKETS_CHECK = "activitywatch.window_and_afk_buckets_exist"
+RECENT_CHECK = "activitywatch.afk_bucket_is_recent"
+BROWSER_CHECK = "activitywatch.no_browser_watcher"
+ALL_ACTIVITYWATCH_CHECKS = [SERVER_CHECK, BUCKETS_CHECK, RECENT_CHECK, BROWSER_CHECK]
+
+
+def curl_command(path: str) -> list[str]:
+    """The exact `curl` goodall runs to ask ActivityWatch's local server for `path`."""
+    return [
+        "curl",
+        "--disable",
+        "--silent",
+        "--fail",
+        "--noproxy",
+        "*",
+        "--max-time",
+        "3",
+        f"{ACTIVITYWATCH_ORIGIN}{path}",
+    ]
+
+
+def bucket_description(bucket_id: str, bucket_type: str) -> dict[str, object]:
+    """One bucket as ActivityWatch lists it, with a hostname goodall must never show."""
+    return {
+        "id": bucket_id,
+        "created": "2026-11-01T08:00:00+00:00",
+        "name": None,
+        "type": bucket_type,
+        "client": "synthetic-watcher",
+        "hostname": SYNTHETIC_HOSTNAME,
+        "data": {},
+    }
+
+
+def afk_event(ended_ago: timedelta) -> dict[str, object]:
+    """The newest event of an AFK bucket: it lasted 30 seconds and ended `ended_ago` before now."""
+    started = ACTIVITYWATCH_NOW - ended_ago - timedelta(seconds=30)
+    return {"id": 99, "timestamp": started.isoformat(), "duration": 30.0, "data": {"status": "not-afk"}}
+
+
+def activitywatch_runner(
+    device_id: str = ACTIVITYWATCH_DEVICE_ID,
+    bucket_types: tuple[str, ...] = ("currentwindow", "afkstatus"),
+    afk_events: list[dict[str, object]] | None = None,
+) -> FakeRunner:
+    """A healthy fake runner that also answers for an ActivityWatch that has buckets of `bucket_types`."""
+    if afk_events is None:
+        afk_events = [afk_event(timedelta(seconds=20))]
+    runner = healthy_runner()
+    info = {"hostname": SYNTHETIC_HOSTNAME, "device_id": device_id, "version": "v0.14.3"}
+    runner.answer(curl_command("/api/0/info"), standard_output=json.dumps(info))
+    bucket_ids = {"currentwindow": WINDOW_BUCKET_ID, "afkstatus": AFK_BUCKET_ID, "web.tab.current": BROWSER_BUCKET_ID}
+    buckets: dict[str, object] = {}
+    for bucket_type in bucket_types:
+        buckets[bucket_ids[bucket_type]] = bucket_description(bucket_ids[bucket_type], bucket_type)
+    runner.answer(curl_command("/api/0/buckets"), standard_output=json.dumps(buckets))
+    afk_events_path = f"/api/0/buckets/{AFK_BUCKET_ID}/events?limit=1"
+    runner.answer(curl_command(afk_events_path), standard_output=json.dumps(afk_events))
+    # A window event whose title and page address must never reach doctor.
+    window_event = {
+        "timestamp": "2026-11-18T11:59:00+00:00",
+        "duration": 5.0,
+        "data": {"app": "Safari", "title": SYNTHETIC_WINDOW_TITLE, "url": SYNTHETIC_PAGE_ADDRESS},
+    }
+    window_events_path = f"/api/0/buckets/{WINDOW_BUCKET_ID}/events?limit=1"
+    runner.answer(curl_command(window_events_path), standard_output=json.dumps([window_event]))
+    return runner
+
+
+def include_activitywatch(account: EvalAccount) -> None:
+    """Make the eval include ActivityWatch, with the port and identifier this account recorded."""
+    account.eval_config_file.write_text(EVAL_CONFIG_WITH_ACTIVITYWATCH_TEXT)
+    account.settings_file.write_text(account.settings_text() + ACTIVITYWATCH_PORT_LINE + ACTIVITYWATCH_DEVICE_ID_LINE)
+
+
+def run_doctor_at_noon(runner: FakeRunner) -> tuple[int, str, dict[str, object]]:
+    """Run doctor twice with the clock fixed at ACTIVITYWATCH_NOW: return the exit code, the report and the JSON."""
+    outputs = []
+    for arguments in (["doctor"], ["doctor", "--json"]):
+        standard_output = io.StringIO()
+        standard_error = io.StringIO()
+        terminal = Terminal(standard_output=standard_output, standard_error=standard_error)
+        exit_code = cli.main(arguments, terminal=terminal, runner=runner, clock=lambda: ACTIVITYWATCH_NOW)
+        assert standard_error.getvalue() == ""
+        outputs.append((exit_code, standard_output.getvalue()))
+    assert outputs[0][0] == outputs[1][0]
+    return outputs[0][0], outputs[0][1], json.loads(outputs[1][1])
+
+
+def activitywatch_statuses(document: dict[str, object]) -> list[str]:
+    """The status of each ActivityWatch check, in order."""
+    found = []
+    for check_id in ALL_ACTIVITYWATCH_CHECKS:
+        found.append(statuses(document)[check_id])
+    return found
+
+
+def test_an_eval_without_activitywatch_passes_its_checks_with_a_note_and_never_asks_it_anything(
+    healthy_account: EvalAccount,
+) -> None:
+    runner = healthy_runner()
+
+    exit_code, report, document = run_doctor_at_noon(runner)
+
+    assert exit_code == exit_codes.SUCCESS
+    assert activitywatch_statuses(document) == ["pass", "pass", "pass", "pass"]
+    assert "This eval does not include ActivityWatch" in " ".join(report.split())
+    for command in runner.calls:
+        assert command.arguments[0] != "curl"
+
+
+def test_a_healthy_activitywatch_passes_every_check(healthy_account: EvalAccount) -> None:
+    include_activitywatch(healthy_account)
+
+    exit_code, _, document = run_doctor_at_noon(activitywatch_runner())
+
+    assert exit_code == exit_codes.SUCCESS
+    assert activitywatch_statuses(document) == ["pass", "pass", "pass", "pass"]
+    assert document["summary"] == {"passed": 29, "warned": 0, "failed": 0, "skipped": 0, "unverified": 1}
+
+
+def test_activitywatch_is_asked_only_through_credential_free_local_reads_that_skip_proxies(
+    healthy_account: EvalAccount,
+) -> None:
+    include_activitywatch(healthy_account)
+    runner = activitywatch_runner()
+
+    run_doctor_at_noon(runner)
+
+    curl_calls = []
+    for command in runner.calls:
+        if command.arguments[0] == "curl":
+            curl_calls.append(command)
+    assert len(curl_calls) >= 3
+    for command in curl_calls:
+        assert command.arguments[-1].startswith("http://127.0.0.1:5610/api/0/")
+        # curl reads ~/.curlrc, which could add credentials or an output
+        # file, unless --disable is its very first argument.
+        assert command.arguments[1] == "--disable"
+        assert "--show-error" not in command.arguments
+        assert "--noproxy" in command.arguments
+        assert command.timeout_seconds <= 5
+        assert command.extra_environment == {}
+        for write_or_credential_option in ["-X", "--request", "-d", "--data", "-H", "--header", "-u", "--user"]:
+            assert write_or_credential_option not in command.arguments
+
+
+def test_an_activitywatch_that_does_not_answer_fails_with_a_next_step_and_skips_the_rest(
+    healthy_account: EvalAccount,
+) -> None:
+    include_activitywatch(healthy_account)
+    runner = activitywatch_runner()
+    runner.answer(curl_command("/api/0/info"), exit_code=7, standard_error="curl: (7) Failed to connect")
+
+    exit_code, report, document = run_doctor_at_noon(runner)
+
+    assert exit_code == exit_codes.ERROR
+    assert activitywatch_statuses(document) == ["fail", "skip", "skip", "skip"]
+    assert failure_kinds(document, SERVER_CHECK) == ["activitywatch_not_answering"]
+    message = " ".join(report.split())
+    assert "Start ActivityWatch" in message
+    assert str(healthy_account.settings_file) in message
+    assert "activitywatch_port" in message
+    assert check_document(document, BUCKETS_CHECK)["waiting_for"] == SERVER_CHECK
+
+
+def test_an_activitywatch_that_times_out_fails_like_one_that_does_not_answer(healthy_account: EvalAccount) -> None:
+    include_activitywatch(healthy_account)
+    runner = activitywatch_runner()
+    runner.answer_timed_out(curl_command("/api/0/info"))
+
+    _, _, document = run_doctor_at_noon(runner)
+
+    assert failure_kinds(document, SERVER_CHECK) == ["activitywatch_not_answering"]
+
+
+def test_a_mac_without_curl_fails_the_activitywatch_check_saying_so(healthy_account: EvalAccount) -> None:
+    include_activitywatch(healthy_account)
+    runner = activitywatch_runner()
+    runner.answer_not_found(curl_command("/api/0/info"))
+
+    _, _, document = run_doctor_at_noon(runner)
+
+    assert failure_kinds(document, SERVER_CHECK) == ["activitywatch_curl_unavailable"]
+
+
+def test_something_else_answering_on_the_port_fails_without_showing_what_it_said(
+    healthy_account: EvalAccount,
+) -> None:
+    include_activitywatch(healthy_account)
+    runner = activitywatch_runner()
+    runner.answer(curl_command("/api/0/info"), standard_output="<html>SYNTHETIC-OTHER-SERVER</html>")
+
+    exit_code, report, document = run_doctor_at_noon(runner)
+
+    assert exit_code == exit_codes.ERROR
+    assert failure_kinds(document, SERVER_CHECK) == ["activitywatch_answer_unfamiliar"]
+    assert "SYNTHETIC-OTHER-SERVER" not in report + json.dumps(document)
+
+
+def test_a_different_device_identifier_fails_and_says_how_to_record_the_new_one_without_showing_either(
+    healthy_account: EvalAccount,
+) -> None:
+    include_activitywatch(healthy_account)
+    runner = activitywatch_runner(device_id=ACTIVITYWATCH_OTHER_DEVICE_ID)
+
+    exit_code, report, document = run_doctor_at_noon(runner)
+
+    assert exit_code == exit_codes.ERROR
+    assert activitywatch_statuses(document) == ["fail", "skip", "skip", "skip"]
+    assert failure_kinds(document, SERVER_CHECK) == ["activitywatch_device_id_changed"]
+    message = " ".join(report.split())
+    assert "Python and Rust" in message
+    assert "data folder" in message
+    assert "goodall onboard" in message
+    printed = report + json.dumps(document)
+    assert ACTIVITYWATCH_DEVICE_ID not in printed
+    assert ACTIVITYWATCH_OTHER_DEVICE_ID not in printed
+
+
+@pytest.mark.parametrize("missing_type", ["currentwindow", "afkstatus"])
+def test_a_missing_window_or_afk_bucket_fails_and_says_which(healthy_account: EvalAccount, missing_type: str) -> None:
+    include_activitywatch(healthy_account)
+    present_types = tuple({"currentwindow", "afkstatus"} - {missing_type})
+    runner = activitywatch_runner(bucket_types=present_types)
+
+    exit_code, report, document = run_doctor_at_noon(runner)
+
+    assert exit_code == exit_codes.ERROR
+    assert statuses(document)[BUCKETS_CHECK] == "fail"
+    assert statuses(document)[RECENT_CHECK] == "skip"
+    assert failure_kinds(document, BUCKETS_CHECK) == ["activitywatch_buckets_missing"]
+    expected_word = "window" if missing_type == "currentwindow" else "AFK"
+    assert expected_word in " ".join(report.split())
+
+
+def test_an_afk_bucket_that_stopped_updating_is_a_warning_with_a_next_step(healthy_account: EvalAccount) -> None:
+    include_activitywatch(healthy_account)
+    runner = activitywatch_runner(afk_events=[afk_event(timedelta(minutes=11))])
+
+    exit_code, report, document = run_doctor_at_noon(runner)
+
+    assert exit_code == exit_codes.SUCCESS
+    assert activitywatch_statuses(document) == ["pass", "pass", "warn", "pass"]
+    assert failure_kinds(document, RECENT_CHECK) == ["activitywatch_afk_bucket_stale"]
+    assert "10 minutes" in " ".join(report.split())
+
+
+def test_an_old_afk_bucket_listed_before_a_fresh_one_does_not_cause_a_stale_warning(
+    healthy_account: EvalAccount,
+) -> None:
+    # A renamed Mac has an old and a new AFK bucket, because bucket ids
+    # carry the hostname. Only the latest end time counts.
+    include_activitywatch(healthy_account)
+    old_afk_bucket_id = "aw-watcher-afk_synthetic-old-hostname"
+    runner = activitywatch_runner()
+    all_buckets = {
+        old_afk_bucket_id: bucket_description(old_afk_bucket_id, "afkstatus"),
+        WINDOW_BUCKET_ID: bucket_description(WINDOW_BUCKET_ID, "currentwindow"),
+        AFK_BUCKET_ID: bucket_description(AFK_BUCKET_ID, "afkstatus"),
+    }
+    runner.answer(curl_command("/api/0/buckets"), standard_output=json.dumps(all_buckets))
+    stale_events = [afk_event(timedelta(days=30))]
+    runner.answer(
+        curl_command(f"/api/0/buckets/{old_afk_bucket_id}/events?limit=1"), standard_output=json.dumps(stale_events)
+    )
+
+    exit_code, report, document = run_doctor_at_noon(runner)
+
+    assert exit_code == exit_codes.SUCCESS
+    assert statuses(document)[RECENT_CHECK] == "pass"
+    assert "synthetic-old-hostname" not in report + json.dumps(document)
+
+
+def test_every_afk_bucket_stale_is_still_a_warning(healthy_account: EvalAccount) -> None:
+    include_activitywatch(healthy_account)
+    old_afk_bucket_id = "aw-watcher-afk_synthetic-old-hostname"
+    runner = activitywatch_runner(afk_events=[afk_event(timedelta(hours=2))])
+    all_buckets = {
+        old_afk_bucket_id: bucket_description(old_afk_bucket_id, "afkstatus"),
+        WINDOW_BUCKET_ID: bucket_description(WINDOW_BUCKET_ID, "currentwindow"),
+        AFK_BUCKET_ID: bucket_description(AFK_BUCKET_ID, "afkstatus"),
+    }
+    runner.answer(curl_command("/api/0/buckets"), standard_output=json.dumps(all_buckets))
+    stale_events = [afk_event(timedelta(days=30))]
+    runner.answer(
+        curl_command(f"/api/0/buckets/{old_afk_bucket_id}/events?limit=1"), standard_output=json.dumps(stale_events)
+    )
+
+    _, _, document = run_doctor_at_noon(runner)
+
+    assert statuses(document)[RECENT_CHECK] == "warn"
+
+
+def test_an_afk_bucket_whose_newest_event_ended_just_inside_the_limit_passes(healthy_account: EvalAccount) -> None:
+    include_activitywatch(healthy_account)
+    runner = activitywatch_runner(afk_events=[afk_event(timedelta(minutes=9, seconds=30))])
+
+    _, _, document = run_doctor_at_noon(runner)
+
+    assert statuses(document)[RECENT_CHECK] == "pass"
+
+
+def test_an_afk_bucket_with_no_events_is_a_warning(healthy_account: EvalAccount) -> None:
+    include_activitywatch(healthy_account)
+
+    _, _, document = run_doctor_at_noon(activitywatch_runner(afk_events=[]))
+
+    assert statuses(document)[RECENT_CHECK] == "warn"
+    assert failure_kinds(document, RECENT_CHECK) == ["activitywatch_afk_bucket_stale"]
+
+
+def test_an_afk_event_goodall_cannot_read_is_a_warning_that_shows_nothing_from_it(
+    healthy_account: EvalAccount,
+) -> None:
+    include_activitywatch(healthy_account)
+    odd_event = {"timestamp": "SYNTHETIC-NOT-A-TIME", "duration": 1.0, "data": {}}
+
+    _, report, document = run_doctor_at_noon(activitywatch_runner(afk_events=[odd_event]))
+
+    assert statuses(document)[RECENT_CHECK] == "warn"
+    assert "SYNTHETIC-NOT-A-TIME" not in report + json.dumps(document)
+
+
+def test_a_browser_watcher_bucket_is_a_warning_that_says_not_to_install_the_extension(
+    healthy_account: EvalAccount,
+) -> None:
+    include_activitywatch(healthy_account)
+    runner = activitywatch_runner(bucket_types=("currentwindow", "afkstatus", "web.tab.current"))
+
+    exit_code, report, document = run_doctor_at_noon(runner)
+
+    assert exit_code == exit_codes.SUCCESS
+    assert activitywatch_statuses(document) == ["pass", "pass", "pass", "warn"]
+    assert failure_kinds(document, BROWSER_CHECK) == ["activitywatch_browser_watcher_found"]
+    message = " ".join(report.split())
+    assert "ADR 0016" in message
+    assert "extension" in message
+
+
+def test_activitywatch_titles_pages_hostnames_and_identifiers_never_reach_doctors_text_or_json(
+    healthy_account: EvalAccount,
+) -> None:
+    include_activitywatch(healthy_account)
+    # Two runs, so a message of every kind is built: an identifier mismatch,
+    # and then stale AFK data beside a browser watcher.
+    mismatched = activitywatch_runner(device_id=ACTIVITYWATCH_OTHER_DEVICE_ID)
+    stale_with_browser = activitywatch_runner(
+        bucket_types=("currentwindow", "afkstatus", "web.tab.current"),
+        afk_events=[afk_event(timedelta(hours=3))],
+    )
+    for runner in (mismatched, stale_with_browser):
+        _, report, document = run_doctor_at_noon(runner)
+        printed = report + json.dumps(document)
+        for private_text in [
+            SYNTHETIC_WINDOW_TITLE,
+            SYNTHETIC_PAGE_ADDRESS,
+            SYNTHETIC_HOSTNAME,
+            ACTIVITYWATCH_DEVICE_ID,
+            ACTIVITYWATCH_OTHER_DEVICE_ID,
+        ]:
+            assert private_text not in printed
+
+
+def test_the_activitywatch_checks_wait_for_the_port_and_identifier_to_be_recorded(healthy_account: EvalAccount) -> None:
+    healthy_account.eval_config_file.write_text(EVAL_CONFIG_WITH_ACTIVITYWATCH_TEXT)
+
+    exit_code, _, document = run_doctor_at_noon(healthy_runner())
+
+    assert exit_code == exit_codes.ERROR
+    assert statuses(document)[ACTIVITYWATCH_CHECK] == "fail"
+    assert activitywatch_statuses(document) == ["skip", "skip", "skip", "skip"]
+    assert check_document(document, SERVER_CHECK)["waiting_for"] == ACTIVITYWATCH_CHECK

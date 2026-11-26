@@ -43,6 +43,7 @@ needing attention, and so reads a new one correctly.
 """
 
 from goodall import exit_codes
+from goodall.activitywatch_checks import ACTIVITYWATCH_CHECKS
 from goodall.checks import Check, CheckContext, run_checks
 from goodall.claude_code_checks import CLAUDE_CODE_CHECKS
 from goodall.program_checks import PROGRAM_CHECKS
@@ -62,7 +63,8 @@ DOCTOR_JSON_SCHEMA_VERSION = 1
 # other programs (tools, the eval account, the record repo); then where the
 # record repo is shared (its remote, gh's sign-in, its visibility); then the
 # checks of the env file and the shared env file (secrets); then Claude
-# Code's hooks; last, the active work block's telemetry receiver. A check
+# Code's hooks; then the active work block's telemetry receiver; last, the
+# eval account's ActivityWatch, which only an eval that includes it asks about. A check
 # is shown under its group's heading wherever it runs: gh's sign-in under
 # "Tools", and the secrets manager's command, which waits for the env file,
 # too.
@@ -73,6 +75,7 @@ DOCTOR_CHECKS: list[Check] = [
     *SECRETS_CHECKS,
     *CLAUDE_CODE_CHECKS,
     *TELEMETRY_CHECKS,
+    *ACTIVITYWATCH_CHECKS,
 ]
 
 
