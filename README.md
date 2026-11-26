@@ -34,12 +34,12 @@ These commands work today:
 |---|---|
 | `goodall status` | Shows whether a work block is active, and what is wrong with the setup if anything. |
 | `goodall start` | Begins a **work block**: a logged stretch of your work on one workstream. This opens the prompt gate. |
-| `goodall stop` | Ends the current work block. This closes the prompt gate. |
+| `goodall stop` | Ends the current work block, and copies every agent session that has a record inside it into the log directory. This closes the prompt gate. |
 | `goodall fixblock` | Corrects which workstream a work block was for, by recording a fix beside it. |
 | `goodall journal` | Adds a **journal entry**: your written note about what was decided or done. |
 | `goodall intervene` | Records an **intervention**: a moment you overrode, corrected or rescued an agent. |
 | `goodall doctor` | Checks the account and setup, and changes nothing. |
-| `goodall hook` | Called by Claude Code, not by people. It is the prompt gate, and it copies transcripts. |
+| `goodall hook` | Called by Claude Code, not by people. It is the prompt gate, and it leaves heartbeats. |
 
 These commands exist but are not built yet: `onboard` (setup), `sync`, `logs`,
 `export scout`, `dry-run`, `teardown` and `release`. Each tells you so when you
@@ -47,7 +47,9 @@ run it, and `goodall onboard` says how to do its job by hand.
 
 Goodall does not yet record what apps and windows were in use (ActivityWatch
 is planned), and the telemetry receiver is written but not yet started and
-stopped by a command. Transcript copying works.
+stopped by a command. Copying agent sessions works for the Claude family:
+the Claude desktop app's Code tab and Claude Code in a terminal
+(`docs/source-applications.md`).
 
 ## Words used here
 
@@ -150,11 +152,14 @@ one of three places.
    decide who can see it: goodall never does either.
 
 3. **The log directory.** A folder on the Mac, outside any repository, that
-   holds the raw records: copies of Claude Code's transcripts in
-   `transcripts/`, a few allow-listed files from Claude Code's config
-   folder in `claude-config/` (the prompt history and file-edit backups,
-   never settings or credentials), and telemetry. Goodall's own working
-   notes sit beside them in separate folders.
+   holds the raw records: copies of each source application's own session
+   files, in that application's own layout, and telemetry. For the Claude
+   family that is its transcripts in `transcripts/` and a few allow-listed
+   files from Claude Code's config folder in `claude-config/` (the prompt
+   history and file-edit backups, never settings or credentials). An agent
+   session is copied when a work block ends, if any of its records carries
+   a time inside the work block (`docs/source-applications.md`). Goodall's
+   own working notes sit beside them in separate folders.
 
 Two small files sit in the eval account's home folder and belong to neither
 place: the local settings (`~/.config/goodall/local-settings.toml`: where the
