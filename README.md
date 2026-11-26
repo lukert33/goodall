@@ -22,16 +22,8 @@ Its first analytic priority is **where errors are caught**: at review,
 before the work left the person's hands, or downstream, after it had
 effects.
 
-Goodall is not the first tool to record coding-agent sessions, and not the
-first measurement of human oversight of agents in real work. Entire and the
-SWE-chat dataset do that for coding at a scale one person cannot match, and
-Anthropic has published its own measurements. What goodall adds is work
-beyond coding, what a person does outside any agent session, and errors
-under real stakes in one eval followed from start to finish. See
+For the tools and studies that already do part of this, see
 [docs/related-work.md](docs/related-work.md).
-
-One limit to keep in mind: so far it has one kind of user, a technical
-founder who keeps strategy documents in git. That is not a typical founder.
 
 ## Status: being rebuilt after a closed source prototype phase
 
@@ -207,13 +199,8 @@ is what git pushes to the record repo you set up.
 ### What you share
 
 Raw records stay on the Mac. You share only a **redacted** layer or a
-**derived** layer, never the raw one. Goodall will ship a default redaction
-policy that you can make stricter or looser for your own eval, and every
-export will be stamped with the version of the redaction policy and of each
-rule used to compute it, so that other people can tell whether two exports
-are comparable. Redaction keeps where each error was caught even when the
-content around it is removed. **Placeholder:** none of this is built yet. The
-decision is recorded in
+**derived** layer, never the raw one. None of this is built yet; the decision
+is recorded in
 [ADR 0017](docs/adr/0017-raw-records-stay-local-and-every-export-carries-its-rule-versions.md).
 
 ## What goodall promises about your data
@@ -263,19 +250,9 @@ decision is recorded in
   keeps secrets out of files and can launch a program with the secret already
   set. Only 1Password's `op://` references work today. Contributions are
   welcome.
-- **Agents other than Claude Code.** Today only Claude Code is recorded. A
-  future tool would keep its own logs as raw records in its own format. We
-  tested Entire, an open-source tool that already records sessions from
-  several coding agents, and decided not to build on it: its copies are
-  edited, and goodall keeps raw records verbatim. See
-  [docs/related-work.md](docs/related-work.md).
 - **Email.** Sent email is the record of what actually went out to
   customers and suppliers, and it lives outside git. How to capture it is
   undecided.
-- **A cost-of-labor estimate.** A planned, secondary layer would compare
-  what AI-assisted work cost with a range for what the same work would have
-  cost in human hours. It will report ranges and its assumptions, not a
-  single figure.
 - **Anything off macOS.** Eval accounts are macOS user accounts.
 
 ## Contributing
