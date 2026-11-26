@@ -32,8 +32,9 @@ first.
 - [ ] Install 1Password and its `op` command only if the eval will use
       secrets. An eval with no secrets does not need them.
 - [ ] If ActivityWatch also runs in another macOS user account on this Mac,
-      leave it running there on its usual port, 5600. Part 3 checks that the
-      eval account's copy keeps clear of it.
+      quit it there until Part 3's step 3 is done, then start it again on
+      its usual port, 5600. Part 3 says why, and checks that the eval
+      account's copy keeps clear of it.
 
 ## Part 2: In the eval account, install and sign in
 
@@ -59,43 +60,92 @@ Sign in to the Mac as the eval account for everything from here on.
 
 ## Part 3: ActivityWatch on its own port
 
-This part is also the hand test in issue goodall-fs9.19. ActivityWatch
-silently joins any copy of itself already answering on its port, including
-one in another macOS user account, so the eval account's copy must use a port
-of its own. Steps 3 to 6 need a terminal.
+ActivityWatch silently joins any copy of itself already answering on its
+port, including one in another macOS user account, so the eval account's copy
+must use a port of its own. These steps were followed on 2026-11-26 with
+ActivityWatch 0.14.3 on macOS 26 in a standard account (hand test
+goodall-fs9.19), and each held as written.
 
-- [ ] 1. Start ActivityWatch once, then quit it. Find its settings folder.
-      **Not yet confirmed:** it is expected under
-      `~/Library/Application Support/activitywatch`, holding `aw-server.toml`
-      and `aw-client.toml` in folders of their own.
-- [ ] 2. In both files, under `[server]`, set `port` to a free port that is
-      not 5600, for example `5610`. Start ActivityWatch again.
+**Order matters.** Move the eval account's copy off port 5600 (steps 1 to 3)
+before ActivityWatch starts in any other account on the Mac. If another
+account's copy is already on 5600 when the eval account's first starts, the
+eval account's watchers send their data to the other account's server.
+
+- [ ] 1. Start ActivityWatch once (from Applications) and wait for its icon
+      in the menu bar. Its settings files are created then, in
+      `~/Library/Application Support/activitywatch/`:
+      `aw-server/aw-server.toml` and `aw-client/aw-client.toml`. Every line
+      in them starts commented out with `#`. Quit ActivityWatch from its
+      menu-bar icon.
+- [ ] 2. In **both** files, under `[server]`, change `#port = "5600"` to
+      `port = "5610"` (or another free port that is not 5600): remove the
+      `#` and keep the quotes. Leave `[server-testing]` alone. Start
+      ActivityWatch again. Its launcher and both watchers follow the new
+      port with no other change.
 - [ ] 3. Confirm the server answers on the new port and note its
-      `device_id` for Part 4:
+      `device_id` for Part 4. Use `127.0.0.1`, not `localhost`: the server
+      listens only there.
 
       ```
-      curl http://127.0.0.1:5610/api/0/info
+      curl -s http://127.0.0.1:5610/api/0/info | jq -r .device_id
       ```
 
 - [ ] 4. Confirm the window watcher and the away-from-keyboard watcher are
-      sending to the new port: `curl http://127.0.0.1:5610/api/0/buckets`
-      should list a window bucket and an AFK bucket, each updated in the last
-      minute.
-- [ ] 5. With Chrome, Safari and Firefox each in front for a moment, check
-      whether the window bucket's newest events have a `url` field. Note
-      **which macOS permissions** you were asked for (Accessibility, Screen
-      Recording, Automation). Look at field names only.
-- [ ] 6. If another account's ActivityWatch is on 5600:
-      `curl http://127.0.0.1:5600/api/0/info` should show a **different**
-      `device_id`, and the eval account's buckets on 5610 should hold only
-      this account's activity.
-- [ ] 7. Do **not** install the ActivityWatch browser extension. It can only
+      sending to the new port. The trailing `/` is needed: without it the
+      server answers with a redirect, not the list.
+
+      ```
+      curl -s http://127.0.0.1:5610/api/0/buckets/ | jq '[.[] | {type, last_updated}]'
+      ```
+
+      It should list a `currentwindow` and an `afkstatus` bucket, each
+      updated in the last minute.
+- [ ] 5. Allow the permissions the window watcher needs. Every entry is
+      named **ActivityWatch**:
+      - **Accessibility** (System Settings, Privacy & Security). It applies
+        to every account on the Mac, so it may already be on from an
+        administrator account; if it is not listed, add ActivityWatch
+        there. It gives window titles, and page addresses in Firefox.
+      - **Automation**, for Safari and for Chrome. macOS asks the first
+        time each browser is in front ("ActivityWatch" wants access to
+        control ...). Allow it. This is per account. Without it, Safari's
+        windows are recorded with no title and no address.
+      - Screen Recording is not needed.
+- [ ] 6. Make it start at sign-in: in ActivityWatch's menu-bar menu, turn
+      on its start-at-login option. No administrator password is needed.
+      macOS then shows a notice about background activity, named after the
+      app's developer rather than ActivityWatch. Sign out and back in, then
+      repeat step 3: it should answer on 5610 again. ActivityWatch is not
+      restarted if it quits or crashes, so check its menu-bar icon is there
+      before each work block.
+- [ ] 7. If another account on the Mac runs ActivityWatch on 5600, check the
+      two stay apart. This should print `different`:
+
+      ```
+      [ "$(curl -s http://127.0.0.1:5610/api/0/info | jq -r .device_id)" = "$(curl -s http://127.0.0.1:5600/api/0/info | jq -r .device_id)" ] && echo same || echo different
+      ```
+
+      Both accounts' buckets have the same names, because the names come
+      from the Mac's name, so the `device_id` is the only thing that tells
+      them apart.
+- [ ] 8. Do **not** install the ActivityWatch browser extension. It can only
       send to port 5600.
 
-What to bring back: for each step, whether it held, the real file paths, and
-the permissions asked for. That unblocks goodall-fs9.15, which makes goodall
-copy ActivityWatch's data. **Until that is built, goodall reads these
-settings but does not record ActivityWatch's data.**
+Know what ActivityWatch records before you rely on it:
+
+- **It records everything in the account**, including Safari's private
+  windows, with their titles and addresses and nothing marking them
+  private.
+- **Any account on the Mac can read it.** ActivityWatch's server asks for
+  no password, so anyone signed in to another account who knows the port
+  can read the eval account's data.
+- **Time spent in another account looks like work.** While another account
+  is in front, the eval account's copy keeps lengthening its last window
+  and does not record the person as away.
+
+Goodall-fs9.15 makes goodall copy ActivityWatch's data. **Until that is
+built, goodall reads these settings but does not record ActivityWatch's
+data.**
 
 ## Part 4: The record repo, the log directory and local settings
 
