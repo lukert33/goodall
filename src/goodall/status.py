@@ -21,10 +21,11 @@ In the order goodall checks:
    and `goodall stop` do (goodall.work_block_commands): a forgotten work
    block is closed at its last heartbeat, a damaged marker is kept aside,
    ended work blocks' records waiting in the log directory are written
-   into the record repo, and Claude Code transcripts the hooks missed are
-   copied into the log directory. So `goodall status` can commit, push and
-   copy; it is not a read-only diagnostic like `goodall doctor`. A
-   transcript that could not be copied appears in `warnings`.
+   into the record repo, and the agent sessions of ended work blocks that
+   are still to be copied are copied into the log directory
+   (goodall.agent_session_copies). So `goodall status` can commit, push and
+   copy; it is not a read-only diagnostic like `goodall doctor`. An agent
+   session that could not be copied appears in `warnings`.
 5. Goodall lists each of this account's work blocks recorded with the
    workstream `unknown` that no work block fix has settled yet, with one
    whole `goodall fixblock` command per workstream to copy (goodall.fixblock).

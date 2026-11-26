@@ -19,9 +19,11 @@ Two jobs, by event:
 - Every other event leaves a heartbeat when a work block is active, and
   always exits 0 with nothing printed. These events must never disrupt
   Claude Code: exit 2 from a Stop hook, for one, would stop Claude from
-  finishing its reply. PostToolUse, Stop and SessionEnd also copy the
-  Claude session's transcript into the log directory (goodall.transcripts),
-  with or without a work block.
+  finishing its reply. They also remember, in the log directory, which
+  Claude config folder this Claude Code uses (goodall.claude_family), so
+  goodall finds its session files when a work block ends. Hooks copy
+  nothing: agent sessions are copied when a work block ends, the same way
+  for every source application (goodall.agent_session_copies, ADR 0019).
 
 Decisions a reader would otherwise reverse-engineer (PROVISIONAL unless the
 owner says otherwise):
@@ -99,21 +101,13 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from goodall import exit_codes, hook_problems, records, telemetry_capture, transcripts, work_blocks
+from goodall import claude_family, exit_codes, hook_problems, records, telemetry_capture, work_blocks
 from goodall.folders import describe_folder_problem
 from goodall.local_settings import LocalSettings, read_local_settings
 from goodall.terminal import Terminal
 
 # The one event that can refuse what the person asked for.
 PROMPT_GATE_EVENT = "UserPromptSubmit"
-
-# The events after which the Claude session's transcript is copied into the
-# log directory. PostToolUse fires after every tool call, so a long reply is
-# copied as it goes, one step behind (the tool's result lands just after the
-# hook); Stop catches the end of each reply and SessionEnd the end of the
-# Claude session. A kill fires none of them, so `goodall start`, `stop` and
-# `status` sweep up whatever is still behind (goodall.transcripts).
-TRANSCRIPT_COPY_EVENTS = ["PostToolUse", "Stop", "SessionEnd"]
 
 # Every event goodall's hooks are installed on (docs/claude-code-hooks.md).
 KNOWN_EVENTS = [PROMPT_GATE_EVENT, "PostToolUse", "Stop", "SessionEnd", "SessionStart"]
@@ -406,15 +400,17 @@ def receiver_newly_down(log_directory: Path, work_block_id: str, now: datetime) 
 
 
 def record_activity(event_name: str, hook_input_text: str | None, now: datetime) -> None:
-    """Leave a heartbeat if a work block is active, then copy the Claude session's transcript after some events.
+    """Leave a heartbeat if a work block is active, and remember which Claude config folder this Claude Code uses.
 
     Unreadable input still leaves a heartbeat, without a Claude session: the
     moment is evidence even when the session is unknown.
 
-    The transcript is copied after PostToolUse, Stop and SessionEnd whether
-    or not a work block is active, because capture is unconditional: an
-    eval account is used for nothing but the eval. A heartbeat that fails
-    must not stop the copy, so it is tried on its own.
+    The config folder is remembered because a terminal running `goodall
+    stop` may not have this Claude Code's CLAUDE_CONFIG_DIR, and goodall
+    must still find the session files to copy (goodall.claude_family). It
+    comes from this process's own environment, never from the hook's
+    input. A heartbeat that fails must not stop that, so each is tried on
+    its own.
     """
     settings = read_local_settings()
     if not isinstance(settings, LocalSettings):
@@ -435,22 +431,13 @@ def record_activity(event_name: str, hook_input_text: str | None, now: datetime)
         if active is not None:
             work_block_id = active.id
         hook_problems.record_hook_problem(log_directory, now, None, work_block_id, "event_not_known")
-    if event_name in TRANSCRIPT_COPY_EVENTS and hook_input is not None and hook_input.transcript_path is not None:
-        try:
-            transcripts.copy_from_hook(
-                transcripts.claude_projects_folder(),
-                log_directory,
-                hook_input.claude_session,
-                hook_input.transcript_path,
-                now,
-            )
-        except Exception as error:
-            # Silent towards Claude Code, but kept in the log directory, so
-            # `goodall status` can say so (goodall.transcripts). A bug in
-            # goodall lands here too, which is how it gets noticed.
-            transcripts.record_failed_copy(
-                log_directory, now, event_name, hook_input.claude_session, f"{type(error).__name__}: {error}"
-            )
+    try:
+        config_folder = claude_family.claude_config_folder().resolve(strict=True)
+        claude_family.remember_claude_config_folder(log_directory, config_folder)
+    except Exception:
+        # Silent too. Goodall still looks in `~/.claude` and in the folder
+        # the terminal's own environment names.
+        pass
 
 
 def real_clock() -> datetime:

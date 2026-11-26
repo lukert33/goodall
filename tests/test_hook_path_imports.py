@@ -40,9 +40,13 @@ HOOK_PATH_MODULES = [
     # leaves heartbeats through it; it reads the marker with goodall.records.
     "goodall.work_blocks",
     "goodall.records",
-    # PostToolUse, Stop and SessionEnd copy the Claude session's transcript
-    # into the log directory through it.
-    "goodall.transcripts",
+    # Every event but the prompt gate remembers, through it, which Claude
+    # config folder this Claude Code uses; it takes the baseline's words
+    # from goodall.source_applications and its lock and folder-making from
+    # goodall.verbatim_copies.
+    "goodall.claude_family",
+    "goodall.source_applications",
+    "goodall.verbatim_copies",
     # The prompt gate notes input it could not read through it.
     "goodall.hook_problems",
     # The prompt gate checks the work block's telemetry receiver through it,
@@ -297,7 +301,7 @@ def test_the_hook_command_loads_no_third_party_module_and_starts_no_program(tmp_
     machine = records.MachineFacts("eval-mac-01", "26.1", "0.0.1", None)
     running = records.build_work_block_record("ada-lovelace", "research", started_at, machine)
     assert work_blocks.create_marker(log_directory, running)
-    # A synthetic transcript, so PostToolUse really copies it.
+    # A synthetic Claude config folder, so PostToolUse really remembers it.
     claude_config_directory = tmp_path / "claude-config"
     project_folder = claude_config_directory / "projects" / "-Users-ada-work"
     project_folder.mkdir(parents=True)
@@ -308,7 +312,7 @@ def test_the_hook_command_loads_no_third_party_module_and_starts_no_program(tmp_
     environment["CLAUDE_CONFIG_DIR"] = str(claude_config_directory)
     hook_input = json.dumps({"session_id": "0f6c1d2e-3a4b-4c5d-8e9f-a0b1c2d3e4f5", "transcript_path": str(transcript)})
 
-    # The prompt gate, and an event that leaves a heartbeat and copies the transcript.
+    # The prompt gate, and an event that leaves a heartbeat and remembers the Claude config folder.
     for event_name in ["UserPromptSubmit", "PostToolUse"]:
         completed = subprocess.run(
             [sys.executable, "-c", RUN_HOOK_AND_LIST_MODULES, event_name],
@@ -342,5 +346,7 @@ def test_the_hook_command_loads_no_third_party_module_and_starts_no_program(tmp_
     # All three heartbeats were recorded, so the hook really ran its whole path.
     heartbeat_file = work_blocks.WorkBlockFiles(log_directory).heartbeat_file(running.id)
     assert len(heartbeat_file.read_text().splitlines()) == 3
-    copied_transcript = log_directory / "transcripts" / "-Users-ada-work" / transcript.name
-    assert copied_transcript.read_bytes() == transcript.read_bytes()
+    remembered = json.loads((log_directory / "transcript-sync" / "claude-config-folders.json").read_text())
+    assert remembered == {"claude_config_folders": [str(claude_config_directory.resolve())]}
+    # Hooks copy nothing: agent sessions are copied when a work block ends.
+    assert not (log_directory / "transcripts").exists()
