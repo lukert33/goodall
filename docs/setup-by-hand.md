@@ -267,6 +267,48 @@ sessions yet (issues goodall-fs9.24 and goodall-fs9.25).
       warning that ActivityWatch's data was not copied. Start ActivityWatch
       again and run `goodall status`: it should say it copied the data.
 
+- [ ] Read the timeline. `goodall stop` should have shown a line `Timeline
+      built`. Then run:
+
+      ```
+      goodall timeline
+      ```
+
+      Expect the work block you just stopped, one line for each thing that
+      happened, in time order: `human typed_prompt` for each prompt you
+      sent, `ai tool_call` and `harness tool_result` lines for what the
+      agent did, `human journal_entry` and `human intervention` for what you
+      wrote, and, if the eval includes ActivityWatch, `human
+      application_focus` lines naming the application that was in front.
+      Expect no text of yours on any line: no prompt, no window title, no
+      page address. An application or tool goodall has no name for shows as
+      `other_application` or `other_tool`.
+- [ ] Follow one pointer. Run `goodall timeline --pointers`, pick a
+      `typed_prompt` line, and note its file and line number. This prints
+      the start of that line of the raw record, which should be the prompt
+      you typed:
+
+      ```
+      cd ~/evals/domain-test-logs.noindex
+      sed -n '<line number>p' '<path after "log_directory: ">' | cut -c1-300
+      ```
+
+- [ ] Check that the timeline holds none of your words. Pick a word that was
+      in a prompt, a window title or a page address during the work block
+      (the name of the site you visited will do). This should print `0`:
+
+      ```
+      grep -c '<the word>' timeline/timeline.sqlite3
+      ```
+
+      The same search over `transcripts/` and `activitywatch/` will find it:
+      those are the raw records, which keep everything. That includes
+      anything typed into a web form that ends up in a page's address or
+      title, such as a search.
+- [ ] Check that it can be rebuilt. `ls -l timeline/` should show one file,
+      `-rw-------`. Delete it with `rm -f timeline/timeline.sqlite3`, run
+      `goodall timeline` again, and expect the same lines.
+
 ## What goodall records today, and what it does not
 
 | Source | Recorded today? |
@@ -276,8 +318,9 @@ sessions yet (issues goodall-fs9.24 and goodall-fs9.25).
 | Claude desktop app, Cowork and chat | No. Their sessions are kept in your Claude account, not on the Mac (ADR 0019) |
 | Antigravity | Not yet (goodall-fs9.24) |
 | Codex | Not yet (goodall-fs9.25) |
-| ActivityWatch (apps, windows, page addresses) | Yes, copied when a work block ends, if the eval config says `activitywatch = true`. Not yet confirmed on a real eval account, and nothing reads the copies yet |
+| ActivityWatch (apps, windows, page addresses) | Yes, copied when a work block ends, if the eval config says `activitywatch = true`. Not yet confirmed on a real eval account. The timeline lists the copies |
 | Journal entries and interventions | Yes |
 
-There is no timeline to read at the end of a work block yet
-(goodall-acp.9), no `goodall dry-run` and no `goodall teardown`.
+`goodall timeline` shows a work block in time order (`docs/timeline.md`);
+it has not been run in a real eval account yet. There is no `goodall
+dry-run` and no `goodall teardown`.
