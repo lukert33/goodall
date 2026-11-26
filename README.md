@@ -14,11 +14,11 @@ you) who can install programs on that Mac.
 ## Current scope of goodall
 
 Goodall is an instrument. It measures **delegation**: who did what, and
-where each error was caught. It does not judge whether a pattern is a person
+where each mistake was caught. It does not judge whether a pattern is a person
 being amplified or being displaced. That analysis belongs to whoever uses the
 data.
 
-Its first analytic priority is **where errors are caught**: at review,
+Its first analytic priority is **where mistakes are caught**: at review,
 before the work left the person's hands, or downstream, after it had
 effects.
 

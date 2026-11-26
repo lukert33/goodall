@@ -153,9 +153,21 @@ _Avoid_: Verification, validation, audit
 Handing a piece of work to an AI agent. Goodall measures it and does not judge it.
 _Avoid_: Amplification, disempowerment, automation rate
 
-**Error catch**:
-The point at which a mistake in delegated work was noticed, recorded as one of two values: **caught at review**, before the work left the person's hands, or **caught downstream**, after it had effects.
-_Avoid_: Oversight score, over-reliance, quality of review
+**Mistake**:
+Something wrong in the work that was later noticed. Each mistake is recorded with where it was caught, as one of two values: **caught at review**, before the work left the person's hands, or **caught downstream**, after it had effects. It has three subtypes, by who made it.
+_Avoid_: Error, error catch, bug, failure, oversight score, over-reliance, quality of review
+
+**Agent mistake**:
+A mistake made in work an AI agent produced.
+_Avoid_: AI error, hallucination, model failure
+
+**Human mistake**:
+A mistake made in work the person produced, including an instruction they gave an agent.
+_Avoid_: User error, operator error
+
+**Hybrid mistake**:
+A mistake that the person and an agent both contributed to, such as an agent filling a gap in an unclear instruction the wrong way.
+_Avoid_: Shared error, joint failure
 
 **Off-agent work**:
 What a person does for the eval outside any agent session, such as searching, reading, or writing instructions for an agent to follow.

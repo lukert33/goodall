@@ -143,7 +143,7 @@ in full on 2026-11-20 from a PDF of the post.
 - It treats thin oversight as the competitive default and not as harm in
   itself: an owner can let their AIs act with no checking in and still keep
   the gains, and handing decisions to well-aligned AI could be good. This is
-  a reason goodall records where errors are caught and judges nothing
+  a reason goodall records where mistakes are caught and judges nothing
   (ADR 0018).
 - Its main complaint is that the paper stays abstract and never shows how
   strong the competitive pressure is. A firm-level record is the kind of
@@ -160,8 +160,8 @@ person cannot match. What is new in goodall:
 - **Off-agent activity.** What the person did outside any agent session:
   searching, reading, writing instructions for agents. Captured with
   ActivityWatch (ADR 0016).
-- **Errors under real stakes.** Where each error was caught: before it left
-  the person's hands, or after it had effects (ADR 0018).
+- **Mistakes under real stakes.** Where each mistake was caught: before it
+  left the person's hands, or after it had effects (ADR 0018).
 - **One eval, start to finish, with a pre-registered construct**, in the
   CRUX sense of an open-world eval.
 
@@ -170,7 +170,7 @@ person cannot match. What is new in goodall:
 - **One kind of user so far.** A technical founder who keeps strategy in git
   is not a typical founder. Other people running goodall, especially outside
   coding, is part of the plan, and the first group is not yet named.
-- **Goodall is an instrument.** It records delegation and where errors were
+- **Goodall is an instrument.** It records delegation and where mistakes were
   caught. It does not claim a framework for telling amplification from
   disempowerment; that analysis belongs to whoever uses the data.
 
