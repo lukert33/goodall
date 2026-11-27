@@ -280,3 +280,87 @@ def test_an_existing_eval_s_workstream_names_are_checked_like_a_new_eval_s() -> 
         failures = failures_of(text)
 
         assert "existing_eval" in all_text(failures), bad_list
+
+
+# The [eval_account] table: whether the administrator install creates the
+# eval account, and its name (ADR 0022).
+
+EVAL_ACCOUNT_TABLE = """
+[eval_account]
+create = true
+name = "goodall-eval"
+"""
+
+
+def test_an_eval_account_to_create_is_read_with_its_name() -> None:
+    answers = read(NEW_EVAL_ANSWERS + EVAL_ACCOUNT_TABLE)
+
+    assert isinstance(answers, Answers), answers
+    assert answers.eval_account is not None
+    assert answers.eval_account.create is True
+    assert answers.eval_account.name == "goodall-eval"
+
+
+def test_answers_without_an_eval_account_table_create_no_account() -> None:
+    answers = read(NEW_EVAL_ANSWERS)
+
+    assert isinstance(answers, Answers), answers
+    assert answers.eval_account is None
+
+
+def test_declining_to_create_an_eval_account_needs_no_name() -> None:
+    answers = read(NEW_EVAL_ANSWERS + "\n[eval_account]\ncreate = false\n")
+
+    assert isinstance(answers, Answers), answers
+    assert answers.eval_account is not None
+    assert answers.eval_account.create is False
+    assert answers.eval_account.name is None
+
+
+def test_a_name_given_while_declining_is_refused_because_it_would_have_no_effect() -> None:
+    failures = failures_of(NEW_EVAL_ANSWERS + '\n[eval_account]\ncreate = false\nname = "goodall-eval"\n')
+
+    assert [failure.kind for failure in failures] == ["answers_value_invalid"]
+    assert "create = true" in all_text(failures)
+
+
+def test_an_eval_account_to_create_needs_a_name() -> None:
+    failures = failures_of(NEW_EVAL_ANSWERS + "\n[eval_account]\ncreate = true\n")
+
+    assert [failure.kind for failure in failures] == ["answers_key_missing"]
+    assert "[eval_account] name" in all_text(failures)
+
+
+def test_create_must_be_true_or_false() -> None:
+    failures = failures_of(NEW_EVAL_ANSWERS + '\n[eval_account]\ncreate = "yes"\nname = "goodall-eval"\n')
+
+    assert [failure.kind for failure in failures] == ["answers_value_invalid"]
+    assert "[eval_account] create" in all_text(failures)
+
+
+def test_an_account_name_macos_would_not_take_is_refused_without_being_repeated() -> None:
+    for bad_name in ["Goodall Eval", "-goodall", "1goodall", "_goodall", "goodall/eval", ""]:
+        failures = failures_of(NEW_EVAL_ANSWERS + f'\n[eval_account]\ncreate = true\nname = "{bad_name}"\n')
+
+        assert [failure.kind for failure in failures] == ["answers_value_invalid"], bad_name
+        assert "[eval_account] name" in all_text(failures)
+        if bad_name != "":
+            assert bad_name not in all_text(failures)
+
+
+def test_an_eval_account_is_created_only_for_dedicated_account_mode() -> None:
+    mixed = NEW_EVAL_ANSWERS.replace('account_mode = "dedicated"', 'account_mode = "mixed"')
+
+    failures = failures_of(mixed + EVAL_ACCOUNT_TABLE)
+
+    assert [failure.kind for failure in failures] == ["answers_eval_account_needs_dedicated_mode"]
+    assert 'account_mode = "dedicated"' in all_text(failures)
+
+
+def test_a_new_eval_account_cannot_join_an_existing_eval_on_this_mac() -> None:
+    existing = EXISTING_EVAL_ANSWERS.replace('account_mode = "mixed"', 'account_mode = "dedicated"')
+
+    failures = failures_of(existing + EVAL_ACCOUNT_TABLE)
+
+    assert [failure.kind for failure in failures] == ["answers_eval_account_needs_new_eval"]
+    assert 'eval = "new"' in all_text(failures)

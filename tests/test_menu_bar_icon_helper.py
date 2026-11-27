@@ -5,14 +5,17 @@ helper's model, in tests/test_menu_bar_icon_model.py (ADR 0025). The tests
 here cover what that cannot: they read the Swift source as text, to hold it
 to rules a compiler does not check (it never says "eval", every goodall
 command it runs is one the command line has, it draws its own binoculars
-and shows no clock, and it refills one menu rather than replacing it).
+and shows no clock, it refills one menu rather than replacing it, and its
+notifications come from itself, ask nothing and use the argument and exit
+codes goodall.notifications expects).
 
 The last test builds the real helper with `menu-bar-icon/build.sh` into
 tmp_path. It is skipped where there is no Swift compiler, which includes
 the Linux runners CI uses; CI's separate Mac job runs the same build script
 instead (.github/workflows/quality-gates.yml). It proves
-the source compiles and the application is whole and signed; it never
-starts the helper it built.
+the source compiles and the application is whole and signed. It starts the
+helper it built only once, in notify mode with a wrong argument, which
+exits at once without drawing an icon or showing a notification.
 """
 
 import os
@@ -24,7 +27,7 @@ from pathlib import Path
 
 import pytest
 
-from goodall import cli
+from goodall import cli, notifications
 
 REPOSITORY_ROOT = Path(__file__).parent.parent
 HELPER_FOLDER = REPOSITORY_ROOT / "menu-bar-icon"
@@ -94,6 +97,42 @@ def test_the_menu_is_refilled_in_place_so_an_open_menu_shows_a_finished_command(
     assert "menu.removeAllItems()" in source
 
 
+def test_the_helper_shows_notifications_itself_and_never_through_osascript() -> None:
+    # The owner's decision of 2026-11-26: notifications come from the
+    # helper, under goodall's own name, never from osascript, which shows
+    # them as Script Editor's and often drops them (ADR 0024).
+    source = helper_source()
+    assert "UNUserNotificationCenter" in source
+    assert "osascript" not in source
+    assert "NSAppleScript" not in source
+
+
+def test_a_notification_asks_nothing_and_has_no_buttons() -> None:
+    # The terminal never asks, and nor does a notification (ADR 0024): no
+    # actions, no categories that would carry them, and no text reply.
+    source = helper_source()
+    assert "UNNotificationAction" not in source
+    assert "UNNotificationCategory" not in source
+    assert "UNTextInputNotificationAction" not in source
+
+
+def test_the_helpers_notify_argument_and_exit_codes_are_the_ones_goodall_uses() -> None:
+    # goodall.notifications runs the helper with these and reads its exit code.
+    source = (HELPER_FOLDER / "main.swift").read_text()
+    assert f'let notifyArgument = "{notifications.NOTIFY_ARGUMENT}"' in source
+    assert f"let notificationShownExitCode: Int32 = {notifications.SHOWN}" in source
+    assert f"let notificationsNotAllowedExitCode: Int32 = {notifications.NOT_ALLOWED}" in source
+    assert f"let notificationsNotAskedYetExitCode: Int32 = {notifications.NOT_ASKED_YET}" in source
+
+
+def test_the_helper_asks_for_notification_permission_only_when_the_model_says_to() -> None:
+    # When to ask is decided in the Python and the model (ADR 0025), not in
+    # main.swift; main.swift asks in exactly one place.
+    source = (HELPER_FOLDER / "main.swift").read_text()
+    assert source.count("requestAuthorization(") == 1
+    assert "if self.model.stateAnswered(" in source
+
+
 needs_swift = pytest.mark.skipif(
     sys.platform != "darwin" or shutil.which("swiftc") is None or shutil.which("codesign") is None,
     reason="building the menu bar icon's helper needs macOS with the Swift compiler",
@@ -120,3 +159,13 @@ def test_the_build_script_makes_a_signed_goodall_app_from_the_swift_source(tmp_p
     assert verify.returncode == 0, verify.stderr
     # The built app goes where the caller says, never into the repository's tracked files.
     assert str(app) in build.stdout
+
+    # In notify mode the helper wants exactly a title and a body. Given
+    # anything else it says so and exits 2 at once, showing nothing and
+    # drawing no icon: the one way to run the real program here without
+    # putting a notification on the screen of whoever runs the tests.
+    wrong_use = subprocess.run(
+        [str(executable), notifications.NOTIFY_ARGUMENT, "only a title"], capture_output=True, text=True, timeout=10
+    )
+    assert wrong_use.returncode == 2
+    assert "--notify needs a title and a body" in wrong_use.stderr

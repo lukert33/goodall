@@ -1019,7 +1019,10 @@ def test_stop_the_morning_after_closes_the_forgotten_work_block_at_its_last_hear
     stop = run_goodall(eval_account, ["stop"])
 
     assert stop.exit_code == exit_codes.SUCCESS, stop.standard_error
-    assert stop.standard_error == ""
+    # The one warning is that no notification could say goodall closed it:
+    # no menu bar icon is installed here (tests/test_background_notifications.py).
+    assert stop.standard_error.count("WARN") == 1
+    assert "could not show a notification that recording stopped" in stop.everything_printed
     assert "was left running" in stop.everything_printed
     [record] = eval_account.work_block_records()
     assert record["end_state"] == "inferred"

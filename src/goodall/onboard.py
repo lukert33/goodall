@@ -61,6 +61,11 @@ Every file goodall would write is first read back through that file's own
 reader (goodall.local_settings, goodall.eval_config), so onboarding can never
 write a file that `goodall status` or `goodall doctor` would refuse.
 
+With `[eval_account] create = true`, in an account other than the one it
+names, this module hands the answers to goodall.administrator_install,
+which creates the eval account and stages its first sign-in setup instead
+of setting up this account (ADR 0022).
+
 Two kinds of step are not done here, on purpose: ActivityWatch's own port
 settings stay a by-hand step (docs/setup-by-hand.md, Part 3), and the
 shared env file is not written, because what it should hold is not decided.
@@ -78,7 +83,7 @@ from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
 
-from goodall import exit_codes
+from goodall import administrator_install, exit_codes
 from goodall.answers_file import NEW_EVAL, Answers, NewEval, read_answers_file
 from goodall.claude_code_checks import (
     claude_user_settings_file,
@@ -333,7 +338,16 @@ def onboard_from_answers(
     plan_only: bool = False,
     as_json: bool = False,
 ) -> int:
-    """Show the plan for answers already read and checked, and make the changes unless `plan_only`."""
+    """Show the plan for answers already read and checked, and make the changes unless `plan_only`.
+
+    Answers that ask for an eval account to be created, used in any other
+    account, go to the administrator install instead (ADR 0022), which
+    sets up nothing in this account.
+    """
+    if administrator_install.applies_to(answers):
+        return administrator_install.run_administrator_install(
+            terminal, runner, answers, plan_only=plan_only, as_json=as_json
+        )
     report = onboarding_report_from_answers(terminal, runner, clock, answers, plan_only=plan_only, as_json=as_json)
     return report_exit_code(report)
 

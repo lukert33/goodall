@@ -121,6 +121,38 @@ def test_discarded_output_never_reaches_goodall() -> None:
     assert result.problem.endswith("` exited with code 1")
 
 
+def test_a_handed_over_program_prints_straight_to_the_terminal_and_goodall_keeps_nothing(
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    # capfd reads goodall's own file descriptors, so it sees what a program
+    # wrote to the terminal it was handed, which a pipe would have hidden.
+    script = 'import sys; print("for the person"); sys.stderr.write("also for the person\\n"); sys.exit(3)'
+    result = RealRunner().run(Command([PYTHON, "-c", script], output=OutputMode.HAND_OVER))
+
+    assert result.outcome == CommandOutcome.COMPLETED
+    assert result.exit_code == 3
+    assert result.standard_output == ""
+    assert result.standard_error == ""
+    printed = capfd.readouterr()
+    assert "for the person" in printed.out
+    assert "also for the person" in printed.err
+
+
+def test_a_handed_over_program_has_no_timeout_because_a_person_is_answering_it() -> None:
+    result = RealRunner().run(
+        Command([PYTHON, "-c", "import time; time.sleep(0.5)"], output=OutputMode.HAND_OVER, timeout_seconds=0.1)
+    )
+
+    assert result.outcome == CommandOutcome.COMPLETED
+    assert result.exit_code == 0
+
+
+def test_a_handed_over_program_that_does_not_exist_is_a_result_not_an_exception() -> None:
+    result = RealRunner().run(Command(["goodall-test-no-such-program"], output=OutputMode.HAND_OVER))
+
+    assert result.outcome == CommandOutcome.NOT_FOUND
+
+
 def test_a_program_that_cannot_be_started_is_a_result_not_an_exception(tmp_path: Path) -> None:
     not_executable = tmp_path / "not-executable"
     not_executable.write_text("#!/bin/sh\necho hello\n")

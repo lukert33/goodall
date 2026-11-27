@@ -155,6 +155,13 @@ device_id = "8d3f2c1e-4b5a-4c6d-9e7f-0a1b2c3d4e5f"
 # prints it. Left out, goodall uses the goodall it finds on the PATH.
 [claude_code]
 goodall_program = "/Users/ada/.local/bin/goodall"
+
+# Optional, and only in an administrator account: create the eval account and
+# stage its first sign-in setup (administrator-install.md). Needs
+# account_mode = "dedicated" and eval = "new".
+[eval_account]
+create = true            # false, or leaving the section out, creates nothing
+name = "goodall-eval"    # only with create = true
 ```
 
 The rules, which are those of the files the answers become, so that goodall
@@ -184,6 +191,24 @@ would refuse:
 - Nothing in `[new_eval]` or `display_name` may be an email address: the
   eval config is made to be published as it stands (ADR 0009).
 - `activitywatch` `port` may not be 5600, ActivityWatch's default (ADR 0016).
+- `[eval_account]` `name` is the new account's short name: a lowercase
+  letter, then lowercase letters, digits and single hyphens. Goodall checks
+  that no account on the Mac has it before creating anything. A name with
+  `create = false` is refused, because it would have no effect.
+
+### `[eval_account]`: the administrator install
+
+With `create = true`, `goodall onboard --answers <file>` run in an
+**administrator account** does not set up that account. It runs the
+administrator install instead: it creates the eval account and stages the
+same answers file for the eval account's first sign-in, where goodall sets
+up the eval account from it by itself.
+[administrator-install.md](administrator-install.md) says what it changes
+and what is not yet confirmed on a real Mac. Run in the eval account itself
+(the account the name names), the same file sets up that account as usual.
+
+The setup page will ask this question too; until then, write the table by
+hand.
 
 ### No secrets, only references
 

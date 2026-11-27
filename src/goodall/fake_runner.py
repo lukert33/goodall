@@ -27,8 +27,9 @@ What it promises, and why (ADR 0011):
   and no others. A real program is found where it really is; any other is
   given a made-up location, since nothing will run it.
 - It keeps the real runner's promises about output: a command whose output
-  is discarded gets none of the scripted output, so no test can pass only
-  because the fake handed goodall something the real runner would not.
+  is discarded, or that was handed the terminal, gets none of the scripted
+  output, so no test can pass only because the fake handed goodall
+  something the real runner would not.
 - A command scripted as never finishing comes back at once as timed out,
   just as the real runner would report it after the command's own timeout.
   tests/test_runner.py proves the real runner really does kill it.
@@ -333,7 +334,7 @@ class FakeRunner:
                 f"The fake runner was asked to run `{command.as_typed}`, which the test did not script. "
                 "Script it with FakeRunner.answer(...) or one of its siblings."
             )
-        if command.output == OutputMode.DISCARD:
+        if command.output in [OutputMode.DISCARD, OutputMode.HAND_OVER]:
             return CommandResult(command=command, outcome=scripted_answer.outcome, exit_code=scripted_answer.exit_code)
         return CommandResult(
             command=command,
