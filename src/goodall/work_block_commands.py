@@ -12,7 +12,9 @@ What each command does, in order:
   main workstream; settle what earlier work blocks left behind (below);
   then, unless a work block is already active, observe the machine and
   create the marker. With one already active it changes nothing, says which
-  one and since when, and exits 0, so running it twice is harmless.
+  one and since when, and exits 0, so running it twice is harmless. Either
+  way it then brings the menu bar icon back, if its helper is installed
+  and not running (goodall.menu_bar_icon).
 - `goodall stop`: find the eval and settle, as above; then end the active
   work block cleanly, copy every agent session that has a record inside it
   into the log directory (goodall.agent_session_copies), copy
@@ -78,6 +80,7 @@ from goodall import (
     claude_family,
     exit_codes,
     hook_problems,
+    menu_bar_icon,
     records,
     telemetry_capture,
     telemetry_receivers,
@@ -148,6 +151,7 @@ def run_start(
     if active is not None:
         exit_code = report_already_active(terminal, active, workstream)
         make_sure_receiver_runs(terminal, runner, log_directory, active.id, telemetry_port, now)
+        show_icon_brought_back(terminal, runner)
         return exit_code
 
     continues_work_block = None
@@ -194,7 +198,20 @@ def run_start(
         )
     terminal.show_paragraph(started + "Goodall is recording until you run goodall stop.")
     show_receiver_start(terminal, receiver_start, telemetry_port)
+    show_icon_brought_back(terminal, runner)
     return exit_codes.SUCCESS
+
+
+def show_icon_brought_back(terminal: Terminal, runner: Runner) -> None:
+    """Bring the menu bar icon back if its helper is installed, and warn if that did not work (ADR 0024).
+
+    Done last, once the work block is started or found active, so the icon
+    asks goodall for its state after there is something to show. Nothing is
+    said when it works, or when no helper is installed.
+    """
+    warning = menu_bar_icon.bring_icon_back(runner)
+    if warning is not None:
+        terminal.show_warnings([warning])
 
 
 # The ports a person may ask the receiver to listen on.
