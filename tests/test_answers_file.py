@@ -242,3 +242,41 @@ def test_a_missing_answers_file_says_which_path_goodall_looked_at(tmp_path: Path
     assert isinstance(reading, list)
     assert reading[0].kind == "answers_file_missing"
     assert str(tmp_path / "missing.toml") in reading[0].what_happened
+
+
+def test_an_existing_eval_s_answers_may_carry_its_full_workstream_list() -> None:
+    text = EXISTING_EVAL_ANSWERS.replace(
+        "[contributor]", '[existing_eval]\nworkstreams = ["engineering", "research", "go-to-market"]\n\n[contributor]'
+    )
+
+    answers = read(text)
+
+    assert isinstance(answers, Answers), answers
+    assert answers.existing_workstreams == ["engineering", "research", "go-to-market"]
+
+
+def test_an_existing_eval_s_answers_without_workstreams_leave_them_alone() -> None:
+    answers = read(EXISTING_EVAL_ANSWERS)
+
+    assert isinstance(answers, Answers), answers
+    assert answers.existing_workstreams is None
+
+
+def test_a_workstream_list_for_a_new_eval_outside_new_eval_is_refused() -> None:
+    text = NEW_EVAL_ANSWERS.replace("[contributor]", '[existing_eval]\nworkstreams = ["research"]\n\n[contributor]')
+
+    failures = failures_of(text)
+
+    assert "existing_eval" in all_text(failures)
+
+
+def test_an_existing_eval_s_workstream_names_are_checked_like_a_new_eval_s() -> None:
+    bad_lists = ['["Go To Market"]', '["unknown"]', "[]", '["research", "research"]']
+    for bad_list in bad_lists:
+        text = EXISTING_EVAL_ANSWERS.replace(
+            "[contributor]", f"[existing_eval]\nworkstreams = {bad_list}\n\n[contributor]"
+        )
+
+        failures = failures_of(text)
+
+        assert "existing_eval" in all_text(failures), bad_list

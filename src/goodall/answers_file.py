@@ -100,6 +100,7 @@ KNOWN_KEYS = {
         "account_mode",
         "eval",
         "new_eval",
+        "existing_eval",
         "contributor",
         "folders",
         "secrets",
@@ -116,6 +117,7 @@ KNOWN_KEYS = {
         "scope",
     ],
     "new_eval.scope": ["repository", "paths"],
+    "existing_eval": ["workstreams"],
     "contributor": ["id", "display_name", "main_workstream"],
     "folders": ["record_repo", "log_directory"],
     "secrets": ["manager", "references"],
@@ -133,6 +135,8 @@ EXAMPLE_LINES = {
     "new_eval": "[new_eval] with name, description, workstreams and at least one [[new_eval.scope]]",
     "contributor": "[contributor] with id and main_workstream (and display_name for a new eval)",
     "folders": "[folders] with record_repo and log_directory",
+    "existing_eval": '[existing_eval] with workstreams = ["engineering", "research", "go-to-market"]',
+    "existing_eval.workstreams": 'workstreams = ["engineering", "research", "go-to-market"]',
     "new_eval.name": 'name = "goodall-pilot"',
     "new_eval.description": 'description = "Building a product to first recurring revenue with AI agents."',
     "new_eval.workstreams": 'workstreams = ["engineering", "research", "go-to-market"]',
@@ -192,6 +196,10 @@ class Answers:
       the order written.
     - `goodall_program` is the goodall the Claude Code hooks should run, as
       written, or None to use the goodall found on the PATH.
+    - `existing_workstreams` is, for an existing eval, the full workstream
+      list the person wants in the eval config (`goodall settings` saves
+      it); None leaves the eval config as it is. Goodall only ever adds
+      names to the eval config's list (docs/setup-page.md).
     """
 
     answers_file: Path
@@ -208,6 +216,7 @@ class Answers:
     activitywatch_port: int | None = None
     activitywatch_device_id: str | None = None
     goodall_program: str | None = None
+    existing_workstreams: list[str] | None = None
 
 
 def read_answers_file(answers_file: Path, expected_one_time_code: str | None = None) -> Answers | list[Failure]:
@@ -289,6 +298,16 @@ class AnswersReader:
         if eval_choice == NEW_EVAL and new_eval_table is not None:
             new_eval = self.read_new_eval(new_eval_table)
 
+        existing_eval_table = self.read_section("existing_eval", required=False)
+        existing_workstreams = None
+        if existing_eval_table is not None and eval_choice == NEW_EVAL:
+            self.problems.append(existing_eval_not_used_failure(self.answers_file))
+        elif existing_eval_table is not None:
+            existing_workstreams = self.read_name_list(existing_eval_table, "workstreams", None, "existing_eval")
+            if existing_workstreams is not None and records.UNKNOWN_WORKSTREAM in existing_workstreams:
+                self.invalid("workstreams", "existing_eval", "may not include unknown, which goodall keeps for itself")
+                existing_workstreams = None
+
         contributor = self.read_section("contributor", required=True)
         contributor_id = None
         display_name = None
@@ -341,6 +360,7 @@ class AnswersReader:
             activitywatch_port=activitywatch_port,
             activitywatch_device_id=activitywatch_device_id,
             goodall_program=goodall_program,
+            existing_workstreams=existing_workstreams,
         )
 
     def find_secret_values(self, value: object, place: str) -> None:
@@ -409,12 +429,12 @@ class AnswersReader:
         name = self.read_name(table, "new_eval", "name")
         description = self.read_text(table, "new_eval", "description", required=True)
         self.refuse_email_address(description, "new_eval", "description")
-        workstreams = self.read_name_list(table, "workstreams", None)
+        workstreams = self.read_name_list(table, "workstreams", None, "new_eval")
         if workstreams is not None and records.UNKNOWN_WORKSTREAM in workstreams:
             self.invalid("workstreams", "new_eval", "may not include unknown, which goodall keeps for itself")
             workstreams = None
         intervention_categories = self.read_name_list(
-            table, "intervention_categories", list(records.DEFAULT_INTERVENTION_CATEGORIES)
+            table, "intervention_categories", list(records.DEFAULT_INTERVENTION_CATEGORIES), "new_eval"
         )
         activitywatch = False
         if "activitywatch" in table:
@@ -525,23 +545,25 @@ class AnswersReader:
             return None
         return value
 
-    def read_name_list(self, table: dict[str, object], key: str, default: list[str] | None) -> list[str] | None:
-        """A list of names in `[new_eval]`; `default` when absent, which is a problem when there is none."""
+    def read_name_list(
+        self, table: dict[str, object], key: str, default: list[str] | None, section: str
+    ) -> list[str] | None:
+        """A list of names in `[section]`; `default` when absent, which is a problem when there is none."""
         if key not in table:
             if default is None:
-                self.problems.append(self.key_missing(key, "new_eval"))
+                self.problems.append(self.key_missing(key, section))
             return default
         value = table[key]
         if not isinstance(value, list) or len(value) == 0:
-            self.invalid(key, "new_eval", "must be a list of at least one name in double quotes")
+            self.invalid(key, section, "must be a list of at least one name in double quotes")
             return None
         names: list[str] = []
         for item in value:
             if not isinstance(item, str) or NAME_PATTERN.fullmatch(item) is None:
-                self.invalid(key, "new_eval", f"must hold only names of {NAME_RULE}")
+                self.invalid(key, section, f"must hold only names of {NAME_RULE}")
                 return None
             if item in names:
-                self.invalid(key, "new_eval", "must not name the same thing twice")
+                self.invalid(key, section, "must not name the same thing twice")
                 return None
             names.append(item)
         return names
@@ -853,6 +875,21 @@ def new_eval_not_used_failure(answers_file: Path) -> Failure:
         ),
         what_to_do_next=(
             f'Remove the [new_eval] section to use the existing eval, or set eval = "{NEW_EVAL}" to start a new one.'
+        ),
+    )
+
+
+def existing_eval_not_used_failure(answers_file: Path) -> Failure:
+    """The failure for [existing_eval] answers given for a new eval, which would be silently ignored."""
+    return Failure(
+        kind="answers_section_not_used",
+        what_happened=(
+            f'The answers file at {answers_file} says eval = "{NEW_EVAL}" but also has an [existing_eval] section. '
+            "Nothing was changed."
+        ),
+        why="[existing_eval] changes the workstreams of an eval already on this Mac, so it has no effect on a new one.",
+        what_to_do_next=(
+            f'Remove the [existing_eval] section, or set eval = "{EXISTING_EVAL}" to change the eval already here.'
         ),
     )
 

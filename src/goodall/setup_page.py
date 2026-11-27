@@ -179,6 +179,10 @@ class StartingAnswers:
     secret_references: dict[str, str] = field(default_factory=dict)
     goodall_program: str | None = None
     known_workstreams: list[str] = field(default_factory=list)
+    # True for `goodall settings`: the page then lets the person add
+    # workstreams to the eval already on this Mac, and says how it ends
+    # without a terminal in view (goodall.settings_command).
+    settings_run: bool = False
 
 
 def starting_answers_from_this_account() -> StartingAnswers:
@@ -296,6 +300,7 @@ def page_document(starting: StartingAnswers, one_time_code: str, page_title: str
             "claude_settings": as_written_for_people(claude_user_settings_file()),
         },
         "known_workstreams": list(starting.known_workstreams),
+        "settings_run": starting.settings_run,
         "answers": {
             "account_mode": starting.account_mode,
             "eval": starting.eval_choice,
@@ -400,6 +405,9 @@ class Waiting:
     one_time_code: str
     downloads: Path
     plan_only: bool
+    # The command that is waiting, as a person typed it or the menu bar
+    # icon ran it: "onboard" or "settings". It only changes what is said.
+    command_name: str = "onboard"
     seen: dict[Path, tuple[int, int]] = field(default_factory=dict)
     changes_started: bool = False
 
@@ -422,13 +430,19 @@ def ask_on_setup_page(
     *,
     plan_only: bool = False,
     page_title: str = ONBOARD_PAGE_TITLE,
+    command_name: str = "onboard",
 ) -> int:
     """Open the setup page with `starting` filled in, wait for its answers file, and set up from it.
 
     Returns the exit code. The page and its folder are removed whatever
     happens; the answers file is left where the browser saved it.
     """
-    waiting = Waiting(one_time_code=new_one_time_code(), downloads=downloads_folder(), plan_only=plan_only)
+    waiting = Waiting(
+        one_time_code=new_one_time_code(),
+        downloads=downloads_folder(),
+        plan_only=plan_only,
+        command_name=command_name,
+    )
     page_folder = Path(tempfile.mkdtemp(prefix="goodall-setup-page-"))
     try:
         page = write_setup_page(page_folder, starting, waiting.one_time_code, page_title)
@@ -511,7 +525,7 @@ def wait_for_answers(terminal: Terminal, runner: Runner, clock: Callable[[], dat
                 f"({minutes_left} minutes left). Press Control-C to stop."
             )
             next_reminder += REMINDER_SECONDS
-    terminal.show_failures([wait_ran_out_failure(waiting.downloads)])
+    terminal.show_failures([wait_ran_out_failure(waiting.downloads, waiting.command_name)])
     return exit_codes.ERROR
 
 
@@ -554,10 +568,10 @@ def stopped_words(waiting: Waiting) -> str:
     """What Control-C ends with, depending on whether onboarding had begun to make changes."""
     if waiting.changes_started:
         return (
-            "Stopped while goodall onboard was making changes. Each change is made in one step, so nothing is "
-            "half written; run goodall onboard again, which is safe, to finish."
+            f"Stopped while goodall {waiting.command_name} was making changes. Each change is made in one step, so "
+            f"nothing is half written; run goodall {waiting.command_name} again, which is safe, to finish."
         )
-    return "Stopped. Nothing was changed. Run goodall onboard again when you are ready."
+    return f"Stopped. Nothing was changed. Run goodall {waiting.command_name} again when you are ready."
 
 
 # Failures and warnings. Each says what happened, why and what to do next.
@@ -587,7 +601,7 @@ def page_not_opened_warning(page: Path, problem: str) -> Failure:
     )
 
 
-def wait_ran_out_failure(downloads: Path) -> Failure:
+def wait_ran_out_failure(downloads: Path, command_name: str) -> Failure:
     """The failure when no answers file from this page arrived in time."""
     minutes = round(WAIT_LIMIT_SECONDS / 60)
     return Failure(
@@ -597,12 +611,13 @@ def wait_ran_out_failure(downloads: Path) -> Failure:
             f"{as_written_for_people(downloads)}. Nothing was changed."
         ),
         why=(
-            "Goodall stops waiting after a while, so a forgotten goodall onboard does not wait forever. The page "
-            "has no server behind it, so goodall can learn of your answers only from the file your browser saves."
+            f"Goodall stops waiting after a while, so a forgotten goodall {command_name} does not wait forever. "
+            "The page has no server behind it, so goodall can learn of your answers only from the file your "
+            "browser saves."
         ),
         what_to_do_next=(
-            "Run goodall onboard again. If your browser saved the answers file somewhere else, run goodall onboard "
-            "--answers with that file's path instead: it is set up from that file without the page."
+            f"Run goodall {command_name} again. If your browser saved the answers file somewhere else, run goodall "
+            "onboard --answers with that file's path instead: it is applied from that file without the page."
         ),
-        commands_to_try=("goodall onboard", "goodall onboard --answers ~/Desktop/goodall-answers.toml"),
+        commands_to_try=(f"goodall {command_name}", "goodall onboard --answers ~/Desktop/goodall-answers.toml"),
     )

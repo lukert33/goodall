@@ -311,6 +311,62 @@ def test_running_again_and_accepting_the_defaults_changes_nothing(
         assert row.startswith("unchanged "), row
 
 
+def settings_page_document(tmp_path: Path) -> dict[str, Any]:
+    """The page `goodall settings` writes for an account whose eval has two workstreams."""
+    starting = setup_page.StartingAnswers(
+        eval_choice="existing",
+        eval_name="goodall-pilot",
+        workstreams=["engineering", "research"],
+        contributor_id="ada-lovelace",
+        main_workstream="research",
+        record_repo=str(tmp_path / "evals" / "goodall-pilot-records"),
+        log_directory=str(tmp_path / "evals" / "goodall-pilot-logs.noindex"),
+        known_workstreams=["engineering", "research"],
+        settings_run=True,
+    )
+    return json.loads(json.dumps(setup_page.page_document(starting, CODE, "Goodall settings")))  # type: ignore[no-any-return]
+
+
+def test_a_settings_page_saves_the_full_workstream_list_for_goodall_to_add_from(
+    driver_script: Path, tmp_path: Path
+) -> None:
+    changes = [["known_workstreams", ["engineering", "research", "go-to-market"]]]
+
+    text = run_page_script(driver_script, settings_page_document(tmp_path), changes, "answers")
+
+    answers = read_back(text, tmp_path)
+    assert answers.eval_choice == "existing"
+    assert answers.existing_workstreams == ["engineering", "research", "go-to-market"]
+
+
+def test_a_settings_page_with_no_change_still_saves_the_unchanged_list(driver_script: Path, tmp_path: Path) -> None:
+    text = run_page_script(driver_script, settings_page_document(tmp_path), [], "answers")
+
+    assert read_back(text, tmp_path).existing_workstreams == ["engineering", "research"]
+
+
+def test_a_page_that_is_not_a_settings_page_leaves_workstreams_out_of_its_answers(
+    driver_script: Path, tmp_path: Path
+) -> None:
+    document = settings_page_document(tmp_path)
+    document["settings_run"] = False
+
+    text = run_page_script(driver_script, document, [], "answers")
+
+    assert read_back(text, tmp_path).existing_workstreams is None
+
+
+def test_the_settings_page_shows_a_problem_for_a_workstream_goodall_would_refuse(
+    driver_script: Path, tmp_path: Path
+) -> None:
+    for bad_name in ["Go To Market", "unknown"]:
+        changes = [["known_workstreams", ["engineering", "research", bad_name]]]
+
+        problems = json.loads(run_page_script(driver_script, settings_page_document(tmp_path), changes, "problems"))
+
+        assert "known_workstreams" in problems, bad_name
+
+
 def test_the_whole_page_script_parses(tmp_path: Path) -> None:
     # The page's drawing code cannot run without a browser, but it can at
     # least be read by the same engine Safari uses: a syntax error anywhere
