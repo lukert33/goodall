@@ -1,9 +1,10 @@
 # The answers file, and `goodall onboard --answers`
 
 An **answers file** holds one person's answers to goodall's setup questions
-(GLOSSARY.md). The setup page will save one when you press its Finish setup
-button (ADR 0012); until that page is built, you write the answers file
-yourself and run:
+(GLOSSARY.md). Plain `goodall onboard` opens the setup page, which saves one
+when you press its Finish setup button ([setup-page.md](setup-page.md),
+ADR 0012). For unattended setup, or to set up again from a file the page
+saved, write or keep the answers file yourself and run:
 
 ```
 goodall onboard --answers ~/goodall-answers.toml --plan
@@ -80,7 +81,11 @@ Running goodall onboard again is safe:
 
 ## The format
 
-An answers file is TOML. Every value below is an example; use your own. Keys
+An answers file is TOML. The setup page writes exactly this format; it
+leaves out `[activitywatch]` (set up by hand, Part 3 of
+[setup-by-hand.md](setup-by-hand.md)), always uses `paths = ["**"]` for
+each scope repository, and writes `[claude_code]` only when the hooks
+already run a goodall by its full path. Every value below is an example; use your own. Keys
 not marked optional are required.
 
 ```toml
@@ -189,15 +194,17 @@ real key, replace it with whoever issued it.
 
 ### The one-time code
 
-The setup page will write a `one_time_code` line into the answers file it
+The setup page writes a `one_time_code` line into the answers file it
 saves, so the waiting `goodall onboard` uses only the file from the page it
-opened. `goodall onboard --answers` expects no code: a `one_time_code` line
+opened ([setup-page.md](setup-page.md)). `goodall onboard --answers` expects no code: a `one_time_code` line
 is accepted and ignored, so a file the page saved can also be used
 unattended.
 
 ## `--json`
 
-With `--json`, standard output carries one JSON document and nothing else:
+With `--json`, standard output carries one JSON document and nothing else.
+`--json` needs `--answers`: plain `goodall onboard` opens a page for a
+person, so with `--json` and no answers file it is a usage error (exit 2).
 
 ```json
 {
