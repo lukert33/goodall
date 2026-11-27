@@ -14,3 +14,6 @@ __pycache__/
 dist/
 
 docs/brainstorm
+
+# The menu bar icon's helper, as built by menu-bar-icon/build.sh
+menu-bar-icon/build/

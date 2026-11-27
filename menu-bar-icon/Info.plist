@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  What macOS needs to know about the menu bar icon's helper (ADR 0024).
+
+  CFBundleName is what a person sees, for example above a notification, so it
+  is plainly "goodall". CFBundleIdentifier is how macOS itself tells this
+  application from every other; notification permission is remembered under
+  it, so changing it later makes macOS ask again. LSUIElement means no Dock
+  icon and no application menu: the helper lives in the menu bar only.
+  build.sh fills in the two version values from pyproject.toml.
+-->
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>io.github.lukert33.goodall</string>
+    <key>CFBundleName</key>
+    <string>goodall</string>
+    <key>CFBundleDisplayName</key>
+    <string>goodall</string>
+    <key>CFBundleExecutable</key>
+    <string>goodall-menu-bar-icon</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.0.0</string>
+    <key>CFBundleVersion</key>
+    <string>0.0.0</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>13.0</string>
+    <key>LSUIElement</key>
+    <true/>
+</dict>
+</plist>
