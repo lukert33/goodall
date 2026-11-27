@@ -213,3 +213,9 @@ in a scratch macOS user account or with `HOME` pointed at a scratch folder:
       allow a second download.
 - [ ] The browser's developer console shows no errors and no blocked
       requests.
+- [ ] With VoiceOver on (Command-F5), each field is announced by its
+      title and help text: the account mode choices as "An eval account"
+      and "Try it out", not "dedicated" and "mixed"; checkboxes by their
+      sentence, not "on"; text boxes by their title, not their placeholder.
+      `tests/test_setup_page_accessibility.py` checks the names in the HTML
+      the page draws, but not what a screen reader makes of them.

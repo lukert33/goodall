@@ -81,6 +81,7 @@ mode (ADR 0021) and a record repo that stays on this Mac (ADR 0023).
   .choice label { flex: 1 1 240px; border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; cursor: pointer; background: var(--card); }
   .choice label.on { border-color: var(--forest); background: var(--canopy); }
   .choice input { margin-right: 6px; accent-color: var(--forest); }
+  .choice .option-text { display: block; }
   .choice .label-note { font-size: .72rem; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); margin-left: 4px; }
 
   label.field, div.field { display: block; margin: 0 0 16px; }
@@ -182,20 +183,50 @@ function problemLine(place) {
   return '<div class="problem" data-problem="' + place + '">' + (problem ? escapeHtml(problem) : "") + "</div>";
 }
 
-function textField(place, name, help, placeholder) {
-  return '<label class="field"><span class="name">' + name + '</span><span class="help">' + help + "</span>" +
-    '<input type="text" data-field="' + place + '" value="' + escapeHtml(valueAt(place)) + '" placeholder="' + escapeHtml(placeholder || "") + '">' +
-    problemLine(place) + "</label>";
+// Every field has an accessible name: what a screen reader announces for
+// it. Each one points with aria-labelledby at its visible title, and with
+// aria-describedby at its help text, by ids made from its place, so the
+// name never falls back to a placeholder or a value such as "on"
+// (tests/test_setup_page_accessibility.py). A <label> may hold only inline
+// content, so none wraps a <div>.
+function fieldId(place) {
+  return "field-" + place.replace(/[^A-Za-z0-9]+/g, "-");
 }
 
-function choiceField(groupName, place, options) {
-  var html = '<div class="choice">';
+// The opening of a field's block: its title, as a <label> for `id`, and its help text.
+function fieldHeading(id, name, help) {
+  return '<label class="name" for="' + id + '" id="' + id + '-name">' + name + "</label>" +
+    '<span class="help" id="' + id + '-help">' + help + "</span>";
+}
+
+function namedBy(id) {
+  return ' id="' + id + '" aria-labelledby="' + id + '-name" aria-describedby="' + id + '-help"';
+}
+
+function textField(place, name, help, placeholder) {
+  var id = fieldId(place);
+  return '<div class="field">' + fieldHeading(id, name, help) +
+    '<input type="text"' + namedBy(id) + ' data-field="' + place + '" value="' + escapeHtml(valueAt(place)) + '" placeholder="' + escapeHtml(placeholder || "") + '">' +
+    problemLine(place) + "</div>";
+}
+
+// A checkbox with its title and help beside it.
+function checkboxField(place, name, help) {
+  var id = fieldId(place);
+  return '<div class="field" style="display:flex;gap:10px;align-items:flex-start"><input type="checkbox"' + namedBy(id) + ' data-flag="' + place + '"' +
+    (valueAt(place) ? " checked" : "") + ' style="margin-top:5px;accent-color:var(--forest)"><span>' + fieldHeading(id, name, help) + "</span></div>";
+}
+
+// Radio buttons, as a group named by the visible question `questionId`.
+function choiceField(groupName, place, options, questionId) {
+  var html = '<div class="choice" role="radiogroup" aria-labelledby="' + questionId + '">';
   for (var index = 0; index < options.length; index++) {
     var option = options[index];
     var chosen = valueAt(place) === option.value;
-    html += '<label class="' + (chosen ? "on" : "") + '"><input type="radio" name="' + groupName + '" data-choice="' + place + '" value="' + option.value + '"' +
-      (chosen ? " checked" : "") + "><strong>" + option.title + "</strong>" + (option.note ? '<span class="label-note">' + option.note + "</span>" : "") +
-      '<div class="small muted">' + option.text + "</div></label>";
+    var id = fieldId(place + "." + option.value);
+    html += '<label class="' + (chosen ? "on" : "") + '" for="' + id + '"><input type="radio" id="' + id + '" aria-labelledby="' + id + '-name" aria-describedby="' + id + '-help" name="' + groupName + '" data-choice="' + place + '" value="' + option.value + '"' +
+      (chosen ? " checked" : "") + '><strong id="' + id + '-name">' + option.title + "</strong>" + (option.note ? '<span class="label-note">' + option.note + "</span>" : "") +
+      '<span class="small muted option-text" id="' + id + '-help">' + option.text + "</span></label>";
   }
   return html + "</div>";
 }
@@ -206,7 +237,7 @@ function accountModeField() {
       text: "A macOS user account used for this eval and nothing else. Signing in to it means recording; signing out stops." },
     { value: "mixed", title: "Try it out", note: "",
       text: "Record in this macOS user account, which you also use for other things. Nothing is recorded until you start a work block. Any agent conversation held while recording is copied whole, whatever it was about." }
-  ]);
+  ], "stage-how");
 }
 
 function evalField() {
@@ -215,7 +246,7 @@ function evalField() {
       text: "You will name it, list its workstreams and write its construct. Goodall makes its record repo." },
     { value: "existing", title: "This Mac already has the eval's record repo", note: "",
       text: "Its record repo and eval.toml are already here, from an earlier setup. Goodall uses them as they are." }
-  ]);
+  ], "stage-how");
 }
 
 // A list of short names shown as chips, for workstreams and repositories.
@@ -224,12 +255,13 @@ function chipsField(place, name, help, placeholder, problemPlace, lockedCount) {
   var items = valueAt(place);
   var chips = "";
   for (var index = 0; index < items.length; index++) {
-    var removeButton = index < (lockedCount || 0) ? "" : '<button title="Remove" data-action="remove-chip" data-place="' + place + '" data-index="' + index + '">×</button>';
+    var removeButton = index < (lockedCount || 0) ? "" : '<button title="Remove" aria-label="Remove ' + escapeHtml(items[index]) + '" data-action="remove-chip" data-place="' + place + '" data-index="' + index + '">×</button>';
     chips += '<span class="chip">' + escapeHtml(items[index]) + removeButton + "</span>";
   }
-  return '<div class="field"><span class="name">' + name + '</span><span class="help">' + help + "</span>" +
-    '<div class="chips">' + chips + '</div><div class="row"><input type="text" data-new-chip="' + place + '" placeholder="' + escapeHtml(placeholder) + '">' +
-    '<button class="plain" data-action="add-chip" data-place="' + place + '">Add</button></div>' + problemLine(problemPlace) + "</div>";
+  var id = fieldId(place);
+  return '<div class="field">' + fieldHeading(id, name, help) +
+    '<div class="chips">' + chips + '</div><div class="row"><input type="text"' + namedBy(id) + ' data-new-chip="' + place + '" placeholder="' + escapeHtml(placeholder) + '">' +
+    '<button class="plain" data-action="add-chip" data-place="' + place + '" aria-describedby="' + id + '-name">Add</button></div>' + problemLine(problemPlace) + "</div>";
 }
 
 function evalItemBody() {
@@ -238,9 +270,8 @@ function evalItemBody() {
     chipsField("new_eval.workstreams", "Workstreams", "The divisions of the work, used to attribute effort and cost. Lowercase, with hyphens: go-to-market.", "Add a workstream", "new_eval.workstreams") +
     chipsField("new_eval.repositories", "Where the work is", "The repositories the eval's work is in, by name: host/owner/name. Every path in them counts.", "github.com/your-org/goodall-pilot-app", "new_eval.repositories");
   if (state.account_mode === "dedicated") {
-    html += '<label class="field" style="display:flex;gap:10px;align-items:flex-start"><input type="checkbox" data-flag="new_eval.activitywatch"' + (state.new_eval.activitywatch ? " checked" : "") +
-      ' style="margin-top:5px;accent-color:var(--forest)"><span><span class="name">Also record which apps and windows are in front, with ActivityWatch</span>' +
-      '<span class="help">ActivityWatch has to be installed and given its own port by hand first (Part 3 of setup-by-hand.md in goodall\'s documentation). Leave this off if you are not sure.</span></span></label>';
+    html += checkboxField("new_eval.activitywatch", "Also record which apps and windows are in front, with ActivityWatch",
+      "ActivityWatch has to be installed and given its own port by hand first (Part 3 of setup-by-hand.md in goodall's documentation). Leave this off if you are not sure.");
   }
   return html;
 }
@@ -251,9 +282,10 @@ function workstreamsItemBody() {
 }
 
 function constructItemBody() {
-  return '<label class="field"><span class="name">The construct</span><span class="help">The question this eval sets out to measure, written before the work starts. You can refine it later; its history is kept.</span>' +
-    '<textarea data-field="new_eval.construct" placeholder="Which parts of the work needed to reach first recurring revenue can be delegated to AI agents, and which human interventions are indispensable?">' +
-    escapeHtml(state.new_eval.construct) + "</textarea>" + problemLine("new_eval.construct") + "</label>";
+  var id = fieldId("new_eval.construct");
+  return '<div class="field">' + fieldHeading(id, "The construct", "The question this eval sets out to measure, written before the work starts. You can refine it later; its history is kept.") +
+    "<textarea" + namedBy(id) + ' data-field="new_eval.construct" placeholder="Which parts of the work needed to reach first recurring revenue can be delegated to AI agents, and which human interventions are indispensable?">' +
+    escapeHtml(state.new_eval.construct) + "</textarea>" + problemLine("new_eval.construct") + "</div>";
 }
 
 function mainWorkstreamField() {
@@ -266,8 +298,9 @@ function mainWorkstreamField() {
     var workstream = workstreams[index];
     options += '<option value="' + escapeHtml(workstream) + '"' + (workstream === state.contributor.main_workstream ? " selected" : "") + ">" + escapeHtml(workstream) + "</option>";
   }
-  return '<label class="field"><span class="name">Your main workstream</span><span class="help">You choose a workstream each time you start a work block. This is only the default.</span>' +
-    '<select data-field="contributor.main_workstream"><option value="">Choose one</option>' + options + "</select>" + problemLine("contributor.main_workstream") + "</label>";
+  var id = fieldId("contributor.main_workstream");
+  return '<div class="field">' + fieldHeading(id, "Your main workstream", "You choose a workstream each time you start a work block. This is only the default.") +
+    "<select" + namedBy(id) + ' data-field="contributor.main_workstream"><option value="">Choose one</option>' + options + "</select>" + problemLine("contributor.main_workstream") + "</div>";
 }
 
 function whoItemBody() {
@@ -297,19 +330,19 @@ function referenceRows() {
   var html = "";
   for (var index = 0; index < state.secret_references.length; index++) {
     var row = state.secret_references[index];
+    var rowNumber = index + 1;
     html += '<div class="field"><div class="reference-row">' +
-      '<input type="text" class="mono" data-reference-name="' + index + '" value="' + escapeHtml(row.name) + '" placeholder="ANTHROPIC_API_KEY_RESEARCH" aria-label="Variable name">' +
-      '<input type="text" class="mono" data-reference-value="' + index + '" value="' + escapeHtml(row.reference) + '" placeholder="op://vault/item/field" aria-label="Secret reference">' +
-      '<button class="plain" data-action="remove-reference" data-index="' + index + '" title="Remove">Remove</button></div>' +
+      '<input type="text" class="mono" data-reference-name="' + index + '" value="' + escapeHtml(row.name) + '" placeholder="ANTHROPIC_API_KEY_RESEARCH" aria-label="Variable name, reference ' + rowNumber + '">' +
+      '<input type="text" class="mono" data-reference-value="' + index + '" value="' + escapeHtml(row.reference) + '" placeholder="op://vault/item/field" aria-label="Secret reference ' + rowNumber + ', op://vault/item/field">' +
+      '<button class="plain" data-action="remove-reference" data-index="' + index + '" title="Remove" aria-label="Remove reference ' + rowNumber + '">Remove</button></div>' +
       problemLine("secret_references." + index) + "</div>";
   }
   return html;
 }
 
 function secretsItemBody() {
-  var html = '<label class="field" style="display:flex;gap:10px;align-items:flex-start"><input type="checkbox" data-flag="uses_api_keys"' + (state.uses_api_keys ? " checked" : "") +
-    ' style="margin-top:5px;accent-color:var(--forest)"><span><span class="name">Some of my work blocks will be billed to API keys</span>' +
-    '<span class="help">Leave this off if you only use a Claude subscription. You can add keys later.</span></span></label>';
+  var html = checkboxField("uses_api_keys", "Some of my work blocks will be billed to API keys",
+    "Leave this off if you only use a Claude subscription. You can add keys later.");
   if (!state.uses_api_keys) {
     return html;
   }
@@ -364,8 +397,9 @@ function checklistItem(id, title, body) {
 }
 
 function tickItem(key, title, help) {
-  return '<div class="item"><label class="tick"><input type="checkbox" data-tick="' + key + '"' + (ticked[key] ? " checked" : "") + "><span><strong>" + title +
-    '</strong><span class="muted small" style="display:block">' + help + "</span></span></label></div>";
+  var id = fieldId("tick." + key);
+  return '<div class="item"><label class="tick" for="' + id + '"><input type="checkbox" id="' + id + '" aria-labelledby="' + id + '-name" aria-describedby="' + id + '-help" data-tick="' + key + '"' + (ticked[key] ? " checked" : "") +
+    '><span><strong id="' + id + '-name">' + title + '</strong><span class="muted small" style="display:block" id="' + id + '-help">' + help + "</span></span></label></div>";
 }
 
 function finishBlock() {
@@ -465,7 +499,7 @@ function render() {
   document.getElementById("app").innerHTML =
     '<div class="wrap"><h1>' + escapeHtml(starting.page_title) + "</h1>" +
     '<p class="muted">An eval is a study of real work done with AI agents. Goodall records what you and your agents each did, so the record can be analyzed. Everything it records stays on this Mac. Nothing is uploaded: you share only an export you choose to make.</p>' +
-    '<div class="stage"><span class="num">1</span> How you will record</div>' + accountModeField() + (state.settings_run ? "" : evalField()) +
+    '<div class="stage" id="stage-how"><span class="num">1</span> How you will record</div>' + accountModeField() + (state.settings_run ? "" : evalField()) +
     (state.settings_run ? "" : '<div class="stage"><span class="num">2</span> Before this page · on your Mac</div>' + before) +
     '<div class="stage"><span class="num">' + (state.settings_run ? 2 : 3) + '</span> On this page · your answers</div>' + answerItems +
     '<div class="stage"><span class="num">' + (state.settings_run ? 3 : 4) + '</span> Finish</div><div class="finish" data-live="finish"></div></div>';
