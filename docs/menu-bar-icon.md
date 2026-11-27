@@ -29,7 +29,7 @@ work. It goes away when you open the menu.
 | Item | The one command it runs |
 | --- | --- |
 | A gray status line, such as "Recording research since 09:30" | none |
-| **Record work block** ▸ one item per workstream, your main workstream first and marked "(main)" | `goodall start --workstream NAME` |
+| **Record work block** ▸ one item per workstream, your main workstream first | `goodall start --workstream NAME` |
 | **Pause** | `goodall pause` |
 | **Stop recording** | `goodall stop` |
 | **Settings…** | `goodall settings` |

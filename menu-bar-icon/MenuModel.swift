@@ -76,9 +76,9 @@ struct WorkBlock: Decodable {
     let startedAt: String  // for example 2026-11-16T09:30:00Z
 }
 
+// goodall also says which workstream is the main one; the menu does not show it.
 struct Workstream: Decodable {
     let name: String
-    let main: Bool
 }
 
 struct EnabledItems: Decodable {
@@ -263,10 +263,12 @@ struct MenuModel {
         }
         rows.append(MenuRow(title: "", enabled: false, isSeparator: true))
 
-        // "Record work block", with one item per workstream. goodall lists the main one first.
+        // "Record work block", with one item per workstream. goodall lists the main one first;
+        // it is not marked, because a mark invites people to change which one is main, and
+        // that matters little to them.
         var workstreamRows: [MenuRow] = []
         for workstream in iconState?.workstreams ?? [] {
-            let title = workstream.main ? "\(workstream.name) (main)" : workstream.name
+            let title = workstream.name
             let command = MenuCommand(
                 arguments: recordArguments(workstream: workstream.name), busyLine: recordBusyLine,
                 itemTitle: recordTitle)

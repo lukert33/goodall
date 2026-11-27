@@ -149,7 +149,10 @@ def enabled_titles(rendering: dict[str, Any]) -> list[str]:
     return titles
 
 
-def test_the_not_recording_menu_offers_every_workstream_with_the_main_one_first(driver: Path) -> None:
+def test_the_not_recording_menu_offers_every_workstream_with_the_main_one_first_and_unmarked(driver: Path) -> None:
+    # The owner's decision of 2026-11-27: no "(main)" beside the main
+    # workstream. It is listed first, as goodall orders it, but a mark would
+    # invite people to change which one is main, which matters little.
     [rendering] = run_driver(driver, [answered(NOT_RECORDING)])
 
     assert rendering["look"] == "not_recording"
@@ -169,7 +172,7 @@ def test_the_not_recording_menu_offers_every_workstream_with_the_main_one_first(
     workstream_rows = row(rendering, "Record work block")["submenu"]
     assert workstream_rows == [
         {
-            "title": "research (main)",
+            "title": "research",
             "enabled": True,
             "separator": False,
             "arguments": ["start", "--workstream", "research"],
@@ -296,7 +299,7 @@ def test_a_command_that_works_clears_an_earlier_failure(driver: Path) -> None:
             chosen("Settings…"),
             finished(1),
             answered(NOT_RECORDING),
-            chosen("Record work block", "research (main)"),
+            chosen("Record work block", "research"),
             finished(0),
             answered(RECORDING),
         ],

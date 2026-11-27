@@ -10,7 +10,7 @@
 // where each event is one of
 //
 //     {"event": "state_answered", "output": "<what goodall icon-state --json printed>"}
-//     {"event": "item_chosen", "titles": ["Record work block", "research (main)"]}
+//     {"event": "item_chosen", "titles": ["Record work block", "research"]}
 //     {"event": "command_finished", "exit_code": 1}
 //     {"event": "menu_opened"}
 //
