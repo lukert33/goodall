@@ -3,8 +3,9 @@
 `goodall onboard --answers <file>` is the unattended path (ADR 0012): the
 answers file is read and checked (goodall.answers_file), every change it
 calls for is worked out and shown, and only then are those changes made.
-The setup page, when it is built, will save an answers file and hand it to
-`onboard_from_answers_file`, the same function `--answers` uses, so both
+Plain `goodall onboard` opens the setup page instead (goodall.setup_page),
+which hands the answers file the page saved to
+`onboarding_report_from_answers`, the function `--answers` uses too, so both
 paths write the same files the same way. docs/answers-file.md documents the
 format and what each run does; docs/setup-by-hand.md is the by-hand
 procedure this automates.
@@ -75,7 +76,7 @@ from enum import StrEnum
 from pathlib import Path
 
 from goodall import exit_codes
-from goodall.answers_file import FORMAT_DOCUMENT, NEW_EVAL, Answers, NewEval, read_answers_file
+from goodall.answers_file import NEW_EVAL, Answers, NewEval, read_answers_file
 from goodall.claude_code_checks import (
     claude_user_settings_file,
     is_full_path,
@@ -128,16 +129,6 @@ EVERY_TOOL_MATCHER = "*"
 
 # The program the hooks run, found on the PATH when the answers do not name one.
 GOODALL_PROGRAM_NAME = "goodall"
-
-# How to set up by hand while the setup page is not built. goodall.cli shows
-# the same sentence for its stub list (AGENTS.md: a message may point at a
-# command not built yet only when there is a way to do its step by hand).
-ONBOARD_BY_HAND = (
-    "ask whoever runs the eval for this eval account's local settings file, local-settings.toml, or write "
-    "it yourself, and put it in the folder ~/.config/goodall/ in this macOS user account's home folder "
-    "(goodall status names each setting it needs and shows an example line). Then add the Claude Code "
-    "hooks as docs/claude-code-hooks.md in goodall's documentation shows, and run goodall status."
-)
 
 
 class ChangeAction(StrEnum):
@@ -291,21 +282,11 @@ def run_onboard(
     terminal: Terminal,
     runner: Runner,
     clock: Callable[[], datetime],
-    answers_file: Path | None,
+    answers_file: Path,
     plan_only: bool,
     as_json: bool,
 ) -> int:
-    """`goodall onboard`, as cli.main calls it.
-
-    Without `--answers` it says that the setup page is not built yet and how
-    to set up with an answers file in the meantime.
-    """
-    if answers_file is None:
-        report = OnboardingReport(
-            answers_file=None, plan_only=plan_only, outcome="rejected", failures=[setup_page_not_built_failure()]
-        )
-        show_report(terminal, report, as_json)
-        return exit_codes.ERROR
+    """`goodall onboard --answers <file>`, as cli.main calls it. Without --answers, goodall.setup_page runs."""
     return onboard_from_answers_file(terminal, runner, clock, answers_file, plan_only=plan_only, as_json=as_json)
 
 
@@ -343,13 +324,33 @@ def onboard_from_answers(
     as_json: bool = False,
 ) -> int:
     """Show the plan for answers already read and checked, and make the changes unless `plan_only`."""
+    report = onboarding_report_from_answers(terminal, runner, clock, answers, plan_only=plan_only, as_json=as_json)
+    return report_exit_code(report)
+
+
+def onboarding_report_from_answers(
+    terminal: Terminal,
+    runner: Runner,
+    clock: Callable[[], datetime],
+    answers: Answers,
+    *,
+    plan_only: bool = False,
+    as_json: bool = False,
+) -> OnboardingReport:
+    """Do what `onboard_from_answers` does, and return the report instead of the exit code.
+
+    The setup page's waiting command needs the outcome, not only the exit
+    code: answers the machine refused ("rejected") can be corrected on the
+    page that is still open, so it keeps waiting, while a change that failed
+    part way ("stopped") ends the run.
+    """
     planning = plan_onboarding(answers, runner, clock())
     if isinstance(planning, list):
         report = OnboardingReport(
             answers_file=answers.answers_file, plan_only=plan_only, outcome="rejected", failures=planning
         )
         show_report(terminal, report, as_json)
-        return exit_codes.ERROR
+        return report
     plan = planning
 
     if not as_json:
@@ -357,13 +358,13 @@ def onboard_from_answers(
     if plan_only:
         report = OnboardingReport(answers_file=answers.answers_file, plan_only=True, outcome="planned", plan=plan)
         show_report(terminal, report, as_json)
-        return exit_codes.SUCCESS
+        return report
     if not plan.changes_to_make:
         report = OnboardingReport(
             answers_file=answers.answers_file, plan_only=False, outcome="nothing_to_change", plan=plan
         )
         show_report(terminal, report, as_json)
-        return exit_codes.SUCCESS
+        return report
 
     done_ids, failure = apply_plan(plan, runner)
     if failure is not None:
@@ -376,11 +377,18 @@ def onboard_from_answers(
             failures=[failure],
         )
         show_report(terminal, report, as_json)
-        return exit_codes.ERROR
+        return report
     report = OnboardingReport(
         answers_file=answers.answers_file, plan_only=False, outcome="applied", plan=plan, done_ids=done_ids
     )
     show_report(terminal, report, as_json)
+    return report
+
+
+def report_exit_code(report: OnboardingReport) -> int:
+    """0 when what was asked is done (or was only planned), 1 when it was refused or stopped part way."""
+    if report.outcome in ["rejected", "stopped"]:
+        return exit_codes.ERROR
     return exit_codes.SUCCESS
 
 
@@ -1226,23 +1234,6 @@ def show_report(terminal: Terminal, report: OnboardingReport, as_json: bool) -> 
 
 # Failures and warnings. Each says what happened, why it matters and what to
 # do next; none repeats a value that could be a secret.
-
-
-def setup_page_not_built_failure() -> Failure:
-    """The failure for plain `goodall onboard`, while the setup page is not built (ADR 0012)."""
-    return Failure(
-        kind="setup_page_not_built",
-        what_happened="The setup page that goodall onboard opens is not built yet. Nothing was changed.",
-        why=(
-            "Goodall asks its setup questions on a setup page in the browser, never in the terminal, and that page "
-            "comes in a later version of goodall."
-        ),
-        what_to_do_next=(
-            f"Write an answers file as {FORMAT_DOCUMENT} shows, then run goodall onboard --answers with its path; "
-            "add --plan first to see every change without making it. By hand: " + ONBOARD_BY_HAND
-        ),
-        commands_to_try=("goodall onboard --answers ~/goodall-answers.toml --plan",),
-    )
 
 
 def stopped_failure(change: PlannedChange, problem: str) -> Failure:

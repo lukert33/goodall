@@ -403,17 +403,6 @@ def test_a_missing_answers_file_is_an_error_with_a_next_step(tmp_path: Path) -> 
     assert "Next" in errors
 
 
-def test_plain_onboard_says_the_setup_page_is_not_built_and_how_to_use_answers() -> None:
-    exit_code, _, errors = run_goodall(["onboard"])
-
-    assert exit_code == exit_codes.ERROR
-    screen = one_line(errors)
-    assert "setup page" in screen
-    assert "goodall onboard --answers" in screen
-    assert "docs/answers-file.md" in screen
-    assert "By hand:" in screen
-
-
 def test_an_eval_config_a_person_edited_is_left_alone_with_a_warning(tmp_path: Path) -> None:
     answers_file = write_answers(tmp_path, answers_text(tmp_path))
     run_goodall(["onboard", "--answers", str(answers_file)])

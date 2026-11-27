@@ -1,0 +1,560 @@
+<!doctype html>
+<!--
+The goodall setup page (ADR 0012). goodall.setup_page writes a copy of this
+file for each run of `goodall onboard`, filling in the two marked places:
+the starting answers (with the one-time code) and the portable part of the
+script, src/goodall/setup_page_answers.js. Nothing is listening behind the
+page and it loads nothing: its one way out is the answers file the Finish
+setup button hands the browser to save, which the waiting goodall onboard
+picks up from the Downloads folder.
+
+The design is the prototype on branch prototype/onboard-page (checklist
+layout, khaki and forest, the binoculars), brought up to date with account
+mode (ADR 0021) and a record repo that stays on this Mac (ADR 0023).
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; form-action 'none'; base-uri 'none'">
+<title>goodall setup</title>
+<style>
+  :root {
+    /* Khaki paper, forest ink, red-earth for trouble. */
+    --paper: #efe8d6; --paper-deep: #e4dac2; --card: #fbf8ef; --ink: #2a251c; --muted: #6b6455;
+    --line: #cfc5aa; --forest: #2f4a39; --forest-ink: #f6f2e4; --canopy: #dde6d2;
+    --earth: #9a4a22; --earth-soft: #f3dfd0; --ochre: #8a6412; --ochre-soft: #f4e8c4;
+    --code-bg: #e9e1cb; --radius: 10px;
+    --serif: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      /* The same forest at night. */
+      --paper: #171b16; --paper-deep: #111410; --card: #20261f; --ink: #ece6d3; --muted: #a8a28e;
+      --line: #3a4236; --forest: #9ccaa9; --forest-ink: #13201a; --canopy: #263326;
+      --earth: #e8a27e; --earth-soft: #3b261c; --ochre: #e2c877; --ochre-soft: #36301a;
+      --code-bg: #2a3027;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--paper); color: var(--ink); font: 16px/1.55 var(--sans); padding-bottom: 64px; }
+  h1, h2, h3, .title { font-family: var(--serif); }
+  h1 { font-size: 1.9rem; line-height: 1.2; margin: 0 0 .35rem; font-weight: 600; }
+  h3 { font-size: 1.05rem; margin: 0 0 .5rem; }
+  p { margin: 0 0 .75rem; }
+  .muted { color: var(--muted); }
+  .small { font-size: .875rem; }
+  code, pre, .mono { font-family: var(--mono); font-size: .85rem; }
+  code { background: var(--code-bg); padding: .1em .35em; border-radius: 4px; }
+
+  /* Masthead: a strip of far hills, and the binoculars. */
+  .masthead { background: var(--paper-deep); border-bottom: 1px solid var(--line); position: relative; overflow: hidden; }
+  .masthead svg.hills { position: absolute; left: 0; right: 0; bottom: 0; width: 100%; height: 100%; opacity: .55; }
+  .masthead .inner { position: relative; max-width: 780px; margin: 0 auto; padding: 22px 20px 20px; display: flex; gap: 14px; align-items: center; }
+  .masthead .mark { color: var(--forest); flex: none; }
+  .masthead .wordmark { font-family: var(--serif); font-size: 1.35rem; font-weight: 600; letter-spacing: .01em; }
+  .masthead .tagline { color: var(--muted); font-size: .875rem; }
+
+  .wrap { max-width: 780px; margin: 30px auto; padding: 0 16px; }
+  .stage { margin: 30px 0 10px; display: flex; align-items: center; gap: 10px; font-size: .78rem; letter-spacing: .09em; text-transform: uppercase; color: var(--muted); }
+  .stage::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+  .stage .num { font-family: var(--serif); font-size: 1rem; letter-spacing: 0; color: var(--forest); text-transform: none; }
+
+  .item { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); margin-bottom: 10px; }
+  .head { display: flex; gap: 12px; align-items: center; padding: 14px 16px; cursor: pointer; width: 100%; text-align: left; border: none; background: none; border-radius: var(--radius); color: var(--ink); font: inherit; }
+  .head .title { font-weight: 600; font-size: 1.05rem; flex: 0 1 auto; }
+  .head .summary { color: var(--muted); font-size: .875rem; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; }
+  .head .chevron { color: var(--muted); flex: none; transition: transform .15s; }
+  .head[aria-expanded="true"] .chevron { transform: rotate(90deg); }
+  .body { padding: 4px 16px 16px; border-top: 1px solid var(--line); }
+  .tick { display: flex; gap: 12px; align-items: flex-start; padding: 13px 16px; cursor: pointer; }
+  .tick input { margin-top: 5px; accent-color: var(--forest); width: 16px; height: 16px; }
+  .tick strong { font-family: var(--serif); font-size: 1.05rem; }
+
+  .badge { flex: none; display: inline-block; font-size: .72rem; letter-spacing: .04em; border-radius: 999px; padding: 2px 10px; text-transform: uppercase; }
+  .badge.ok { background: var(--canopy); color: var(--forest); }
+  .badge.todo { background: var(--ochre-soft); color: var(--ochre); }
+
+  .choice { display: flex; gap: 12px; flex-wrap: wrap; margin: 14px 0 4px; }
+  .choice label { flex: 1 1 240px; border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; cursor: pointer; background: var(--card); }
+  .choice label.on { border-color: var(--forest); background: var(--canopy); }
+  .choice input { margin-right: 6px; accent-color: var(--forest); }
+  .choice .label-note { font-size: .72rem; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); margin-left: 4px; }
+
+  label.field, div.field { display: block; margin: 0 0 16px; }
+  .name { display: block; font-weight: 600; margin-bottom: 2px; }
+  .help { display: block; color: var(--muted); font-size: .875rem; margin-bottom: 6px; }
+  input[type=text], textarea, select { width: 100%; font: inherit; color: var(--ink); background: var(--paper); border: 1px solid var(--line); border-radius: 8px; padding: 9px 11px; }
+  input[type=text]::placeholder, textarea::placeholder { color: var(--muted); opacity: .75; }
+  textarea { min-height: 120px; resize: vertical; }
+  input:focus, textarea:focus, select:focus, button:focus-visible { outline: 2px solid var(--forest); outline-offset: 1px; }
+  .problem { color: var(--earth); font-size: .875rem; margin-top: 4px; }
+  .problem:empty { display: none; }
+  .chips { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+  .chip { background: var(--canopy); color: var(--forest); border-radius: 999px; padding: 3px 6px 3px 12px; font-size: .875rem; display: inline-flex; align-items: center; gap: 4px; word-break: break-all; }
+  .chip button { border: none; background: none; padding: 0 6px; color: inherit; opacity: .7; cursor: pointer; font: inherit; }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .row input[type=text] { flex: 1 1 200px; width: auto; }
+  .reference-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 4px; }
+  .reference-row input[type=text] { flex: 1 1 220px; width: auto; }
+  button.plain { font: inherit; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--ink); padding: 8px 14px; cursor: pointer; }
+  .note { background: var(--canopy); border-radius: 8px; padding: 10px 12px; font-size: .875rem; margin-bottom: 14px; }
+  .note.caution { background: var(--ochre-soft); color: var(--ochre); }
+  .note.trouble { background: var(--earth-soft); color: var(--earth); }
+  ul.plain { margin: .35rem 0 0; padding-left: 1.1rem; }
+
+  .finish { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 20px; }
+  .filelist { width: 100%; border-collapse: collapse; font-size: .875rem; margin-bottom: 16px; }
+  .filelist td { padding: 7px 8px; border-top: 1px solid var(--line); vertical-align: top; }
+  .filelist td.path { font-family: var(--mono); font-size: .82rem; word-break: break-all; }
+  button.finish-button { font: inherit; font-weight: 600; font-size: 1.05rem; border: none; border-radius: 9px; background: var(--forest); color: var(--forest-ink); padding: 12px 22px; cursor: pointer; }
+  button.finish-button:disabled { opacity: .45; cursor: not-allowed; }
+  .handed { margin-top: 16px; border-left: 3px solid var(--forest); padding: 4px 0 4px 14px; }
+  .noscript { margin: 30px auto; max-width: 780px; padding: 0 16px; }
+</style>
+</head>
+<body>
+<header class="masthead">
+  <svg class="hills" viewBox="0 0 800 90" preserveAspectRatio="none" aria-hidden="true">
+    <path d="M0 70 C 90 40, 150 52, 230 44 S 380 20, 470 38 S 640 62, 800 30 L800 90 L0 90 Z" fill="var(--line)" opacity=".55"/>
+    <path d="M0 82 C 120 58, 210 74, 320 62 S 520 50, 620 66 S 740 74, 800 60 L800 90 L0 90 Z" fill="var(--forest)" opacity=".22"/>
+  </svg>
+  <div class="inner">
+    <svg class="mark" width="46" height="34" viewBox="0 0 46 34" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <!-- a pair of binoculars, seen from behind -->
+      <circle cx="11" cy="23" r="9"/><circle cx="35" cy="23" r="9"/>
+      <path d="M8 14.5 L11 4 h6 l2 9"/><path d="M38 14.5 L35 4 h-6 l-2 9"/>
+      <path d="M19 13 h8"/><path d="M20 21 h6"/>
+    </svg>
+    <div>
+      <div class="wordmark">goodall</div>
+      <div class="tagline">For observing interactions between apes and their tools.</div>
+    </div>
+  </div>
+</header>
+
+<noscript><div class="noscript"><p>This page needs JavaScript to fill in your answers. Turn JavaScript on for local files, or set up without the page: write an answers file as docs/answers-file.md in goodall's documentation shows, and run <code>goodall onboard --answers</code> with its path.</p></div></noscript>
+<div id="app"></div>
+
+<script type="application/json" id="goodall-starting-answers">GOODALL_STARTING_ANSWERS</script>
+<script>
+/*GOODALL_PORTABLE_PART*/
+</script>
+<script>
+// ---------------------------------------------------------------------------
+// The page itself: drawing the answers and reacting to the person. It only
+// calls the portable part above to decide what is wrong and what to save.
+// ---------------------------------------------------------------------------
+
+var starting = JSON.parse(document.getElementById("goodall-starting-answers").textContent);
+var state = startingState(starting);
+var openItem = "";
+var ticked = { account: false, manager: false };   // steps done away from this page
+var finishPresses = 0;
+
+function escapeHtml(text) {
+  return String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+// Values are kept in `state` under dotted places such as "contributor.id".
+function valueAt(place) {
+  var parts = place.split(".");
+  var value = state;
+  for (var index = 0; index < parts.length; index++) {
+    value = value[parts[index]];
+  }
+  return value;
+}
+
+function setValueAt(place, value) {
+  var parts = place.split(".");
+  var holder = state;
+  for (var index = 0; index < parts.length - 1; index++) {
+    holder = holder[parts[index]];
+  }
+  holder[parts[parts.length - 1]] = value;
+}
+
+function problemLine(place) {
+  var problem = problemsIn(state)[place];
+  return '<div class="problem" data-problem="' + place + '">' + (problem ? escapeHtml(problem) : "") + "</div>";
+}
+
+function textField(place, name, help, placeholder) {
+  return '<label class="field"><span class="name">' + name + '</span><span class="help">' + help + "</span>" +
+    '<input type="text" data-field="' + place + '" value="' + escapeHtml(valueAt(place)) + '" placeholder="' + escapeHtml(placeholder || "") + '">' +
+    problemLine(place) + "</label>";
+}
+
+function choiceField(groupName, place, options) {
+  var html = '<div class="choice">';
+  for (var index = 0; index < options.length; index++) {
+    var option = options[index];
+    var chosen = valueAt(place) === option.value;
+    html += '<label class="' + (chosen ? "on" : "") + '"><input type="radio" name="' + groupName + '" data-choice="' + place + '" value="' + option.value + '"' +
+      (chosen ? " checked" : "") + "><strong>" + option.title + "</strong>" + (option.note ? '<span class="label-note">' + option.note + "</span>" : "") +
+      '<div class="small muted">' + option.text + "</div></label>";
+  }
+  return html + "</div>";
+}
+
+function accountModeField() {
+  return choiceField("account_mode", "account_mode", [
+    { value: "dedicated", title: "An eval account", note: "recommended",
+      text: "A macOS user account used for this eval and nothing else. Signing in to it means recording; signing out stops." },
+    { value: "mixed", title: "Try it out", note: "",
+      text: "Record in this macOS user account, which you also use for other things. Nothing is recorded until you start a work block. Any agent conversation held while recording is copied whole, whatever it was about." }
+  ]);
+}
+
+function evalField() {
+  return choiceField("eval", "eval", [
+    { value: "new", title: "I am starting a new eval", note: "",
+      text: "You will name it, list its workstreams and write its construct. Goodall makes its record repo." },
+    { value: "existing", title: "This Mac already has the eval's record repo", note: "",
+      text: "Its record repo and eval.toml are already here, from an earlier setup. Goodall uses them as they are." }
+  ]);
+}
+
+// A list of short names shown as chips, for workstreams and repositories.
+function chipsField(place, name, help, placeholder, problemPlace) {
+  var items = valueAt(place);
+  var chips = "";
+  for (var index = 0; index < items.length; index++) {
+    chips += '<span class="chip">' + escapeHtml(items[index]) + '<button title="Remove" data-action="remove-chip" data-place="' + place + '" data-index="' + index + '">×</button></span>';
+  }
+  return '<div class="field"><span class="name">' + name + '</span><span class="help">' + help + "</span>" +
+    '<div class="chips">' + chips + '</div><div class="row"><input type="text" data-new-chip="' + place + '" placeholder="' + escapeHtml(placeholder) + '">' +
+    '<button class="plain" data-action="add-chip" data-place="' + place + '">Add</button></div>' + problemLine(problemPlace) + "</div>";
+}
+
+function evalItemBody() {
+  var html = textField("new_eval.name", "Eval name", "A short name used in file names and reports.", "goodall-pilot") +
+    textField("new_eval.description", "What the work is", "One sentence, shown beside the eval's name. It goes in the eval config, which is made to be published, so no email addresses.", "Building a product to first recurring revenue with AI agents.") +
+    chipsField("new_eval.workstreams", "Workstreams", "The divisions of the work, used to attribute effort and cost. Lowercase, with hyphens: go-to-market.", "Add a workstream", "new_eval.workstreams") +
+    chipsField("new_eval.repositories", "Where the work is", "The repositories the eval's work is in, by name: host/owner/name. Every path in them counts.", "github.com/your-org/goodall-pilot-app", "new_eval.repositories");
+  if (state.account_mode === "dedicated") {
+    html += '<label class="field" style="display:flex;gap:10px;align-items:flex-start"><input type="checkbox" data-flag="new_eval.activitywatch"' + (state.new_eval.activitywatch ? " checked" : "") +
+      ' style="margin-top:5px;accent-color:var(--forest)"><span><span class="name">Also record which apps and windows are in front, with ActivityWatch</span>' +
+      '<span class="help">ActivityWatch has to be installed and given its own port by hand first (Part 3 of setup-by-hand.md in goodall\'s documentation). Leave this off if you are not sure.</span></span></label>';
+  }
+  return html;
+}
+
+function constructItemBody() {
+  return '<label class="field"><span class="name">The construct</span><span class="help">The question this eval sets out to measure, written before the work starts. You can refine it later; its history is kept.</span>' +
+    '<textarea data-field="new_eval.construct" placeholder="Which parts of the work needed to reach first recurring revenue can be delegated to AI agents, and which human interventions are indispensable?">' +
+    escapeHtml(state.new_eval.construct) + "</textarea>" + problemLine("new_eval.construct") + "</label>";
+}
+
+function mainWorkstreamField() {
+  var workstreams = state.eval === "new" ? state.new_eval.workstreams : state.known_workstreams;
+  if (workstreams.length === 0) {
+    return textField("contributor.main_workstream", "Your main workstream", "Type one of the eval's workstreams. Goodall checks it against the eval config.", "research");
+  }
+  var options = "";
+  for (var index = 0; index < workstreams.length; index++) {
+    var workstream = workstreams[index];
+    options += '<option value="' + escapeHtml(workstream) + '"' + (workstream === state.contributor.main_workstream ? " selected" : "") + ">" + escapeHtml(workstream) + "</option>";
+  }
+  return '<label class="field"><span class="name">Your main workstream</span><span class="help">You choose a workstream each time you start a work block. This is only the default.</span>' +
+    '<select data-field="contributor.main_workstream"><option value="">Choose one</option>' + options + "</select>" + problemLine("contributor.main_workstream") + "</label>";
+}
+
+function whoItemBody() {
+  var html = "";
+  if (state.eval === "new") {
+    html += textField("contributor.display_name", "Your display name", "Shown beside your work in the record. Not your email address.", "Ada Lovelace");
+  }
+  html += textField("contributor.id", "Your contributor id",
+    state.eval === "new" ? "On every record you make. Made from your display name unless you change it." : "As the eval config's roster has it.", "ada-lovelace");
+  return html + mainWorkstreamField();
+}
+
+function whereItemBody() {
+  return textField("folders.record_repo", "Record repo folder",
+      state.eval === "new" ? "Where goodall keeps the eval's own records: a git repository on this Mac that goodall commits to and never pushes. It must not exist yet, or be empty." : "The folder of the eval's record repo on this Mac.",
+      "~/evals/goodall-pilot-records") +
+    textField("folders.log_directory", "Log directory", "The folder for raw records: transcripts and telemetry. Only this macOS user account can open it. A name ending in .noindex keeps Spotlight out of it.", "~/evals/goodall-pilot-logs.noindex") +
+    '<div class="note caution">This page cannot look at your Mac, so it cannot tell whether these folders exist. Goodall checks them when you finish, and tells you in Terminal.</div>';
+}
+
+function referenceRows() {
+  var html = "";
+  for (var index = 0; index < state.secret_references.length; index++) {
+    var row = state.secret_references[index];
+    html += '<div class="field"><div class="reference-row">' +
+      '<input type="text" class="mono" data-reference-name="' + index + '" value="' + escapeHtml(row.name) + '" placeholder="ANTHROPIC_API_KEY_RESEARCH" aria-label="Variable name">' +
+      '<input type="text" class="mono" data-reference-value="' + index + '" value="' + escapeHtml(row.reference) + '" placeholder="op://vault/item/field" aria-label="Secret reference">' +
+      '<button class="plain" data-action="remove-reference" data-index="' + index + '" title="Remove">Remove</button></div>' +
+      problemLine("secret_references." + index) + "</div>";
+  }
+  return html;
+}
+
+function secretsItemBody() {
+  var html = '<label class="field" style="display:flex;gap:10px;align-items:flex-start"><input type="checkbox" data-flag="uses_api_keys"' + (state.uses_api_keys ? " checked" : "") +
+    ' style="margin-top:5px;accent-color:var(--forest)"><span><span class="name">Some of my work blocks will be billed to API keys</span>' +
+    '<span class="help">Leave this off if you only use a Claude subscription. You can add keys later.</span></span></label>';
+  if (!state.uses_api_keys) {
+    return html;
+  }
+  return html + '<div class="note">Paste <strong>references</strong>, not keys. A reference names where a key lives in 1Password, op://vault/item/field; goodall never sees the key itself. A row left blank is left out.</div>' +
+    referenceRows() + '<button class="plain" data-action="add-reference">Add a reference</button>';
+}
+
+function itemSummary(id) {
+  if (id === "eval") return state.new_eval.name ? state.new_eval.name + " · " + state.new_eval.workstreams.length + " workstreams" : "";
+  if (id === "construct") return state.new_eval.construct;
+  if (id === "who") return state.contributor.id ? state.contributor.id + " · " + state.contributor.main_workstream : "";
+  if (id === "where") return state.folders.record_repo && state.folders.log_directory ? state.folders.record_repo + " · " + state.folders.log_directory : "";
+  if (id === "secrets") return state.uses_api_keys ? "API keys, by reference" : "no API keys";
+  return "";
+}
+
+var ITEM_PLACES = {
+  eval: ["new_eval.name", "new_eval.description", "new_eval.workstreams", "new_eval.repositories"],
+  construct: ["new_eval.construct"],
+  who: ["contributor.display_name", "contributor.id", "contributor.main_workstream"],
+  where: ["folders.record_repo", "folders.log_directory"],
+  secrets: ["secret_references."]
+};
+
+function itemIsDone(id) {
+  var problems = problemsIn(state);
+  var places = ITEM_PLACES[id];
+  for (var place in problems) {
+    for (var index = 0; index < places.length; index++) {
+      if (place === places[index] || (places[index].slice(-1) === "." && place.indexOf(places[index]) === 0)) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+function badge(id) {
+  return itemIsDone(id) ? ["ok", "done"] : ["todo", "to do"];
+}
+
+function checklistItem(id, title, body) {
+  var shown = badge(id);
+  var open = openItem === id;
+  return '<div class="item"><button class="head" data-action="open" data-item="' + id + '" aria-expanded="' + open + '">' +
+    '<span class="badge ' + shown[0] + '" data-badge="' + id + '">' + shown[1] + "</span>" +
+    '<span class="title">' + title + '</span><span class="summary" data-summary="' + id + '">' + escapeHtml(itemSummary(id)) + "</span>" +
+    '<span class="chevron" aria-hidden="true">›</span></button>' +
+    (open ? '<div class="body"><div style="margin-top:14px">' + body() + "</div></div>" : "") + "</div>";
+}
+
+function tickItem(key, title, help) {
+  return '<div class="item"><label class="tick"><input type="checkbox" data-tick="' + key + '"' + (ticked[key] ? " checked" : "") + "><span><strong>" + title +
+    '</strong><span class="muted small" style="display:block">' + help + "</span></span></label></div>";
+}
+
+function finishBlock() {
+  var problems = problemsIn(state);
+  var messages = [];
+  for (var place in problems) {
+    messages.push(problems[place]);
+  }
+  var changes = changesGoodallMakes(state, starting.places);
+  var rows = "";
+  for (var index = 0; index < changes.length; index++) {
+    rows += '<tr><td class="path">' + escapeHtml(changes[index][0]) + '</td><td class="muted">' + escapeHtml(changes[index][1]) + "</td></tr>";
+  }
+  var html = "<h3>When you finish, goodall sets up these</h3><p class=\"small muted\">Goodall shows its own list in Terminal first, and changes nothing that is already right.</p>" +
+    '<table class="filelist">' + rows + "</table>";
+  if (messages.length) {
+    html += '<div class="note trouble"><strong>' + messages.length + (messages.length === 1 ? " answer needs" : " answers need") + " attention first.</strong><ul class=\"plain\">";
+    for (var messageIndex = 0; messageIndex < messages.length; messageIndex++) {
+      html += "<li>" + escapeHtml(messages[messageIndex]) + "</li>";
+    }
+    html += "</ul></div>";
+  }
+  html += '<button class="finish-button" data-action="finish"' + (messages.length ? " disabled" : "") + ">Finish setup</button>";
+  if (finishPresses > 0 && !messages.length) {
+    html += '<div class="handed"><strong>Your browser has saved your answers as ' + escapeHtml(starting.answers_file_name) + " in " + escapeHtml(starting.downloads_folder) + ".</strong><br>" +
+      "Go back to the Terminal window where you ran goodall onboard. Goodall picks up the file, shows every change it will make, makes them, and reports there. " +
+      "If your browser asked where to save it, or saved it somewhere else, move it into " + escapeHtml(starting.downloads_folder) + ". " +
+      "If Terminal shows a problem, change that answer here and press Finish setup again.</div>";
+  }
+  return html;
+}
+
+function render() {
+  var isNewEval = state.eval === "new";
+  var before = "";
+  if (state.account_mode === "dedicated") {
+    before += tickItem("account", "Create a standard macOS user account for this eval, and sign in to it",
+      "System Settings → Users &amp; Groups → Add User, type Standard. You should be reading this page from that account.");
+  }
+  before += tickItem("manager", "If the eval uses API keys, sign in to 1Password in this account", "Goodall only ever handles references to keys; 1Password hands the keys to the programs that need them.");
+  var answerItems = "";
+  if (isNewEval) {
+    answerItems += checklistItem("eval", "Name the eval and its workstreams", evalItemBody) + checklistItem("construct", "Write the construct", constructItemBody);
+  }
+  answerItems += checklistItem("who", "About you", whoItemBody) + checklistItem("where", "Where things live on this Mac", whereItemBody) + checklistItem("secrets", "Secrets", secretsItemBody);
+  document.getElementById("app").innerHTML =
+    '<div class="wrap"><h1>' + escapeHtml(starting.page_title) + "</h1>" +
+    '<p class="muted">An eval is a study of real work done with AI agents. Goodall records what you and your agents each did, so the record can be analyzed. Everything it records stays on this Mac. Nothing is uploaded: you share only an export you choose to make.</p>' +
+    '<div class="stage"><span class="num">1</span> How you will record</div>' + accountModeField() + evalField() +
+    '<div class="stage"><span class="num">2</span> Before this page · on your Mac</div>' + before +
+    '<div class="stage"><span class="num">3</span> On this page · your answers</div>' + answerItems +
+    '<div class="stage"><span class="num">4</span> Finish</div><div class="finish" data-live="finish"></div></div>';
+  refreshLive();
+}
+
+function refreshLive() {
+  // Update what depends on the answers without redrawing the inputs, so the
+  // cursor stays where the person is typing.
+  var problems = problemsIn(state);
+  var problemElements = document.querySelectorAll("[data-problem]");
+  for (var index = 0; index < problemElements.length; index++) {
+    problemElements[index].textContent = problems[problemElements[index].getAttribute("data-problem")] || "";
+  }
+  var summaries = document.querySelectorAll("[data-summary]");
+  for (var summaryIndex = 0; summaryIndex < summaries.length; summaryIndex++) {
+    summaries[summaryIndex].textContent = itemSummary(summaries[summaryIndex].getAttribute("data-summary"));
+  }
+  var badges = document.querySelectorAll("[data-badge]");
+  for (var badgeIndex = 0; badgeIndex < badges.length; badgeIndex++) {
+    var shown = badge(badges[badgeIndex].getAttribute("data-badge"));
+    badges[badgeIndex].className = "badge " + shown[0];
+    badges[badgeIndex].textContent = shown[1];
+  }
+  var finish = document.querySelector('[data-live="finish"]');
+  if (finish) finish.innerHTML = finishBlock();
+}
+
+// Put a suggested value into its box too, when the box is on the page.
+function showSuggested(place) {
+  var input = document.querySelector('[data-field="' + place + '"]');
+  if (input) input.value = valueAt(place);
+}
+
+function followSuggestions() {
+  if (state.eval === "new" && !state.edited.contributor_id) {
+    state.contributor.id = contributorIdFrom(state.contributor.display_name);
+    showSuggested("contributor.id");
+  }
+  if (state.eval === "new" && !state.edited.folders) {
+    var folders = suggestedFolders(state.new_eval.name);
+    state.folders.record_repo = folders.record_repo;
+    state.folders.log_directory = folders.log_directory;
+    showSuggested("folders.record_repo");
+    showSuggested("folders.log_directory");
+  }
+}
+
+function addChip(place) {
+  var input = document.querySelector('[data-new-chip="' + place + '"]');
+  var value = input.value.trim();
+  if (place === "new_eval.workstreams") value = value.toLowerCase();
+  var items = valueAt(place);
+  if (value && items.indexOf(value) === -1) {
+    items.push(value);
+    if (place === "new_eval.workstreams" && !state.contributor.main_workstream) state.contributor.main_workstream = value;
+    render();
+    var again = document.querySelector('[data-new-chip="' + place + '"]');
+    if (again) again.focus();
+  }
+}
+
+function suggestedReferenceRows() {
+  var workstreams = state.eval === "new" ? state.new_eval.workstreams : state.known_workstreams;
+  var rows = [];
+  for (var index = 0; index < workstreams.length; index++) {
+    rows.push({ name: variableNameFor(workstreams[index]), reference: "" });
+  }
+  if (rows.length === 0) rows.push({ name: "ANTHROPIC_API_KEY", reference: "" });
+  return rows;
+}
+
+document.addEventListener("input", function (event) {
+  var target = event.target;
+  var place = target.getAttribute("data-field");
+  if (place) {
+    setValueAt(place, target.value);
+    if (place === "contributor.id") state.edited.contributor_id = true;
+    if (place === "folders.record_repo" || place === "folders.log_directory") state.edited.folders = true;
+    if (place === "contributor.display_name" || place === "new_eval.name") followSuggestions();
+  } else if (target.hasAttribute("data-reference-name")) {
+    state.secret_references[Number(target.getAttribute("data-reference-name"))].name = target.value;
+  } else if (target.hasAttribute("data-reference-value")) {
+    state.secret_references[Number(target.getAttribute("data-reference-value"))].reference = target.value;
+  } else {
+    return;
+  }
+  refreshLive();
+});
+
+document.addEventListener("change", function (event) {
+  var target = event.target;
+  if (target.hasAttribute("data-choice")) {
+    setValueAt(target.getAttribute("data-choice"), target.value);
+    render();
+  } else if (target.hasAttribute("data-flag")) {
+    var flag = target.getAttribute("data-flag");
+    setValueAt(flag, target.checked);
+    if (flag === "uses_api_keys" && target.checked && state.secret_references.length === 0) {
+      state.secret_references = suggestedReferenceRows();
+    }
+    render();
+  } else if (target.hasAttribute("data-tick")) {
+    ticked[target.getAttribute("data-tick")] = target.checked;
+  }
+});
+
+document.addEventListener("keydown", function (event) {
+  if (event.key === "Enter" && event.target.hasAttribute && event.target.hasAttribute("data-new-chip")) {
+    event.preventDefault();
+    addChip(event.target.getAttribute("data-new-chip"));
+  }
+});
+
+document.addEventListener("click", function (event) {
+  var target = event.target.closest("[data-action]");
+  if (!target) return;
+  var action = target.getAttribute("data-action");
+  if (action === "add-chip") {
+    addChip(target.getAttribute("data-place"));
+  } else if (action === "remove-chip") {
+    var place = target.getAttribute("data-place");
+    var removed = valueAt(place).splice(Number(target.getAttribute("data-index")), 1)[0];
+    if (place === "new_eval.workstreams" && state.contributor.main_workstream === removed) {
+      state.contributor.main_workstream = state.new_eval.workstreams[0] || "";
+    }
+    render();
+  } else if (action === "add-reference") {
+    state.secret_references.push({ name: "ANTHROPIC_API_KEY", reference: "" });
+    render();
+  } else if (action === "remove-reference") {
+    state.secret_references.splice(Number(target.getAttribute("data-index")), 1);
+    render();
+  } else if (action === "open") {
+    openItem = openItem === target.getAttribute("data-item") ? "" : target.getAttribute("data-item");
+    render();
+  } else if (action === "finish") {
+    if (Object.keys(problemsIn(state)).length) return;
+    // The page's one way out: it hands the browser one small file to save.
+    // The waiting goodall onboard picks it up from the Downloads folder.
+    var blob = new Blob([answersFileText(state, starting.one_time_code)], { type: "text/plain;charset=utf-8" });
+    var link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = starting.answers_file_name;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setTimeout(function () { URL.revokeObjectURL(link.href); }, 60000);
+    finishPresses += 1;
+    refreshLive();
+  }
+});
+
+render();
+</script>
+</body>
+</html>
