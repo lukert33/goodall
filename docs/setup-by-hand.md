@@ -69,6 +69,13 @@ Claude, Antigravity or Codex sign-ins.
 An eval account cannot install software for the whole Mac, so these come
 first.
 
+**Or let goodall create the eval account.** The administrator install
+([administrator-install.md](administrator-install.md)) installs nothing
+for you, but after the installs below, and goodall itself in
+`/usr/local/goodall`, it creates the eval account and stages its first
+sign-in setup, which then does Parts 4 and 5 by itself. **Not yet
+confirmed** on a real Mac.
+
 - [ ] Create the eval account: System Settings, Users & Groups, Add User,
       with the account type **Standard**.
 - [ ] Install, for every account on the Mac: `git`, ActivityWatch, and
@@ -357,10 +364,12 @@ What changes in mixed account mode:
   (`account_mode`), and `goodall status` shows the mode.
 
 Of the safeguards ADR 0021 plans for mixed account mode, the menu bar icon
-is built: it turns orange while a work block is active. The notifications
-and the automatic timeout are not built yet, so nothing tells you a work
-block has been left running; glance at the icon, or run `goodall status`,
-when unsure.
+is built: it turns orange while a work block is active. So are the
+notifications, shown when recording starts or stops without your own
+command (docs/work-block-endings.md). The automatic timeout is not built
+yet, so nothing tells you a work block has been left running until goodall
+closes it as idle; glance at the icon, or run `goodall status`, when
+unsure.
 
 ## Part 5: The Claude Code hooks
 

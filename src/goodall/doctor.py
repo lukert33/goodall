@@ -46,6 +46,7 @@ from goodall import exit_codes
 from goodall.activitywatch_checks import ACTIVITYWATCH_CHECKS
 from goodall.checks import Check, CheckContext, run_checks
 from goodall.claude_code_checks import CLAUDE_CODE_CHECKS
+from goodall.first_sign_in_checks import FIRST_SIGN_IN_CHECKS
 from goodall.program_checks import PROGRAM_CHECKS
 from goodall.runner import Runner
 from goodall.secrets_checks import CHECKS_UNVERIFIABLE_WITHOUT_A_SECRET, SECRETS_CHECKS
@@ -62,7 +63,9 @@ DOCTOR_JSON_SCHEMA_VERSION = 1
 # other programs (tools, the eval account, the record repo); then the
 # checks of the env file and the shared env file (secrets); then Claude
 # Code's hooks; then the active work block's telemetry receiver; last, the
-# eval account's ActivityWatch, which only an eval that includes it asks about. A check
+# eval account's ActivityWatch, which only an eval that includes it asks about;
+# and after everything about this account, the first sign-in setup shared by
+# the whole Mac (goodall.first_sign_in_checks). A check
 # is shown under its group's heading wherever it runs: the secrets
 # manager's command, which waits for the env file, is shown under "Tools".
 DOCTOR_CHECKS: list[Check] = [
@@ -72,6 +75,7 @@ DOCTOR_CHECKS: list[Check] = [
     *CLAUDE_CODE_CHECKS,
     *TELEMETRY_CHECKS,
     *ACTIVITYWATCH_CHECKS,
+    *FIRST_SIGN_IN_CHECKS,
 ]
 
 
