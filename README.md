@@ -42,7 +42,7 @@ These commands work today:
 | `goodall intervene` | Records an **intervention**: a moment you overrode, corrected or rescued an agent. |
 | `goodall timeline` | Shows one ended work block in time order: who did what and when, with no private text ([docs/timeline.md](docs/timeline.md)). |
 | `goodall onboard` | Sets up this macOS user account for an eval: the record repo, the log directory, local settings, the env file and the Claude Code hooks. It opens the **setup page** in your browser, waits for the answers file its Finish setup button saves, shows every change first and then makes them ([docs/setup-page.md](docs/setup-page.md)). With `--answers <file>` it sets up from an **answers file** you wrote instead ([docs/answers-file.md](docs/answers-file.md)); `--plan` shows the changes without making any. |
-| `goodall settings` | Opens the setup page in your browser with this account's current answers filled in, waits for the file its Save settings button saves, and applies what changed. Its first use is adding a workstream: it adds the name to `eval.toml`'s workstreams, commits that in the record repo, and changes nothing else in `eval.toml` ([docs/setup-page.md](docs/setup-page.md)). The menu bar icon's Settings… item runs it. `--plan` shows the changes without making any. |
+| `goodall settings` | Opens the setup page in your browser with this account's current answers filled in, waits for the file its Save settings button saves, and applies what changed. Its first use is adding a workstream: it adds the name to `eval.toml`'s workstreams, commits that in the record repo, and changes nothing else in `eval.toml` ([docs/setup-page.md](docs/setup-page.md)). The menu bar icon's Settings… item runs it, and the rest of the menu goes on working while the page is open. `--plan` shows the changes without making any. |
 | `goodall doctor` | Checks the account and setup, and changes nothing. |
 | `goodall hook` | Called by Claude Code, not by people. It is the prompt gate, and it leaves heartbeats. |
 | `goodall icon-state` | Called by the menu bar icon, every minute. Says whether goodall is recording, paused or not recording, and changes nothing ([docs/menu-bar-icon.md](docs/menu-bar-icon.md)). |
@@ -54,7 +54,11 @@ Run from an administrator account, `goodall onboard` can also create the
 eval account: answer "Create it for me" on the setup page, and the rest of
 setup finishes by itself at that account's first sign-in
 ([docs/administrator-install.md](docs/administrator-install.md), not yet
-tried on a real Mac). The steps goodall onboard does not do, such as giving
+tried on a real Mac). Every field on the setup page is named for screen
+readers. When git has no name or email, goodall gives the record repo it
+makes an identity of its own, your display name and an address that
+reaches nobody, and leaves your global git settings alone
+([docs/answers-file.md](docs/answers-file.md)). The steps goodall onboard does not do, such as giving
 ActivityWatch its own port, are in
 [docs/setup-by-hand.md](docs/setup-by-hand.md), with the rest of setup done
 by hand.
