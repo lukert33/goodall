@@ -22,13 +22,19 @@ The folder goodall looks in for the menu bar icon's helper is pointed at a
 fresh empty folder as well. The real one is `/Applications`, shared by the
 whole Mac, and a developer who has the helper installed there would
 otherwise have every `goodall start` in a test try to start it.
+
+The places the administrator install uses (goodall.system_places) are
+pointed at fresh empty folders too: `/Users`, `/Library/LaunchAgents`,
+`/Library/Application Support/goodall` and `/usr/local/goodall` are shared
+by the whole Mac, and no test may read what a real install put there, let
+alone write to it.
 """
 
 from pathlib import Path
 
 import pytest
 
-from goodall import menu_bar_icon
+from goodall import menu_bar_icon, system_places
 
 
 @pytest.fixture(autouse=True)
@@ -64,3 +70,16 @@ def isolated_home_folder(tmp_path_factory: pytest.TempPathFactory, monkeypatch: 
 def isolated_applications_folder(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> None:
     applications_folder = tmp_path_factory.mktemp("isolated-applications")
     monkeypatch.setattr(menu_bar_icon, "APPLICATIONS_FOLDER", Path(applications_folder))
+
+
+@pytest.fixture(autouse=True)
+def isolated_system_places(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> None:
+    system_folder = Path(tmp_path_factory.mktemp("isolated-system-places"))
+    users_folder = system_folder / "Users"
+    launch_agents_folder = system_folder / "Library" / "LaunchAgents"
+    users_folder.mkdir()
+    launch_agents_folder.mkdir(parents=True)
+    monkeypatch.setattr(system_places, "USERS_FOLDER", users_folder)
+    monkeypatch.setattr(system_places, "LAUNCH_AGENTS_FOLDER", launch_agents_folder)
+    monkeypatch.setattr(system_places, "STAGING_FOLDER", system_folder / "Library" / "Application Support" / "goodall")
+    monkeypatch.setattr(system_places, "GOODALL_INSTALL_FOLDER", system_folder / "usr" / "local" / "goodall")
