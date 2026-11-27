@@ -68,8 +68,8 @@ display_name = "Ada Lovelace"
 main_workstream = "research"
 
 [folders]
-record_repo = "{tmp_path / "evals" / "goodall-pilot-records"}"
-log_directory = "{tmp_path / "evals" / "goodall-pilot-logs.noindex"}"
+record_repo = "~/evals/goodall-pilot-records"
+log_directory = "~/evals/goodall-pilot-logs.noindex"
 
 [eval_account]
 create = true
@@ -95,7 +95,7 @@ class Mac:
 
     @property
     def log_directory(self) -> Path:
-        return self.tmp_path / "evals" / "goodall-pilot-logs.noindex"
+        return self.home / "evals" / "goodall-pilot-logs.noindex"
 
     @property
     def sign_in_log(self) -> Path:

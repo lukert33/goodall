@@ -281,11 +281,16 @@ function whoItemBody() {
 }
 
 function whereItemBody() {
+  var creating = createsEvalAccount(state);
+  var owner = creating ? "the new eval account" : "this macOS user account";
+  var note = creating
+    ? "These folders go in the new account's home folder, so write them starting with ~/, which means that home there. Goodall makes them at the new account's first sign-in, and the log it opens then says whether anything went wrong."
+    : "This page cannot look at your Mac, so it cannot tell whether these folders exist. Goodall checks them when you finish, and tells you in Terminal.";
   return textField("folders.record_repo", "Record repo folder",
       state.eval === "new" ? "Where goodall keeps the eval's own records: a git repository on this Mac that goodall commits to and never pushes. It must not exist yet, or be empty." : "The folder of the eval's record repo on this Mac.",
       "~/evals/goodall-pilot-records") +
-    textField("folders.log_directory", "Log directory", "The folder for raw records: transcripts and telemetry. Only this macOS user account can open it. A name ending in .noindex keeps Spotlight out of it.", "~/evals/goodall-pilot-logs.noindex") +
-    '<div class="note caution">This page cannot look at your Mac, so it cannot tell whether these folders exist. Goodall checks them when you finish, and tells you in Terminal.</div>';
+    textField("folders.log_directory", "Log directory", "The folder for raw records: transcripts and telemetry. Only " + owner + " can open it. A name ending in .noindex keeps Spotlight out of it.", "~/evals/goodall-pilot-logs.noindex") +
+    '<div class="note caution">' + note + "</div>";
 }
 
 function referenceRows() {
@@ -376,6 +381,8 @@ function finishBlock() {
   }
   var intro = state.settings_run
     ? "<h3>When you save, goodall changes these</h3><p class=\"small muted\">It changes nothing that is already right.</p>"
+    : createsEvalAccount(state)
+    ? "<h3>When you finish, goodall sets up these</h3><p class=\"small muted\">Nothing is set up in this account. Goodall shows its own list, and every command it runs, in Terminal first.</p>"
     : "<h3>When you finish, goodall sets up these</h3><p class=\"small muted\">Goodall shows its own list in Terminal first, and changes nothing that is already right.</p>";
   var html = intro +
     '<table class="filelist">' + rows + "</table>";
@@ -395,6 +402,15 @@ function finishBlock() {
       "If goodall refuses your answers, it keeps waiting and this page stays good: change the answer and press Save settings again. " +
       "If the browser asked where to save, or saved the file somewhere else, move it into " + escapeHtml(starting.downloads_folder) + ". " +
       "What goodall printed is in Terminal if you ran goodall settings there, or in ~/Library/Logs/goodall/menu-bar-icon.log once it stops.</div>";
+  } else if (finishPresses > 0 && !messages.length && createsEvalAccount(state)) {
+    var accountName = escapeHtml(state.eval_account.name.trim());
+    html += '<div class="handed"><strong>Your browser has saved your answers as ' + escapeHtml(starting.answers_file_name) + " in " + escapeHtml(starting.downloads_folder) + ".</strong><br>" +
+      "Go back to the Terminal window where you ran goodall onboard. Goodall picks up the file and shows every change and every command before it runs one. " +
+      "There, macOS asks for your administrator password, then asks you to choose the password for " + accountName + "; goodall never sees either. " +
+      "When Terminal says it is done, sign out and sign in as " + accountName + ". After macOS's own setup screens, goodall finishes setting up that account by itself and opens a log of what it did. " +
+      "If a step fails, Terminal or that log says what to do next. " +
+      "If your browser asked where to save the file, or saved it somewhere else, move it into " + escapeHtml(starting.downloads_folder) + ". " +
+      "If Terminal shows a problem with your answers, change that answer here and press Finish setup again.</div>";
   } else if (finishPresses > 0 && !messages.length) {
     html += '<div class="handed"><strong>Your browser has saved your answers as ' + escapeHtml(starting.answers_file_name) + " in " + escapeHtml(starting.downloads_folder) + ".</strong><br>" +
       "Go back to the Terminal window where you ran goodall onboard. Goodall picks up the file, shows every change it will make, makes them, and reports there. " +
@@ -404,14 +420,40 @@ function finishBlock() {
   return html;
 }
 
+// The eval account question (docs/administrator-install.md): goodall
+// creates the account from this administrator account, or the person made
+// it by hand and is reading this page from it.
+function evalAccountItem() {
+  var html = '<div class="item"><div class="body" style="border-top:none">' +
+    '<h3 id="eval-account-question">The eval account</h3>' +
+    '<p class="small muted" id="eval-account-help">A standard macOS user account used for this eval and nothing else.</p>' +
+    choiceField("eval_account", "eval_account.choice", [
+      { value: "create", title: "Create it for me", note: "",
+        text: "Run this page from an administrator account. Goodall makes a standard account and stages the rest of setup, which finishes by itself when you first sign in to the new account." },
+      { value: "already_made", title: "I already made it, and am signed in to it", note: "",
+        text: "System Settings → Users &amp; Groups → Add User, type Standard. You are reading this page from that account." }
+    ], "eval-account-question");
+  if (state.eval_account.choice === "create") {
+    html += textField("eval_account.name", "The new account's name", "Its short name, as macOS shows it: a lowercase letter, then lowercase letters, digits and hyphens. No account on this Mac may have it yet.", "goodall-eval");
+  }
+  return html + problemLine("eval_account.choice") + "</div></div>";
+}
+
 function render() {
   var isNewEval = state.eval === "new";
+  var creating = createsEvalAccount(state);
   var before = "";
-  if (!state.settings_run && state.account_mode === "dedicated") {
+  if (asksAboutEvalAccount(state)) {
+    before += evalAccountItem();
+  } else if (!state.settings_run && state.account_mode === "dedicated") {
     before += tickItem("account", "Create a standard macOS user account for this eval, and sign in to it",
       "System Settings → Users &amp; Groups → Add User, type Standard. You should be reading this page from that account.");
   }
-  if (!state.settings_run) before += tickItem("manager", "If the eval uses API keys, sign in to 1Password in this account", "Goodall only ever handles references to keys; 1Password hands the keys to the programs that need them.");
+  if (!state.settings_run && creating) {
+    before += tickItem("manager", "If the eval uses API keys, sign in to 1Password in the new account, after its first sign-in", "Goodall only ever handles references to keys; 1Password hands the keys to the programs that need them, in the account that records.");
+  } else if (!state.settings_run) {
+    before += tickItem("manager", "If the eval uses API keys, sign in to 1Password in this account", "Goodall only ever handles references to keys; 1Password hands the keys to the programs that need them.");
+  }
   var answerItems = "";
   if (state.settings_run) {
     answerItems += checklistItem("workstreams", "Workstreams", workstreamsItemBody);

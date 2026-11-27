@@ -94,8 +94,8 @@ display_name = "Ada Lovelace"
 main_workstream = "research"
 
 [folders]
-record_repo = "{tmp_path / "evals" / "goodall-pilot-records"}"
-log_directory = "{tmp_path / "evals" / "goodall-pilot-logs.noindex"}"
+record_repo = "~/evals/goodall-pilot-records"
+log_directory = "~/evals/goodall-pilot-logs.noindex"
 
 [claude_code]
 goodall_program = "{system_places.installed_goodall()}"

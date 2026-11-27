@@ -207,8 +207,14 @@ up the eval account from it by itself.
 and what is not yet confirmed on a real Mac. Run in the eval account itself
 (the account the name names), the same file sets up that account as usual.
 
-The setup page will ask this question too; until then, write the table by
-hand.
+With `create = true`, the record repo and the log directory must be written
+starting with `~/`: the file is used at the new account's first sign-in,
+where `~/` means that account's home folder, and a folder written any other
+way would be in another account's home or somewhere every account shares.
+
+The setup page asks this question for a new eval in an eval account ("Create
+it for me", [setup-page.md](setup-page.md)) and writes the table for you. An
+eval account made by hand needs no table.
 
 ### No secrets, only references
 

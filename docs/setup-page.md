@@ -136,6 +136,11 @@ behind it (ADR 0012).
   also use for other things (ADR 0021).
 - **A new eval, or the one already on this Mac.** There is no "join": the
   record repo is local to this Mac and never pushed (ADR 0023).
+- For a new eval in an eval account: **whether goodall creates the eval
+  account**. "Create it for me", with the new account's short name, is
+  for a page opened from an administrator account; "I already made it, and
+  am signed in to it" is for a page opened from an eval account made by
+  hand. See below.
 - For a new eval: its name, a one-sentence description, its workstreams,
   the repositories its work is in, its construct, and, in an eval account,
   whether it includes ActivityWatch.
@@ -149,9 +154,46 @@ behind it (ADR 0012).
 `goodall settings` shows only the about-you, where, and secrets questions and
 the workstreams of the eval already here.
 
-It does not ask, yet: creating the eval account, ActivityWatch's own port
-(Part 3 of [setup-by-hand.md](setup-by-hand.md)), or the mixed account mode
-timeout.
+It does not ask, yet: ActivityWatch's own port (Part 3 of
+[setup-by-hand.md](setup-by-hand.md)), or the mixed account mode timeout.
+
+### "Create it for me": the eval account that does not exist yet
+
+With "Create it for me", the page is answered in the administrator account,
+and the answers file it saves gains an `[eval_account]` section
+([answers-file.md](answers-file.md)). `goodall onboard` then runs the
+**administrator install** ([administrator-install.md](administrator-install.md))
+instead of setting up the account the page is open in. What changes on the
+page:
+
+- **Which answers are about which account.** The new account's short name
+  is about the administrator install. Everything else (the eval, you, the
+  folders, the secret references) is about the new eval account, whose
+  first sign-in sets itself up from a copy of these answers.
+- **Folders are written with `~/`.** The record repo and the log directory
+  go in the new account's home folder, and `~/` means that home at its
+  first sign-in. The page, and goodall, refuse a folder written any other
+  way.
+- **The hooks run the goodall installed for every account**, so the page
+  leaves out this account's own goodall.
+- **"When you finish, goodall sets up these"** lists the staged first
+  sign-in setup in `/Library/Application Support/goodall`, the two
+  LaunchAgents in `/Library/LaunchAgents`, the new account in `/Users`, and
+  then what the new account's first sign-in makes in its own home folder:
+  the record repo, the log directory, `~/.config/goodall/.env`,
+  `~/.config/goodall/local-settings.toml` and the hooks in
+  `~/.claude/settings.json`. Nothing is set up in the administrator account.
+- **What happens next**, as the page says after Finish setup: in Terminal,
+  goodall shows every change and every command first; macOS asks there for
+  the administrator password, then for the new account's password. Then
+  sign out and sign in to the new account: after macOS's own setup screens,
+  goodall finishes setting it up by itself and opens a log of what it did.
+  If a step fails, Terminal or that log says what to do next. None of this
+  has been tried on a real Mac yet (administrator-install.md lists what to
+  check).
+- If goodall refuses the install before changing anything (this is not an
+  administrator account, say, or an account already has the name), it says
+  why and keeps waiting, as for any refused answers.
 
 ## Checking the page by hand
 

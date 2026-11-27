@@ -59,9 +59,15 @@ refuses to go on without either, and says so.
 
 ## 2. Run the administrator install
 
-Write an answers file as [answers-file.md](answers-file.md) shows, for the
+The easy way: run plain `goodall onboard` in the administrator account,
+choose an eval account and a new eval on the setup page, and answer "Create
+it for me" with the new account's name ([setup-page.md](setup-page.md)).
+The page writes the answers file below for you, and goodall runs this same
+install when the file arrives.
+
+Or write an answers file as [answers-file.md](answers-file.md) shows, for the
 eval account (its folders are in the eval account's home, so write them
-with `~/`), and add:
+with `~/`; goodall refuses them otherwise), and add:
 
 ```toml
 [eval_account]
@@ -219,7 +225,7 @@ administrator account, or says to run the administrator install again,
 which writes each file back exactly.
 
 Not built yet: `goodall teardown` (ADR 0022 says it removes these files),
-the question on the setup page, and anything that runs at sign-out.
+and anything that runs at sign-out.
 
 ## Not yet confirmed: the hand test checklist
 

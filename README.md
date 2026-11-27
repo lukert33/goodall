@@ -50,8 +50,12 @@ These commands work today:
 These commands exist but are not built yet: `sync`, `logs`,
 `export scout`, `dry-run`, `teardown` and `release`. Each tells you so when you
 run it.
-The steps goodall onboard does not do, such as creating the eval account and
-giving ActivityWatch its own port, are in
+Run from an administrator account, `goodall onboard` can also create the
+eval account: answer "Create it for me" on the setup page, and the rest of
+setup finishes by itself at that account's first sign-in
+([docs/administrator-install.md](docs/administrator-install.md), not yet
+tried on a real Mac). The steps goodall onboard does not do, such as giving
+ActivityWatch its own port, are in
 [docs/setup-by-hand.md](docs/setup-by-hand.md), with the rest of setup done
 by hand.
 

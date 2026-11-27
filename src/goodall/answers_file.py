@@ -376,6 +376,10 @@ class AnswersReader:
         activitywatch_port, activitywatch_device_id = self.read_activitywatch()
         goodall_program = self.read_goodall_program()
         eval_account = self.read_eval_account(account_mode, eval_choice)
+        if eval_account is not None and eval_account.create:
+            for key, folder in [("record_repo", record_repo), ("log_directory", log_directory)]:
+                if folder is not None and not folder.as_written.startswith("~/"):
+                    self.problems.append(eval_account_folder_outside_its_home_failure(self.answers_file, key))
 
         if self.problems:
             return self.problems
@@ -1128,6 +1132,24 @@ def eval_account_needs_dedicated_mode_failure(answers_file: Path) -> Failure:
             f'Set account_mode = "{DEDICATED_ACCOUNT_MODE}" to create the eval account, or remove the '
             "[eval_account] section and run goodall onboard in the account you mean to record in."
         ),
+    )
+
+
+def eval_account_folder_outside_its_home_failure(answers_file: Path, key: str) -> Failure:
+    """The failure for a folder not written from the home of the eval account goodall is to create."""
+    example = "~/evals/goodall-pilot-records" if key == "record_repo" else "~/evals/goodall-pilot-logs.noindex"
+    return Failure(
+        kind="answers_eval_account_folder_outside_its_home",
+        what_happened=(
+            f"The answers file at {answers_file} asks goodall to create an eval account, but [folders] {key} does "
+            "not start with ~/. Nothing was changed."
+        ),
+        why=(
+            "These answers are used at the new account's first sign-in, where ~/ means that account's home folder. "
+            "A folder written any other way is in another account's home, which the eval account cannot open, or "
+            "somewhere every account shares."
+        ),
+        what_to_do_next=f'Write the folder starting with ~/, such as {key} = "{example}".',
     )
 
 

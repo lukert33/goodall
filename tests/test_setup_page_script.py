@@ -32,7 +32,7 @@ from typing import Any
 
 import pytest
 
-from goodall import cli, exit_codes, setup_page
+from goodall import cli, exit_codes, setup_page, system_places
 from goodall.answers_file import Answers, read_answers_text
 from goodall.fake_runner import FakeRunner, ScriptedAnswer
 from goodall.runner import Command, CommandOutcome
@@ -68,6 +68,9 @@ function run(argv) {
   }
   if (input.ask === "answers") {
     return answersFileText(state, input.starting.one_time_code);
+  }
+  if (input.ask === "changes") {
+    return JSON.stringify(changesGoodallMakes(state, input.starting.places));
   }
   return JSON.stringify(problemsIn(state));
 }
@@ -123,6 +126,8 @@ def new_eval_changes(tmp_path: Path) -> list[list[Any]]:
         ["contributor.main_workstream", "research"],
         ["folders.record_repo", str(tmp_path / "evals" / "goodall-pilot-records")],
         ["folders.log_directory", str(tmp_path / "evals" / "goodall-pilot-logs.noindex")],
+        # Reading the page from the eval account, made by hand.
+        ["eval_account.choice", "already_made"],
     ]
 
 
@@ -385,3 +390,225 @@ def test_the_whole_page_script_parses(tmp_path: Path) -> None:
 
     assert completed.returncode == 0, completed.stderr
     assert completed.stdout.strip() == "parsed"
+
+
+# The eval account question: on the dedicated, new-eval path the page asks
+# whether goodall creates the eval account (the administrator install,
+# docs/administrator-install.md) or the person already made it and is
+# reading the page from it.
+
+EVAL_ACCOUNT_NAME = "goodall-eval"
+ADMINISTRATOR_ACCOUNT_NAME = "goodall-administrator"
+SUDO = "/usr/bin/sudo"
+SYSADMINCTL = "/usr/sbin/sysadminctl"
+
+
+def folders_in_the_new_account() -> list[list[Any]]:
+    """Folders written with ~/, which at the eval account's first sign-in means that account's home."""
+    return [
+        ["folders.record_repo", "~/evals/goodall-pilot-records"],
+        ["folders.log_directory", "~/evals/goodall-pilot-logs.noindex"],
+    ]
+
+
+def create_the_eval_account(tmp_path: Path) -> list[list[Any]]:
+    """What a person types on a fresh page to have goodall create the eval account."""
+    return [
+        *new_eval_changes(tmp_path),
+        *folders_in_the_new_account(),
+        ["eval_account.choice", "create"],
+        ["eval_account.name", EVAL_ACCOUNT_NAME],
+    ]
+
+
+def test_choosing_to_create_the_eval_account_saves_its_name(driver_script: Path, tmp_path: Path) -> None:
+    text = run_page_script(driver_script, fresh_page_document(), create_the_eval_account(tmp_path), "answers")
+
+    answers = read_back(text, tmp_path)
+    assert answers.eval_account is not None
+    assert answers.eval_account.create is True
+    assert answers.eval_account.name == EVAL_ACCOUNT_NAME
+    assert answers.record_repo.as_written == "~/evals/goodall-pilot-records"
+
+
+def test_an_eval_account_already_made_saves_no_eval_account_section(driver_script: Path, tmp_path: Path) -> None:
+    changes = [*new_eval_changes(tmp_path), ["eval_account.choice", "already_made"]]
+
+    text = run_page_script(driver_script, fresh_page_document(), changes, "answers")
+
+    assert "[eval_account]" not in text
+    assert read_back(text, tmp_path).eval_account is None
+
+
+def test_the_page_asks_the_eval_account_question_only_for_a_new_eval_in_an_eval_account(
+    driver_script: Path, tmp_path: Path
+) -> None:
+    unanswered = [change for change in new_eval_changes(tmp_path) if change[0] != "eval_account.choice"]
+    mixed = [*unanswered, ["account_mode", "mixed"], ["eval_account.choice", "create"]]
+
+    dedicated_problems = json.loads(run_page_script(driver_script, fresh_page_document(), unanswered, "problems"))
+    mixed_problems = json.loads(run_page_script(driver_script, fresh_page_document(), mixed, "problems"))
+    mixed_text = run_page_script(driver_script, fresh_page_document(), mixed, "answers")
+
+    assert list(dedicated_problems) == ["eval_account.choice"]
+    assert mixed_problems == {}
+    assert "[eval_account]" not in mixed_text
+
+
+def test_the_page_refuses_an_account_name_goodall_would_refuse(driver_script: Path, tmp_path: Path) -> None:
+    for bad_name in ["", "Goodall Eval", "1goodall", "goodall-", "goodall--eval", ADMINISTRATOR_ACCOUNT_NAME]:
+        changes = [*create_the_eval_account(tmp_path), ["eval_account.name", bad_name]]
+        document = fresh_page_document()
+        document["this_account_name"] = ADMINISTRATOR_ACCOUNT_NAME
+
+        problems = json.loads(run_page_script(driver_script, document, changes, "problems"))
+
+        assert list(problems) == ["eval_account.name"], bad_name
+        if bad_name != ADMINISTRATOR_ACCOUNT_NAME:
+            text = run_page_script(driver_script, document, changes, "answers")
+            reading = read_answers_text(text, tmp_path / "goodall-answers.toml", CODE)
+            assert isinstance(reading, list), bad_name
+
+
+def test_folders_for_an_account_goodall_creates_must_be_written_from_its_home(
+    driver_script: Path, tmp_path: Path
+) -> None:
+    changes = [*create_the_eval_account(tmp_path), ["folders.record_repo", str(tmp_path / "records")]]
+
+    problems = json.loads(run_page_script(driver_script, fresh_page_document(), changes, "problems"))
+    text = run_page_script(driver_script, fresh_page_document(), changes, "answers")
+
+    assert list(problems) == ["folders.record_repo"]
+    assert "~/" in problems["folders.record_repo"]
+    reading = read_answers_text(text, tmp_path / "goodall-answers.toml", CODE)
+    assert isinstance(reading, list)
+    assert [failure.kind for failure in reading] == ["answers_eval_account_folder_outside_its_home"]
+
+
+def test_creating_the_eval_account_leaves_out_this_account_s_goodall_for_the_hooks(
+    driver_script: Path, tmp_path: Path
+) -> None:
+    changes = [
+        *create_the_eval_account(tmp_path),
+        ["goodall_program", "/Users/goodall-administrator/.local/bin/goodall"],
+    ]
+
+    answers = read_back(run_page_script(driver_script, fresh_page_document(), changes, "answers"), tmp_path)
+
+    # The eval account's hooks run the goodall installed for every account.
+    assert answers.goodall_program is None
+
+
+def onboard_through_the_page_as_an_administrator(
+    driver_script: Path, changes: list[list[Any]], groups: str = "staff everyone admin"
+) -> tuple[int, str, FakeRunner]:
+    """Run plain `goodall onboard` in a pretend administrator account; the person presses Finish setup."""
+
+    def press_finish_setup(command: Command) -> ScriptedAnswer:
+        page_text = Path(command.arguments[1]).read_text()
+        match = re.search(
+            r'<script type="application/json" id="goodall-starting-answers">(.*?)</script>', page_text, re.DOTALL
+        )
+        assert match is not None
+        starting = json.loads(match.group(1))
+        downloads = Path(os.environ["HOME"]) / "Downloads"
+        downloads.mkdir(exist_ok=True)
+        (downloads / "goodall-answers.toml").write_text(run_page_script(driver_script, starting, changes, "answers"))
+        return ScriptedAnswer(outcome=CommandOutcome.COMPLETED, exit_code=0)
+
+    def pretend_sudo(command: Command) -> ScriptedAnswer:
+        # Only what the real command would do to the isolated folders of tests/conftest.py.
+        arguments = command.arguments[1:]
+        if arguments[0] == SYSADMINCTL:
+            (system_places.USERS_FOLDER / arguments[arguments.index("-addUser") + 1]).mkdir()
+        elif "-d" in arguments:
+            Path(arguments[-1]).mkdir(parents=True, exist_ok=True)
+        else:
+            shutil.copyfile(arguments[-2], arguments[-1])
+            Path(arguments[-1]).chmod(int(arguments[arguments.index("-m") + 1], 8))
+        return ScriptedAnswer(outcome=CommandOutcome.COMPLETED, exit_code=0)
+
+    standard_output = io.StringIO()
+    runner = FakeRunner(installed_programs=["goodall"])
+    runner.answer_with("open", press_finish_setup)
+    runner.answer(["/usr/bin/id", "-Gn"], standard_output=groups + "\n")
+    runner.answer(["/usr/bin/dscl", ".", "-list", "/Users"], standard_output="root\nnobody\n")
+    runner.answer_with(SUDO, pretend_sudo)
+    exit_code = cli.main(
+        ["onboard"], terminal=Terminal(standard_output, standard_output), runner=runner, clock=lambda: NOW
+    )
+    return exit_code, " ".join(standard_output.getvalue().split()), runner
+
+
+@pytest.fixture
+def administrator_mac(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A pretend administrator account, with goodall and the menu bar icon installed for every account."""
+    places = system_places
+    monkeypatch.setattr(places, "current_account_name", lambda: ADMINISTRATOR_ACCOUNT_NAME)
+    monkeypatch.setattr(places, "ROOT_USER_ID", os.getuid())
+    monkeypatch.setattr(setup_page, "pause", lambda seconds: None)
+    goodall = places.installed_goodall()
+    goodall.parent.mkdir(parents=True)
+    goodall.write_text("#!/bin/sh\n")
+    goodall.chmod(0o755)
+    helper = places.menu_bar_icon_program()
+    helper.parent.mkdir(parents=True)
+    helper.write_text("")
+
+
+def test_creating_the_eval_account_on_the_page_runs_the_administrator_install(
+    driver_script: Path, tmp_path: Path, administrator_mac: None
+) -> None:
+    exit_code, output, runner = onboard_through_the_page_as_an_administrator(
+        driver_script, create_the_eval_account(tmp_path)
+    )
+
+    assert exit_code == exit_codes.SUCCESS, output
+    account_creations = []
+    for command in runner.calls:
+        if command.arguments[:2] == [SUDO, SYSADMINCTL]:
+            account_creations.append(command.arguments)
+    assert len(account_creations) == 1
+    assert account_creations[0][2:4] == ["-addUser", EVAL_ACCOUNT_NAME]
+    staged = system_places.staged_answers_file().read_text()
+    assert f'name = "{EVAL_ACCOUNT_NAME}"' in staged
+    # Nothing is set up in the administrator account itself.
+    assert not (Path(os.environ["GOODALL_CONFIG_DIR"]) / "local-settings.toml").exists()
+    assert f"sign in as {EVAL_ACCOUNT_NAME}" in output
+
+
+def test_a_refused_administrator_install_keeps_the_page_waiting(
+    driver_script: Path, tmp_path: Path, administrator_mac: None
+) -> None:
+    exit_code, output, runner = onboard_through_the_page_as_an_administrator(
+        driver_script, create_the_eval_account(tmp_path), groups="staff everyone"
+    )
+
+    assert "cannot run in this macOS user account" in output
+    assert "goodall keeps waiting" in output
+    for command in runner.calls:
+        assert command.arguments[0] != SUDO, command.as_typed
+    # Nobody pressed Finish setup again, so the wait ran out.
+    assert exit_code == exit_codes.ERROR
+
+
+def test_the_finish_step_lists_the_new_account_s_files_not_this_account_s(
+    driver_script: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GOODALL_CONFIG_DIR", str(tmp_path / "administrator-config"))
+    document = fresh_page_document()
+
+    rows = json.loads(run_page_script(driver_script, document, create_the_eval_account(tmp_path), "changes"))
+
+    places = [row[0] for row in rows]
+    assert places[:3] == [
+        str(system_places.STAGING_FOLDER),
+        str(system_places.LAUNCH_AGENTS_FOLDER),
+        f"{system_places.USERS_FOLDER}/{EVAL_ACCOUNT_NAME}",
+    ]
+    assert "~/.config/goodall/local-settings.toml" in places
+    assert "~/.claude/settings.json" in places
+    # Nothing is set up in the account the page is open in.
+    for place in places:
+        assert "administrator-config" not in place
+    assert "password" in rows[2][1]

@@ -27,6 +27,14 @@ var REFERENCE_PATTERN = new RegExp(
 );
 var REPOSITORY_PART_PATTERN = /^[A-Za-z0-9._-]+$/;
 
+// The account names goodall creates, as goodall.answers_file has them: a
+// lowercase letter, then lowercase letters, digits and single hyphens.
+var ACCOUNT_NAME_PATTERN = /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/;
+
+// The two answers to "Should goodall create the eval account?".
+var CREATE_EVAL_ACCOUNT = "create";
+var EVAL_ACCOUNT_ALREADY_MADE = "already_made";
+
 // The starts of the key formats goodall recognizes (goodall.quoting). A
 // rough copy on purpose: it only has to catch a key pasted into the wrong
 // box before goodall's own, stricter check refuses the whole file.
@@ -80,6 +88,11 @@ function startingState(starting) {
     uses_api_keys: references.length > 0,
     secret_references: references,
     goodall_program: answers.goodall_program,
+    // Whether goodall creates the eval account: "" until the person
+    // answers, then CREATE_EVAL_ACCOUNT or EVAL_ACCOUNT_ALREADY_MADE.
+    eval_account: { choice: "", name: "" },
+    // This account's own short name, which a new account cannot have.
+    this_account_name: starting.this_account_name || "",
     known_workstreams: starting.known_workstreams.slice(),
     // True for goodall settings: the existing eval's workstreams can be added to.
     settings_run: starting.settings_run === true,
@@ -105,6 +118,19 @@ function suggestedFolders(evalName) {
 // The env file variable suggested for a workstream's API key.
 function variableNameFor(workstream) {
   return "ANTHROPIC_API_KEY_" + workstream.toUpperCase().replace(/[^A-Z0-9]+/g, "_");
+}
+
+// The page asks whether to create the eval account only on the path the
+// administrator install takes: an eval account, for a new eval
+// (docs/answers-file.md, [eval_account]).
+function asksAboutEvalAccount(state) {
+  return !state.settings_run && state.account_mode === "dedicated" && state.eval === "new";
+}
+
+// True when the answers ask goodall to create the eval account. The rest of
+// the answers are then about that account, which does not exist yet.
+function createsEvalAccount(state) {
+  return asksAboutEvalAccount(state) && state.eval_account.choice === CREATE_EVAL_ACCOUNT;
 }
 
 function isName(value) {
@@ -263,6 +289,31 @@ function problemsIn(state) {
   }
   if (folders.record_repo.trim() && folders.log_directory.trim() && foldersOverlap(folders.record_repo, folders.log_directory)) {
     problems["folders.log_directory"] = "Use two separate folders, neither inside the other: the record repo is committed with git, and raw records never are.";
+  }
+
+  if (asksAboutEvalAccount(state)) {
+    var evalAccount = state.eval_account;
+    var accountName = evalAccount.name.trim();
+    if (evalAccount.choice !== CREATE_EVAL_ACCOUNT && evalAccount.choice !== EVAL_ACCOUNT_ALREADY_MADE) {
+      problems["eval_account.choice"] = "Say whether goodall should create the eval account, or you already made it and are signed in to it.";
+    } else if (evalAccount.choice === CREATE_EVAL_ACCOUNT && !accountName) {
+      problems["eval_account.name"] = "Give the new account a short name, such as goodall-eval.";
+    } else if (evalAccount.choice === CREATE_EVAL_ACCOUNT && !ACCOUNT_NAME_PATTERN.test(accountName)) {
+      problems["eval_account.name"] = "Use a lowercase letter, then lowercase letters, digits and single hyphens, not ending in a hyphen, such as goodall-eval.";
+    } else if (evalAccount.choice === CREATE_EVAL_ACCOUNT && accountName === state.this_account_name) {
+      problems["eval_account.name"] = "That is the account you are in now. Give the new eval account a name of its own.";
+    }
+  }
+  if (createsEvalAccount(state)) {
+    // The answers are used at the new account's first sign-in, where ~/
+    // means that account's home folder.
+    for (var homeIndex = 0; homeIndex < folderKeys.length; homeIndex++) {
+      var homeKey = folderKeys[homeIndex];
+      var homeFolder = folders[homeKey].trim();
+      if (homeFolder && isFullPath(homeFolder) && homeFolder.indexOf("~/") !== 0) {
+        problems["folders." + homeKey] = "Write it starting with ~/: this folder goes in the new account's home folder, which is what ~/ means there.";
+      }
+    }
   }
 
   if (state.uses_api_keys) {
@@ -448,17 +499,31 @@ function answersFileText(state, oneTimeCode) {
     }
   }
 
-  if (state.goodall_program) {
+  // The goodall this account's hooks run is not the eval account's: left
+  // out, the eval account's hooks run the goodall installed for every
+  // account (docs/administrator-install.md).
+  if (state.goodall_program && !createsEvalAccount(state)) {
     lines.push("");
     lines.push("[claude_code]");
     lines.push("goodall_program = " + tomlString(state.goodall_program));
+  }
+
+  if (createsEvalAccount(state)) {
+    lines.push("");
+    lines.push("[eval_account]");
+    lines.push("create = true");
+    lines.push("name = " + tomlString(state.eval_account.name.trim()));
   }
   return lines.join("\n") + "\n";
 }
 
 // What goodall will set up once it has the answers, for the page's Finish
-// step. Goodall's own plan, shown in the terminal, is the one that counts.
+// step, as [where, what] rows. Goodall's own plan, shown in the terminal,
+// is the one that counts.
 function changesGoodallMakes(state, places) {
+  if (createsEvalAccount(state)) {
+    return changesForANewEvalAccount(state, places);
+  }
   var recordRepo = state.folders.record_repo.trim() || "the record repo";
   var changes = [];
   if (state.eval === "new") {
@@ -476,4 +541,25 @@ function changesGoodallMakes(state, places) {
   changes.push([places.local_settings, "local settings"]);
   changes.push([places.claude_settings, "goodall's hooks for Claude Code, beside your own settings"]);
   return changes;
+}
+
+// The rows when goodall creates the eval account: first what the
+// administrator install does from this account, then what first sign-in
+// setup makes in the new account's home folder. Nothing is set up in this
+// account itself.
+function changesForANewEvalAccount(state, places) {
+  var accountName = state.eval_account.name.trim() || "the eval account";
+  var newAccount = places.new_account;
+  var recordRepo = state.folders.record_repo.trim() || "the record repo";
+  var inItsHome = ", made at " + accountName + "'s first sign-in";
+  return [
+    [places.staging_folder, "first sign-in setup, where only an administrator can change it: a copy of these answers and the script that uses them"],
+    [places.launch_agents_folder, "two LaunchAgents, for every account: one runs first sign-in setup, one starts the menu bar icon"],
+    [places.users_folder + "/" + accountName, "the eval account " + accountName + ", a standard account. In Terminal, macOS asks for your administrator password, then for the new account's password"],
+    [recordRepo, "the record repo, with the eval config and the construct" + inItsHome],
+    [state.folders.log_directory.trim() || "the log directory", "the log directory, which only " + accountName + " can open" + inItsHome],
+    [newAccount.env_file, "the env file: secret references only" + inItsHome],
+    [newAccount.local_settings, "local settings" + inItsHome],
+    [newAccount.claude_settings, "goodall's hooks for Claude Code" + inItsHome]
+  ];
 }

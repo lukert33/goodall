@@ -154,6 +154,21 @@ def run_administrator_install(
     terminal: Terminal, runner: Runner, answers: Answers, *, plan_only: bool, as_json: bool
 ) -> int:
     """Check, plan, show, and unless `plan_only` make the changes; return the exit code."""
+    report = administrator_install_report(terminal, runner, answers, plan_only=plan_only, as_json=as_json)
+    if report.outcome in ["rejected", "stopped"]:
+        return exit_codes.ERROR
+    return exit_codes.SUCCESS
+
+
+def administrator_install_report(
+    terminal: Terminal, runner: Runner, answers: Answers, *, plan_only: bool, as_json: bool
+) -> InstallReport:
+    """Do what `run_administrator_install` does, and return the report instead of the exit code.
+
+    The setup page's waiting command needs the outcome: answers refused
+    before anything changed ("rejected") can be corrected on the page that
+    is still open, so it keeps waiting.
+    """
     assert answers.eval_account is not None and answers.eval_account.name is not None
     account_name = answers.eval_account.name
     failures = check_ready(runner, answers)
@@ -167,7 +182,7 @@ def run_administrator_install(
     if failures:
         report = InstallReport(answers.answers_file, plan_only, "rejected", failures=failures)
         show_report(terminal, report, account_name, as_json)
-        return exit_codes.ERROR
+        return report
 
     # The files to copy into place are written first to a folder only this
     # account can open, and the folder goes when the run ends, so `--plan`
@@ -183,11 +198,11 @@ def run_administrator_install(
         if plan_only:
             report = InstallReport(answers.answers_file, True, "planned", changes)
             show_report(terminal, report, account_name, as_json)
-            return exit_codes.SUCCESS
+            return report
         if not changes_to_make:
             report = InstallReport(answers.answers_file, False, "nothing_to_change", changes)
             show_report(terminal, report, account_name, as_json)
-            return exit_codes.SUCCESS
+            return report
         done_ids: list[str] = []
         for change in changes_to_make:
             for command in change.commands:
@@ -203,11 +218,11 @@ def run_administrator_install(
                         [stopped_failure(change, problem)],
                     )
                     show_report(terminal, report, account_name, as_json)
-                    return exit_codes.ERROR
+                    return report
             done_ids.append(change.id)
     report = InstallReport(answers.answers_file, False, "applied", changes, done_ids)
     show_report(terminal, report, account_name, as_json)
-    return exit_codes.SUCCESS
+    return report
 
 
 # Checking that the Mac is ready, before anything is planned. Each check

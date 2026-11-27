@@ -64,6 +64,16 @@ Decisions a reader would otherwise reverse-engineer:
   An account already set up starts on "use the eval already on this Mac",
   so pressing Finish setup without changing anything leaves every file
   unchanged.
+- Creating the eval account. On a new eval in an eval account the page asks
+  whether goodall creates the account; "Create it for me" adds
+  `[eval_account] create = true` to the answers file, and this module hands
+  such answers to goodall.administrator_install, as `goodall onboard
+  --answers` does, instead of setting up the account the page is open in.
+  The page then treats every other answer as the new account's: folders
+  must start with `~/`, its file list names the new account's own default
+  places (`page_document`'s "new_account"), and this account's goodall is
+  left out of the hooks. An install refused before it changes anything
+  keeps the page waiting, like any refused answers.
 - `--json` needs `--answers`. The setup page is for a person at a browser;
   an agent or a script writes the answers file itself. Waiting would
   otherwise print one JSON document per refused attempt.
@@ -86,9 +96,11 @@ from datetime import datetime
 from importlib import resources
 from pathlib import Path
 
-from goodall import exit_codes
+from goodall import administrator_install, exit_codes, system_places
+from goodall.administrator_install import InstallReport
 from goodall.answers_file import FORMAT_DOCUMENT, NEW_EVAL, read_answers_file
 from goodall.claude_code_checks import (
+    CLAUDE_SETTINGS_FILE_NAME,
     claude_user_settings_file,
     goodall_hook_commands_by_event,
     is_full_path,
@@ -98,6 +110,7 @@ from goodall.env_files import EnvFileReading, read_env_file
 from goodall.eval_config import read_eval_config
 from goodall.local_settings import (
     DEDICATED_ACCOUNT_MODE,
+    DEFAULT_CONFIG_DIRECTORY_IN_HOME,
     LocalSettings,
     RelativeConfigDirectoryError,
     find_local_settings_location,
@@ -298,7 +311,20 @@ def page_document(starting: StartingAnswers, one_time_code: str, page_title: str
             "local_settings": as_written_for_people(config_directory / "local-settings.toml"),
             "env_file": as_written_for_people(config_directory / ENV_FILE_NAME),
             "claude_settings": as_written_for_people(claude_user_settings_file()),
+            # Where the administrator install puts things, for answers that
+            # create the eval account (goodall.administrator_install).
+            "staging_folder": str(system_places.STAGING_FOLDER),
+            "launch_agents_folder": str(system_places.LAUNCH_AGENTS_FOLDER),
+            "users_folder": str(system_places.USERS_FOLDER),
+            # The new account's own files, where they are by default in its
+            # home folder: no setting of this account's applies there.
+            "new_account": {
+                "local_settings": "~/" + str(DEFAULT_CONFIG_DIRECTORY_IN_HOME / "local-settings.toml"),
+                "env_file": "~/" + str(DEFAULT_CONFIG_DIRECTORY_IN_HOME / ENV_FILE_NAME),
+                "claude_settings": "~/.claude/" + CLAUDE_SETTINGS_FILE_NAME,
+            },
         },
+        "this_account_name": system_places.current_account_name(),
         "known_workstreams": list(starting.known_workstreams),
         "settings_run": starting.settings_run,
         "answers": {
@@ -531,8 +557,13 @@ def wait_for_answers(terminal: Terminal, runner: Runner, clock: Callable[[], dat
 
 def try_answers_file(
     terminal: Terminal, runner: Runner, clock: Callable[[], datetime], waiting: Waiting, candidate: Path
-) -> OnboardingReport | None:
-    """Use `candidate` if it carries this page's code; return the report, or None when it is not this page's."""
+) -> OnboardingReport | InstallReport | None:
+    """Use `candidate` if it carries this page's code; return the report, or None when it is not this page's.
+
+    Answers that ask goodall to create the eval account go to the
+    administrator install, exactly as `goodall onboard --answers` sends
+    them (goodall.onboard.onboard_from_answers).
+    """
     reading = read_answers_file(candidate, waiting.one_time_code)
     if isinstance(reading, list):
         if len(reading) == 1 and reading[0].kind == ONE_TIME_CODE_MISMATCH:
@@ -543,9 +574,15 @@ def try_answers_file(
         show_report(terminal, report, as_json=False)
         return report
     waiting.changes_started = True
-    report = onboarding_report_from_answers(terminal, runner, clock, reading, plan_only=waiting.plan_only)
+    if administrator_install.applies_to(reading):
+        install_report = administrator_install.administrator_install_report(
+            terminal, runner, reading, plan_only=waiting.plan_only, as_json=False
+        )
+        waiting.changes_started = False
+        return install_report
+    onboarding_report = onboarding_report_from_answers(terminal, runner, clock, reading, plan_only=waiting.plan_only)
     waiting.changes_started = False
-    return report
+    return onboarding_report
 
 
 def show_keep_waiting(terminal: Terminal) -> None:

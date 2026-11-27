@@ -361,7 +361,12 @@ def onboarding_report_from_answers(
     plan_only: bool = False,
     as_json: bool = False,
 ) -> OnboardingReport:
-    """Do what `onboard_from_answers` does, and return the report instead of the exit code.
+    """Set up this account from `answers`, as `onboard_from_answers` does, and return the report.
+
+    Unlike `onboard_from_answers`, this never hands answers to the
+    administrator install; a caller that may be given `[eval_account]
+    create = true` checks `administrator_install.applies_to` first, as
+    goodall.setup_page does.
 
     The setup page's waiting command needs the outcome, not only the exit
     code: answers the machine refused ("rejected") can be corrected on the
@@ -409,7 +414,7 @@ def onboarding_report_from_answers(
     return report
 
 
-def report_exit_code(report: OnboardingReport) -> int:
+def report_exit_code(report: OnboardingReport | administrator_install.InstallReport) -> int:
     """0 when what was asked is done (or was only planned), 1 when it was refused or stopped part way."""
     if report.outcome in ["rejected", "stopped"]:
         return exit_codes.ERROR
