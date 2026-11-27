@@ -3,7 +3,9 @@
 `goodall onboard` is not built yet. This checklist is how to do its job by
 hand, for the first eval on a real Mac. It was written on 2026-11-26 from
 goodall's code and documents, and **has not yet been followed from start to
-finish on a real Mac**. Steps marked **Not yet confirmed** are the ones most
+finish on a real Mac**. On 2026-11-27 Parts 4 and 6 were rehearsed in a
+scratch home folder, which added the git identity, PATH and Claude Code
+steps to Part 2. Steps marked **Not yet confirmed** are the ones most
 likely to be wrong; please note what really happened beside each.
 
 Words used here are defined in [GLOSSARY.md](../GLOSSARY.md). An **eval
@@ -28,7 +30,9 @@ first.
       `uv` (0.13.4 or newer).
 - [ ] Install the source applications the eval will use: the Claude desktop
       app, Antigravity, and the Codex desktop app (it installs as
-      `ChatGPT.app`).
+      `ChatGPT.app`). Claude Code for the terminal is different: its
+      installer puts it in one account's home folder, so it is installed in
+      Part 2, inside the eval account.
 - [ ] Install 1Password and its `op` command only if the eval will use
       secrets. An eval with no secrets does not need them.
 - [ ] If ActivityWatch also runs in another macOS user account on this Mac,
@@ -40,6 +44,10 @@ first.
 
 Sign in to the Mac as the eval account for everything from here on.
 
+- [ ] Run `command -v uv`. It should print a path. If `uv` was installed with
+      Homebrew from the administrator account, every account finds it,
+      because Homebrew adds its folder to every account's PATH. If nothing is
+      printed, install uv inside this account with its own installer.
 - [ ] Install goodall:
 
       ```
@@ -47,8 +55,34 @@ Sign in to the Mac as the eval account for everything from here on.
       uv tool install ./goodall
       ```
 
+- [ ] uv puts the `goodall` command in `~/.local/bin`, which a new account's
+      PATH does not include, and says so in a warning. Run this once, then
+      close Terminal and open a new window:
+
+      ```
+      uv tool update-shell
+      ```
+
 - [ ] Run `command -v goodall` and keep the full path it prints. Part 5
       needs it.
+- [ ] Tell git who you are in this account. Goodall commits every record to
+      the record repo under this name and email, and refuses to write a
+      record without them. The commits stay on this Mac (ADR 0023).
+
+      ```
+      git config --global user.name "Ada Lovelace"
+      git config --global user.email "ada@example.org"
+      ```
+
+- [ ] Install Claude Code for the terminal in this account, with the
+      installer from Claude Code's own documentation:
+
+      ```
+      curl -fsSL https://claude.ai/install.sh | bash
+      ```
+
+      Then open a new Terminal window and run `claude --version`. A copy
+      installed in another account is not on this account's PATH.
 - [ ] Run `goodall status`. It should run, and tell you local settings are
       missing. **Not yet confirmed:** that a tool installed this way inside a
       standard account works without an administrator.
@@ -178,6 +212,11 @@ your first `goodall stop`.
       paths = ["**"]
       ```
 
+      At least one `[[scope]]` entry is required, and its `repository` must
+      look like `host/owner/name`. Goodall checks it but does not use it
+      yet, so for an eval whose work is not in a repository, name the one
+      you would keep its files in.
+
 - [ ] In it, write `CONSTRUCT.md`: the question this eval sets out to
       measure, in a sentence or two.
 - [ ] Commit both files.
@@ -268,7 +307,8 @@ sessions yet (issues goodall-fs9.24 and goodall-fs9.25).
 ## Part 6: Check it
 
 - [ ] Run `goodall doctor`. It changes nothing. Fix what it reports and run
-      it again.
+      it again. One warning is expected today and can be left: there is no
+      shared env file (`.env.shared`) in the record repo.
 - [ ] With no work block active, send any prompt in Claude Code in a
       terminal. It should be refused with a message telling you to run
       `goodall start`. (In mixed account mode it should go through, and
@@ -276,6 +316,9 @@ sessions yet (issues goodall-fs9.24 and goodall-fs9.25).
 - [ ] Do the same in the Claude desktop app's Code tab. Note whether it is
       refused.
 - [ ] Run `goodall start`, send a prompt in each, then run `goodall stop`.
+      Expect `goodall stop` to say `Telemetry  missing`. Claude Code sends
+      telemetry only when it is started with goodall's settings, and nothing
+      starts it that way yet; the transcripts are still copied.
 - [ ] Check that the log directory's `transcripts/` folder holds a copy of
       each session, and that the record repo's `work-blocks/` folder holds
       one new file.
