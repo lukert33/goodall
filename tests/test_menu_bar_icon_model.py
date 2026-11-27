@@ -91,6 +91,7 @@ def icon_state_output(
         "enabled": {"record_work_block": record_work_block, "pause": pause, "stop_recording": stop_recording},
         "setup": {"usable": True, "reason": None},
         "watch_folder": "/Volumes/EvalLogs/goodall-pilot/work-blocks",
+        "ask_notification_permission": True,
     }
     if state == "recording":
         document["work_block"] = {
@@ -364,6 +365,35 @@ def test_the_menu_draws_goodalls_real_answer_when_setup_is_not_usable(driver: Pa
 
     assert row_titles(rendering)[:2] == [document["status_line"], document["setup"]["reason"]]
     assert enabled_titles(rendering) == ["Settings…", "Quit goodall"]
+
+
+def test_the_icon_asks_for_notification_permission_once_when_goodall_first_says_to(driver: Path) -> None:
+    # macOS asks the person once, and a dismissed question counts as no for
+    # good (spike of 2026-11-27), so the icon asks only once goodall says
+    # setup is done, and only once per run: macOS ignores a repeat, and the
+    # menu should not keep calling on it every minute.
+    renderings = run_driver(driver, [answered(NOT_RECORDING), answered(RECORDING), menu_opened(), answered(PAUSED)])
+
+    asks = []
+    for rendering in renderings:
+        asks.append(rendering["ask_notification_permission"])
+    assert asks == [True, False, False, False]
+
+
+def test_the_icon_does_not_ask_for_notification_permission_before_goodall_is_set_up(driver: Path) -> None:
+    # The real document, from an account with no local settings.
+    standard_output = io.StringIO()
+    terminal = Terminal(standard_output=standard_output, standard_error=io.StringIO())
+    cli.main(["icon-state", "--json"], terminal=terminal, runner=FakeRunner(real_programs=[]))
+
+    renderings = run_driver(
+        driver, [answered(standard_output.getvalue()), answered("not JSON"), answered(NOT_RECORDING)]
+    )
+
+    asks = []
+    for rendering in renderings:
+        asks.append(rendering["ask_notification_permission"])
+    assert asks == [False, False, True]
 
 
 def test_no_menu_text_says_eval(driver: Path) -> None:
