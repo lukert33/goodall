@@ -152,11 +152,19 @@ facts are the provenance.
 
 ## Git
 
-- **Commit freely in a git context you own.** An agent working on a branch or
-  in a worktree created for its own task commits there without asking. This
-  repository rule takes precedence over the default in the Beads sections
-  below. Pushing, opening a pull request, and committing to `main` or to a
-  branch someone else is working on still wait for the owner's go-ahead.
+- **Commit, push and open a pull request freely in a git context you own.**
+  An agent working on a branch or in a worktree created for its own task
+  commits there, pushes that branch, and opens its pull request without
+  asking. Open the pull request as a draft (`gh pr create --draft`) while the
+  work is unfinished or a quality gate fails, and mark it ready when it is
+  done; if GitHub refuses a draft, prefix the title with `[DRAFT]` instead.
+  An agent may also rebase such a branch and force-push it, always with
+  `git push --force-with-lease` so that a commit it has not seen is never
+  overwritten. A branch stops being yours alone once someone else has
+  committed to it or stacked a branch on it. This repository rule takes
+  precedence over the default in the Beads sections below. Merging any pull
+  request, committing to `main`, and pushing to a branch someone else is
+  working on still wait for the owner's go-ahead.
 - **A merged branch is finished.** Once a branch's pull request is merged,
   further work starts on a new branch from `origin/main`. Claude Code hooks
   (`.claude/hooks/branch_merge_status.py`) report a merged branch when a Claude
@@ -206,6 +214,14 @@ upstream in their style from the start.
 
 Pass non-interactive flags (`cp -f`, `mv -f`, `rm -f`, `ssh -o BatchMode=yes`)
 so a command never waits on a prompt.
+
+## The Beads sections below are generated
+
+Everything from here down is written by `bd` and replaced when it updates.
+Where it disagrees with a section above, the section above wins. In
+particular, its "do not commit or push unless explicitly asked" is replaced by
+the Git section, and its "close finished work" by the rule that an issue stays
+in progress until its pull request merges into `main`.
 
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:46cd31e7 -->
 ## Beads Issue Tracker
