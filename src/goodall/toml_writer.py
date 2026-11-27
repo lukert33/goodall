@@ -19,7 +19,8 @@ comments or settings of their own into it, and those must survive
 - `append_marked_block` adds lines at the end, under a comment saying goodall
   added them, and leaves every byte before them as it was.
 - `replace_top_level_line` replaces the one line that sets a top-level key,
-  and leaves every other line as it was.
+  and leaves every other line as it was; `replace_top_level_value` does the
+  same for a new value, and keeps a comment at the end of that line.
 
 Neither edit checks that the result means what was intended; a caller reads
 the result back with `tomllib` and compares, because only the caller knows
@@ -157,8 +158,40 @@ def replace_top_level_line(existing_text: str, key: str, new_line: str) -> str |
     value continued over several lines, say). Goodall then leaves the file
     alone and the caller says how to change it by hand.
     """
-    key_pattern = re.compile(r"\s*" + re.escape(key) + r"\s*=")
     lines = existing_text.splitlines(keepends=True)
+    position = position_of_top_level_line(lines, key)
+    if position is None:
+        return None
+    lines[position] = new_line + line_ending_of(lines[position])
+    return "".join(lines)
+
+
+def replace_top_level_value(existing_text: str, key: str, value: TomlValue) -> str | None:
+    """`existing_text` with the value of top-level `key` replaced by `value`, or None as `replace_top_level_line`.
+
+    Unlike `replace_top_level_line`, a comment at the end of the line stays
+    where it was, with the spaces before it. Trap: a `#` inside a quoted
+    value is not a comment, so a line with any quote after its first `#` is
+    treated as having no comment and is rewritten whole.
+    """
+    lines = existing_text.splitlines(keepends=True)
+    position = position_of_top_level_line(lines, key)
+    if position is None:
+        return None
+    old_line = lines[position].rstrip("\r\n")
+    comment_start = old_line.find("#")
+    comment = ""
+    if comment_start != -1 and '"' not in old_line[comment_start:] and "'" not in old_line[comment_start:]:
+        before_comment = old_line[:comment_start]
+        spaces_before_comment = before_comment[len(before_comment.rstrip()) :]
+        comment = spaces_before_comment + old_line[comment_start:]
+    lines[position] = toml_line(key, value) + comment + line_ending_of(lines[position])
+    return "".join(lines)
+
+
+def position_of_top_level_line(lines: list[str], key: str) -> int | None:
+    """Where in `lines` the one whole `key = value` line is, above the first table, or None."""
+    key_pattern = re.compile(r"\s*" + re.escape(key) + r"\s*=")
     matching_positions = []
     for position, line in enumerate(lines):
         if TABLE_HEADER_PATTERN.match(line):
@@ -172,8 +205,11 @@ def replace_top_level_line(existing_text: str, key: str, new_line: str) -> str |
         tomllib.loads(lines[position])
     except tomllib.TOMLDecodeError:
         return None
-    line_ending = ""
-    if lines[position].endswith("\n"):
-        line_ending = "\n"
-    lines[position] = new_line + line_ending
-    return "".join(lines)
+    return position
+
+
+def line_ending_of(line: str) -> str:
+    """The new line `line` ends with, or nothing for a last line that has none."""
+    if line.endswith("\n"):
+        return "\n"
+    return ""

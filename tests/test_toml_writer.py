@@ -14,6 +14,7 @@ from goodall.toml_writer import (
     append_marked_block,
     render_toml,
     replace_top_level_line,
+    replace_top_level_value,
     toml_value,
 )
 
@@ -85,3 +86,26 @@ def test_replacing_a_top_level_line_keeps_the_others_and_their_comments() -> Non
 def test_a_line_that_cannot_be_found_once_is_not_replaced() -> None:
     assert replace_top_level_line("a = 1\n[table]\nb = 2\n", "b", "b = 3") is None
     assert replace_top_level_line("a = 1\n", "b", "b = 3") is None
+
+
+def test_replacing_a_value_keeps_the_comment_at_the_end_of_its_line() -> None:
+    existing = '# the roster\nworkstreams = ["research"]   # add yours here\nname = "goodall-pilot"\n'
+
+    replaced = replace_top_level_value(existing, "workstreams", ["research", "go-to-market"])
+
+    assert replaced == (
+        '# the roster\nworkstreams = ["research", "go-to-market"]   # add yours here\nname = "goodall-pilot"\n'
+    )
+
+
+def test_replacing_a_value_on_a_line_without_a_comment_changes_only_that_line() -> None:
+    existing = 'name = "goodall-pilot"\nworkstreams = ["research"]\n\n[[contributors]]\nid = "ada"\n'
+
+    replaced = replace_top_level_value(existing, "workstreams", ["research", "ops"])
+
+    assert replaced == 'name = "goodall-pilot"\nworkstreams = ["research", "ops"]\n\n[[contributors]]\nid = "ada"\n'
+
+
+def test_a_value_that_cannot_be_found_once_is_not_replaced() -> None:
+    assert replace_top_level_value("a = 1\n[table]\nb = 2\n", "b", 3) is None
+    assert replace_top_level_value("workstreams = [\n  'a',\n]\n", "workstreams", ["a", "b"]) is None
