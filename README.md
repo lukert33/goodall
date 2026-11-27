@@ -41,15 +41,20 @@ These commands work today:
 | `goodall journal` | Adds a **journal entry**: your written note about what was decided or done. |
 | `goodall intervene` | Records an **intervention**: a moment you overrode, corrected or rescued an agent. |
 | `goodall timeline` | Shows one ended work block in time order: who did what and when, with no private text ([docs/timeline.md](docs/timeline.md)). |
+| `goodall onboard --answers <file>` | Sets up this macOS user account for an eval from an **answers file**: the record repo, the log directory, local settings, the env file and the Claude Code hooks. It shows every change first, and `--plan` shows them without making any ([docs/answers-file.md](docs/answers-file.md)). |
 | `goodall doctor` | Checks the account and setup, and changes nothing. |
 | `goodall hook` | Called by Claude Code, not by people. It is the prompt gate, and it leaves heartbeats. |
 | `goodall icon-state` | Called by the menu bar icon, every minute. Says whether goodall is recording, paused or not recording, and changes nothing ([docs/menu-bar-icon.md](docs/menu-bar-icon.md)). |
 
-These commands exist but are not built yet: `onboard` (setup), `settings`,
-`sync`, `logs`, `export scout`, `dry-run`, `teardown` and `release`. Each tells
-you so when you run it, and `goodall onboard` and `goodall settings` say how to
-do their jobs by hand.
-The full by-hand steps are in [docs/setup-by-hand.md](docs/setup-by-hand.md).
+These commands exist but are not built yet: `settings`, `sync`, `logs`,
+`export scout`, `dry-run`, `teardown` and `release`. Each tells you so when you
+run it, and `goodall settings` says how to do its job by hand. The setup page
+that plain `goodall onboard` will open is not built either; until it is,
+write the answers file yourself ([docs/answers-file.md](docs/answers-file.md)).
+The steps goodall onboard does not do, such as creating the eval account and
+giving ActivityWatch its own port, are in
+[docs/setup-by-hand.md](docs/setup-by-hand.md), with the rest of setup done
+by hand.
 
 The **menu bar icon** shows whether goodall is recording and starts, pauses
 and stops a work block from its menu. Its first version can be built and

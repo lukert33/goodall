@@ -47,6 +47,7 @@ from goodall.entries import DECISION_MEANINGS, EntryRequest, InterventionDetails
 from goodall.fixblock import run_fixblock
 from goodall.hook import run_hook
 from goodall.icon_state import run_icon_state
+from goodall.onboard import ONBOARD_BY_HAND, run_onboard
 from goodall.runner import RealRunner, Runner
 from goodall.scout_export import run_export_scout
 from goodall.status import run_status
@@ -71,7 +72,30 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=f"goodall {__version__}")
     commands = parser.add_subparsers(title="commands", metavar="<command>")
 
-    onboard = commands.add_parser("onboard", help="Set up this eval account and its record repo for a new eval.")
+    onboard = commands.add_parser(
+        "onboard",
+        help="Set up this macOS user account for an eval, from an answers file.",
+        description=(
+            "Set up this macOS user account for an eval: the record repo, the log directory, local settings, the "
+            "env file and the Claude Code hooks. The setup page that asks the questions is not built yet; meanwhile "
+            "write an answers file (docs/answers-file.md) and pass it with --answers. Goodall shows every change "
+            "before it makes any, and running it again with the same answers changes nothing."
+        ),
+    )
+    onboard.add_argument(
+        "--answers",
+        metavar="<file>",
+        type=Path,
+        help="The answers file to set up from. Supplying it is the go-ahead: goodall asks nothing.",
+    )
+    onboard.add_argument(
+        "--plan", action="store_true", help="Show every change the answers call for, and make none of them."
+    )
+    onboard.add_argument(
+        "--json",
+        action="store_true",
+        help="Print the result as one JSON document on standard output, for agents and scripts.",
+    )
     onboard.set_defaults(command_name="onboard")
 
     doctor = commands.add_parser("doctor", help="Check this account and eval setup without changing anything.")
@@ -370,12 +394,7 @@ def add_entry_text_arguments(parser: argparse.ArgumentParser, text_help: str) ->
 # hand. So a command that a message points at needs a real entry here, and
 # tests/test_cli.py fails when it has none.
 BY_HAND_STEPS = {
-    "onboard": (
-        "ask whoever runs the eval for this eval account's local settings file, local-settings.toml, or write "
-        "it yourself, and put it in the folder ~/.config/goodall/ in this macOS user account's home folder "
-        "(goodall status names each setting it needs and shows an example line). Then add the Claude Code "
-        "hooks as docs/claude-code-hooks.md in goodall's documentation shows, and run goodall status."
-    ),
+    "onboard": ONBOARD_BY_HAND,
     "settings": (
         "open local-settings.toml in a text editor to change this macOS user account's own settings, such as "
         "your main workstream; it is in the folder ~/.config/goodall/ in the account's home folder. To add a "
@@ -455,6 +474,8 @@ def main(
         group_parser.print_help(terminal.standard_error)
         return exit_codes.USAGE_ERROR
 
+    if command_name == "onboard":
+        return run_onboard(terminal, runner, clock, arguments.answers, arguments.plan, arguments.json)
     if command_name == "status":
         return run_status(terminal, runner, clock, as_json=arguments.json)
     if command_name == "icon-state":

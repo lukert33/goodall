@@ -1,7 +1,11 @@
 # Setting up an eval account by hand
 
-`goodall onboard` is not built yet. This checklist is how to do its job by
-hand, for the first eval on a real Mac. It was written on 2026-11-26 from
+This checklist is how to set up an eval account for the first eval on a real
+Mac. **Parts 4 and 5 can now be done for you** by
+`goodall onboard --answers <file>`, from an answers file you write
+([answers-file.md](answers-file.md)); the setup page that will ask the
+questions is not built yet. Everything else here is still by hand. It was
+written on 2026-11-26 from
 goodall's code and documents, and **has not yet been followed from start to
 finish on a real Mac**. On 2026-11-27 Parts 4 and 6 were rehearsed in a
 scratch home folder, which added the git identity, PATH and Claude Code
@@ -236,6 +240,15 @@ your first `goodall stop`.
 
 ## Part 4: The record repo, the log directory and local settings
 
+**Or let goodall do Parts 4 and 5.** Write an answers file as
+[answers-file.md](answers-file.md) shows, with the values below, then run
+`goodall onboard --answers <file> --plan` to see every change, and the same
+command without `--plan` to make them. It writes the record repo with its
+first commit, `eval.toml`, `CONSTRUCT.md`, the log directory, the env file,
+local settings and the Claude Code hooks, and running it again changes
+nothing. **Not yet confirmed** on a real Mac in an eval account. Then go on
+to Part 6. The steps below are what it does, for doing them by hand.
+
 - [ ] Create the record repo, a git repository of its own, with no
       remote. Goodall commits records to it and never pushes them.
 
@@ -299,6 +312,10 @@ your first `goodall stop`.
       activitywatch_device_id = "8d3f2c1e-4b5a-4c6d-9e7f-0a1b2c3d4e5f"
       ```
 
+- [ ] If the eval uses secrets, write the env file beside local settings,
+      `~/.config/goodall/.env`, one `NAME=op://vault/item/field` line per
+      secret, and make it readable by this account only:
+      `chmod 600 ~/.config/goodall/.env`.
 - [ ] Run `goodall status`. It names any setting it cannot read and shows a
       correct example line.
 
@@ -309,7 +326,8 @@ signing in means recording. That is the recommended setup. **Mixed account
 mode** is a second choice, for trying goodall out on your own work in a
 macOS user account you also use for other things (ADR 0021). To use it, do
 Parts 2, 4, 5 and 6 in that account, skip Part 3, and add one line to local
-settings:
+settings (with goodall onboard, write `account_mode = "mixed"` in the
+answers file instead):
 
 ```toml
 account_mode = "mixed"
@@ -347,6 +365,7 @@ when unsure.
 ## Part 5: The Claude Code hooks
 
 The prompt gate and transcript copying run from Claude Code's hooks.
+`goodall onboard --answers` adds them for you; by hand:
 
 - [ ] Add the `hooks` block shown in
       [claude-code-hooks.md](claude-code-hooks.md) to
