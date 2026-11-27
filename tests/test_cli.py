@@ -145,7 +145,11 @@ def test_group_without_subcommand_is_usage_error() -> None:
 
 
 # Commands that do something real, so they no longer report "not built yet".
+# Plain `goodall onboard` still reports that its setup page is not built, and
+# still gives a by-hand way (the onboard tests below, and tests/test_onboard.py),
+# but `goodall onboard --answers` is built.
 BUILT_COMMANDS = [
+    "onboard",
     "status",
     "icon-state",
     "doctor",
