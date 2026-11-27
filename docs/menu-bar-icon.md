@@ -14,9 +14,12 @@ only way to see it is to build it yourself, as below.
 
 | Look | Meaning |
 | --- | --- |
-| A red filled circle with a time beside it, such as `0:42` | Goodall is recording. The time is how long the active work block has run, as hours:minutes. |
-| A circle with a pause mark | Recording is paused. Goodall is not recording. |
-| An empty circle | Goodall is not recording. |
+| Red binoculars with a filled dot in each lens | Goodall is recording. |
+| Binoculars with an upright bar in each lens | Recording is paused. Goodall is not recording. |
+| Binoculars with empty lenses | Goodall is not recording. |
+
+The icon shows no running time. Hold the pointer over it, or open the menu,
+to read which workstream is being recorded and since when.
 
 A `!` beside the icon means the last thing you chose from the menu did not
 work. It goes away when you open the menu.

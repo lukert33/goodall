@@ -1,12 +1,13 @@
 """Tests for the menu bar icon's helper, the Swift program in `menu-bar-icon/` (ADR 0024).
 
-Two tests read the Swift source as text, to hold it to rules a compiler
-does not check: it never says "eval", and every goodall command it runs is
-one the command line has.
+Three tests read the Swift source as text, to hold it to rules a compiler
+does not check: it never says "eval", every goodall command it runs is one
+the command line has, and it draws its own binoculars and shows no clock.
 
-The third builds the real helper with `menu-bar-icon/build.sh` into
+The fourth builds the real helper with `menu-bar-icon/build.sh` into
 tmp_path. It is skipped where there is no Swift compiler, which includes
-the Linux runners CI uses, so on CI the Swift is not compiled. It proves
+the Linux runners CI uses; CI's separate Mac job runs the same build script
+instead (.github/workflows/quality-gates.yml). It proves
 the source compiles and the application is whole and signed; it never
 starts the helper it built.
 """
@@ -51,6 +52,18 @@ def test_every_goodall_command_the_helper_runs_is_one_the_command_line_has() -> 
             parser.parse_args(["icon-state", "--json"])
         else:
             parser.parse_args([command_name])
+
+
+def test_the_helper_draws_binoculars_and_shows_no_clock() -> None:
+    # The owner's decisions of 2026-11-27. The icon is goodall's binoculars,
+    # drawn by the helper. It shows no running time: a clock that reads 0:00
+    # for the first minute looks broken, and the icon's job is only to say
+    # whether goodall is recording.
+    source = (HELPER_FOLDER / "main.swift").read_text()
+    assert "func binocularsImage(" in source
+    assert "systemSymbolName" not in source
+    assert "elapsed" not in source
+    assert "clockTick" not in source
 
 
 needs_swift = pytest.mark.skipif(

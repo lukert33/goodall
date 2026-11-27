@@ -14,8 +14,8 @@
 //
 // What it does, in order:
 //
-//   1. Puts an icon in the menu bar, with one of three looks: recording, paused, not
-//      recording. While recording it also shows how long, as hours:minutes.
+//   1. Puts an icon in the menu bar: a pair of binoculars, goodall's mark, with one of
+//      three looks for recording, paused and not recording. It shows no running time.
 //   2. Asks goodall for the state when it starts, whenever the folder goodall names in
 //      `watch_folder` changes (so a `goodall start` typed in a terminal shows within a
 //      second), after every menu command, and once a minute in case anything was missed.
@@ -56,10 +56,8 @@ let goodallCommand: String? = environment["GOODALL_COMMAND"]
 let logPath: String =
     environment["GOODALL_MENU_BAR_LOG"] ?? (NSHomeDirectory() + "/Library/Logs/goodall/menu-bar-icon.log")
 
-// How often to ask goodall again even if nothing seemed to change, and how often to redraw
-// the hours:minutes beside the icon (which needs no goodall, only the clock).
+// How often to ask goodall again even if nothing seemed to change.
 let slowPollSeconds = 60.0
-let clockTickSeconds = 15.0
 
 // After the watched folder changes, wait this long before asking, so that the several
 // changes one goodall command makes lead to one question, not five.
@@ -225,21 +223,14 @@ final class MenuBarIcon: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        // Digits of equal width, so the icon does not shift sideways as the time changes.
-        let fontSize = NSFont.menuBarFont(ofSize: 0).pointSize
-        statusItem.button?.font = NSFont.monospacedDigitSystemFont(ofSize: fontSize, weight: .regular)
         draw()
         askGoodallForState()
 
-        // Timers run in ".common" mode so they keep going while a menu is open.
+        // The timer runs in ".common" mode so it keeps going while a menu is open.
         let slowPoll = Timer(timeInterval: slowPollSeconds, repeats: true) { [weak self] _ in
             self?.askGoodallForState()
         }
         RunLoop.main.add(slowPoll, forMode: .common)
-        let clockTick = Timer(timeInterval: clockTickSeconds, repeats: true) { [weak self] _ in
-            self?.drawIcon()
-        }
-        RunLoop.main.add(clockTick, forMode: .common)
     }
 
     // -----------------------------------------------------------------------------------
@@ -346,49 +337,93 @@ final class MenuBarIcon: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusItem.menu = buildMenu()
     }
 
-    // The three looks. The pictures are SF Symbols, which come with macOS.
+    // The three looks, all the same binoculars:
+    //   not recording   an outline, with empty lenses
+    //   paused          an outline, with an upright bar in each lens: together, a pause mark
+    //   recording       red, with a filled dot in each lens, like two recording lights
+    // The icon shows no running time. A clock that reads 0:00 for the first minute looks
+    // broken, and the icon's job is only to say whether goodall is recording.
     func drawIcon() {
         guard let button = statusItem.button else { return }
         let state = iconState?.state ?? "not_recording"
-        var symbolName = "circle"
         var description = "goodall: not recording"
-        var text = ""
         if state == "recording" {
-            symbolName = "record.circle.fill"
             description = "goodall: recording"
-            text = elapsedText()
         } else if state == "paused" {
-            symbolName = "pause.circle"
             description = "goodall: paused"
         }
-        if failureNotSeenYet {
-            text += " !"
-        }
-
-        var image = NSImage(systemSymbolName: symbolName, accessibilityDescription: description)
-        if state == "recording" {
-            // Red, the color every recording light has. The other two looks are "templates":
-            // macOS draws them black or white to suit the menu bar.
-            image = image?.withSymbolConfiguration(NSImage.SymbolConfiguration(hierarchicalColor: .systemRed))
-            image?.isTemplate = false
-        } else {
-            image?.isTemplate = true
-        }
-        button.image = image
+        button.image = binocularsImage(state: state, description: description)
         button.imagePosition = .imageLeading
-        button.title = text.isEmpty ? "" : " " + text
+        button.title = failureNotSeenYet ? " !" : ""
         button.toolTip = iconState?.statusLine ?? description
     }
 
-    // How long the active work block has been recording, as hours:minutes, such as 0:42.
-    // Worked out from the start time goodall gave and this Mac's clock, so it can tick
-    // without running goodall every few seconds.
-    func elapsedText() -> String {
-        guard let startedAt = iconState?.workBlock?.startedAt,
-            let start = ISO8601DateFormatter().date(from: startedAt)
-        else { return "" }
-        let minutes = max(0, Int(Date().timeIntervalSince(start)) / 60)
-        return String(format: "%d:%02d", minutes / 60, minutes % 60)
+    // Draws goodall's mark: a pair of binoculars seen from behind, the same drawing as the
+    // onboarding page's masthead. It is drawn here, with lines and circles, so that no
+    // picture file has to be shipped. The numbers are positions on a grid 46 wide and 34
+    // tall, with (0, 0) at the top left; the grid is then shrunk to the menu bar's height.
+    func binocularsImage(state: String, description: String) -> NSImage {
+        let gridWidth: CGFloat = 46
+        let gridHeight: CGFloat = 34
+        let height: CGFloat = 16  // points; the menu bar is 22 or more tall
+        let scale = height / gridHeight
+        let size = NSSize(width: gridWidth * scale, height: height)
+        let leftLens = NSPoint(x: 11, y: 23)
+        let rightLens = NSPoint(x: 35, y: 23)
+
+        let image = NSImage(size: size, flipped: true) { _ in
+            let shrink = NSAffineTransform()
+            shrink.scale(by: scale)
+            shrink.concat()
+            // Black here is only a stand-in when the image is a "template" (see below).
+            let color: NSColor = state == "recording" ? .systemRed : .black
+            color.setStroke()
+            color.setFill()
+
+            let outline = NSBezierPath()
+            outline.lineWidth = 2.6
+            outline.lineCapStyle = .round
+            outline.lineJoinStyle = .round
+            // The two big lenses.
+            for lens in [leftLens, rightLens] {
+                outline.appendOval(in: NSRect(x: lens.x - 9, y: lens.y - 9, width: 18, height: 18))
+            }
+            // The two eyepieces, above the lenses.
+            outline.move(to: NSPoint(x: 8, y: 14.5))
+            outline.line(to: NSPoint(x: 11, y: 4))
+            outline.line(to: NSPoint(x: 17, y: 4))
+            outline.line(to: NSPoint(x: 19, y: 13))
+            outline.move(to: NSPoint(x: 38, y: 14.5))
+            outline.line(to: NSPoint(x: 35, y: 4))
+            outline.line(to: NSPoint(x: 29, y: 4))
+            outline.line(to: NSPoint(x: 27, y: 13))
+            // The bridge that joins the two halves.
+            outline.move(to: NSPoint(x: 19, y: 13))
+            outline.line(to: NSPoint(x: 27, y: 13))
+            outline.move(to: NSPoint(x: 20, y: 21))
+            outline.line(to: NSPoint(x: 26, y: 21))
+            outline.stroke()
+
+            // What is inside the lenses says which of the three looks this is.
+            for lens in [leftLens, rightLens] {
+                if state == "recording" {
+                    NSBezierPath(ovalIn: NSRect(x: lens.x - 5, y: lens.y - 5, width: 10, height: 10)).fill()
+                } else if state == "paused" {
+                    let bar = NSBezierPath()
+                    bar.lineWidth = 3.4
+                    bar.lineCapStyle = .round
+                    bar.move(to: NSPoint(x: lens.x, y: lens.y - 4.5))
+                    bar.line(to: NSPoint(x: lens.x, y: lens.y + 4.5))
+                    bar.stroke()
+                }
+            }
+            return true
+        }
+        // A "template" image is one macOS recolors black or white to suit the menu bar.
+        // The recording look stays red, the color every recording light has.
+        image.isTemplate = state != "recording"
+        image.accessibilityDescription = description
+        return image
     }
 
     func buildMenu() -> NSMenu {
