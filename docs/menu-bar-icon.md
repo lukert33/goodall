@@ -38,8 +38,8 @@ work. It goes away when you open the menu.
 - Items that make no sense right now are gray: you cannot pause when nothing
   is recording, or record while a work block is already active.
 - While a command runs, the first line says what it is doing ("Preparing to
-  record…", "Pausing…", "Stopping…", "Opening settings…") and every item is
-  gray, so a second click starts nothing. An open menu changes to the new
+  record…", "Pausing…", "Stopping…") and every item is gray, so a second
+  click starts nothing. **Settings…** is the exception, below. An open menu changes to the new
   state as soon as goodall has said what the command changed.
 - The menu never asks a question, and it never opens a window or a dialog.
 - **Quit goodall** stops any recording cleanly, exactly as **Stop recording**
@@ -50,9 +50,15 @@ work. It goes away when you open the menu.
 - **Settings…** opens the setup page in your browser with your current
   answers filled in, which is how you add a workstream
   ([setup-page.md](setup-page.md), "Settings"). The command keeps waiting for
-  the answers file the page saves, so the item stays gray, and the first line
-  says "Opening settings…", until you save or stop it. The page says what to
-  expect, because no Terminal window is open. If goodall is not set up in
+  the answers file the page saves, for up to 60 minutes, but the menu does
+  not wait with it: Record work block, Pause, Stop recording and Quit goodall
+  go on working, and the status line goes on showing goodall's state. Only
+  Settings… itself is gray, under a gray line saying "Settings… is open in
+  your browser.", until that command ends: a second click opens no second
+  page and starts no second waiting command. If you closed the page without
+  saving, the item comes back when the wait runs out; until then, run
+  `goodall settings` in Terminal. The page says what to expect, because no
+  Terminal window is open. If goodall is not set up in
   this account, the command stops at once, and counts as one that did not
   work: its message, which says to run `goodall onboard`, is in the log file
   named below.

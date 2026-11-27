@@ -170,6 +170,11 @@ final class MenuBarIcon: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // the menu bar never freezes while goodall works. Drawing always happens on the main thread.
     let goodallQueue = DispatchQueue(label: "goodall commands")
 
+    // A command the model says waits for the person (Settings…, `holdsTheMenu` false) runs
+    // here instead, so the state questions and the other commands are not stuck behind it
+    // while the setup page is open. The model lets only one start at a time.
+    let waitingQueue = DispatchQueue(label: "goodall commands that wait for the person")
+
     // The folder being watched, the watch on it, and the question waiting to be asked.
     var watchedFolder: String?
     var folderWatch: DispatchSourceFileSystemObject?
@@ -216,13 +221,14 @@ final class MenuBarIcon: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func runMenuCommand(_ command: MenuCommand, afterSuccess: (() -> Void)? = nil) {
         model.commandStarted(command)
         draw()
-        goodallQueue.async {
+        let queue = command.holdsTheMenu ? goodallQueue : waitingQueue
+        queue.async {
             let result = runGoodall(command.arguments, keepErrors: true)
             if result.exitCode != 0 {
                 writeToLog(title: command.itemTitle, arguments: command.arguments, result: result)
             }
             DispatchQueue.main.async {
-                self.model.commandFinished(exitCode: result.exitCode)
+                self.model.commandFinished(command, exitCode: result.exitCode)
                 if result.exitCode == 0 {
                     afterSuccess?()
                 }

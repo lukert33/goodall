@@ -97,6 +97,16 @@ def test_the_menu_is_refilled_in_place_so_an_open_menu_shows_a_finished_command(
     assert "menu.removeAllItems()" in source
 
 
+def test_a_command_that_waits_for_the_person_runs_apart_from_the_state_questions() -> None:
+    # goodall settings waits up to an hour for the setup page. On the one
+    # serial queue it would hold up every `icon-state` question and every
+    # Stop recording behind it; the model's tests show the menu stays usable,
+    # and this checks that main.swift runs such a command on its own queue.
+    source = (HELPER_FOLDER / "main.swift").read_text()
+    assert "command.holdsTheMenu ? goodallQueue : waitingQueue" in source
+    assert source.count("goodallQueue.async") == 1  # the state question only
+
+
 def test_the_helper_shows_notifications_itself_and_never_through_osascript() -> None:
     # The owner's decision of 2026-11-26: notifications come from the
     # helper, under goodall's own name, never from osascript, which shows

@@ -11,7 +11,9 @@
 //
 //     {"event": "state_answered", "output": "<what goodall icon-state --json printed>"}
 //     {"event": "item_chosen", "titles": ["Record work block", "research"]}
-//     {"event": "command_finished", "exit_code": 1}
+//     {"event": "command_finished", "exit_code": 1, "arguments": ["settings"]}
+//
+// ("arguments", which may be left out, say which command ended when two run at once.)
 //     {"event": "menu_opened"}
 //
 // It hands each event to the model exactly as main.swift does, and prints a JSON list with
@@ -100,7 +102,21 @@ for event in events {
             stop("\(titles) runs nothing.")
         }
     case "command_finished":
-        model.commandFinished(exitCode: Int32(event["exit_code"] as? Int ?? -1))
+        // Which command ended: the one with these arguments, or else the one holding the
+        // menu, or else the one waiting for the person.
+        let exitCode = Int32(event["exit_code"] as? Int ?? -1)
+        var ended: MenuCommand? = model.runningCommand ?? model.waitingCommand
+        if let arguments = event["arguments"] as? [String] {
+            ended = nil
+            for candidate in [model.runningCommand, model.waitingCommand] {
+                if let candidate = candidate, candidate.arguments == arguments {
+                    ended = candidate
+                }
+            }
+        }
+        if let command = ended {
+            model.commandFinished(command, exitCode: exitCode)
+        }
     case "menu_opened":
         model.menuOpened()
     default:
@@ -117,6 +133,7 @@ for event in events {
         "tool_tip": model.toolTip,
         "rows": rows,
         "running_arguments": model.runningCommand?.arguments ?? NSNull(),
+        "waiting_arguments": model.waitingCommand?.arguments ?? NSNull(),
         "quit": quit,
         "ask_notification_permission": askNotificationPermission,
     ])
