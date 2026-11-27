@@ -376,3 +376,27 @@ def test_terminal_records_color_separately_for_each_stream(monkeypatch: pytest.M
 
     assert terminal.error_color is True
     assert terminal.output_color is False
+
+
+def test_rows_line_up_under_their_column_names_and_are_never_wrapped() -> None:
+    standard_output = io.StringIO()
+    terminal = Terminal(standard_output=standard_output, standard_error=io.StringIO())
+    a_long_value = "log_directory: " + "transcripts/-Users-ada-work/0f6c1d2e-3a4b-4c5d-8e9f-a0b1c2d3e4f5.jsonl, line 12"
+
+    terminal.show_facts([("Entries", "2")])
+    terminal.show_rows(
+        ["Time", "Who", "What", "Raw record"],
+        [
+            ["09:35:00", "human", "typed_prompt", a_long_value],
+            ["09:35:20", "ai", "tool_call WebSearch", ""],
+        ],
+    )
+
+    assert standard_output.getvalue() == (
+        "Entries  2\n"
+        "\n"
+        "Time      Who    What                 Raw record\n"
+        f"09:35:00  human  typed_prompt         {a_long_value}\n"
+        "09:35:20  ai     tool_call WebSearch\n"
+    )
+    assert len(a_long_value) > FIXED_WIDTH - 40
