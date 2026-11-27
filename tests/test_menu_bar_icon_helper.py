@@ -1,10 +1,13 @@
 """Tests for the menu bar icon's helper, the Swift program in `menu-bar-icon/` (ADR 0024).
 
-Three tests read the Swift source as text, to hold it to rules a compiler
-does not check: it never says "eval", every goodall command it runs is one
-the command line has, and it draws its own binoculars and shows no clock.
+What the menu shows after each thing that happens is tested by running the
+helper's model, in tests/test_menu_bar_icon_model.py (ADR 0025). The tests
+here cover what that cannot: they read the Swift source as text, to hold it
+to rules a compiler does not check (it never says "eval", every goodall
+command it runs is one the command line has, it draws its own binoculars
+and shows no clock, and it refills one menu rather than replacing it).
 
-The fourth builds the real helper with `menu-bar-icon/build.sh` into
+The last test builds the real helper with `menu-bar-icon/build.sh` into
 tmp_path. It is skipped where there is no Swift compiler, which includes
 the Linux runners CI uses; CI's separate Mac job runs the same build script
 instead (.github/workflows/quality-gates.yml). It proves
@@ -27,17 +30,25 @@ REPOSITORY_ROOT = Path(__file__).parent.parent
 HELPER_FOLDER = REPOSITORY_ROOT / "menu-bar-icon"
 
 
+def helper_source() -> str:
+    """Every Swift file of the helper, joined: main.swift and MenuModel.swift."""
+    sources = []
+    for swift_file in sorted(HELPER_FOLDER.glob("*.swift")):
+        sources.append(swift_file.read_text())
+    return "\n".join(sources)
+
+
 def test_the_helper_source_never_says_eval() -> None:
     # The menu and the notifications never say "eval" (ADR 0021). The whole
     # source is held to it, comments too, so no string can slip through.
-    source = (HELPER_FOLDER / "main.swift").read_text()
+    source = helper_source()
     assert "eval" not in source.lower()
 
 
 def test_every_goodall_command_the_helper_runs_is_one_the_command_line_has() -> None:
     # Each menu item runs one goodall command (ADR 0024). The helper keeps
     # them in one list, one per line, which this test reads.
-    source = (HELPER_FOLDER / "main.swift").read_text()
+    source = helper_source()
     command_names = []
     for line in source.splitlines():
         if "// goodall-command:" in line:
@@ -73,16 +84,6 @@ def test_the_recording_look_is_orange() -> None:
     assert ".systemRed" not in source
 
 
-def test_the_line_shown_while_a_command_runs_says_what_it_is_doing() -> None:
-    # The owner's copy note of 2026-11-27, from clicking the menu: "work" is
-    # a word with a meaning in goodall (a work block), so the menu does not
-    # say "Working…" while a command runs. Each command names what it does.
-    source = (HELPER_FOLDER / "main.swift").read_text()
-    assert "Working" not in source
-    for busy_line in ["Preparing to record…", "Pausing…", "Stopping…", "Opening settings…"]:
-        assert f'"{busy_line}"' in source
-
-
 def test_the_menu_is_refilled_in_place_so_an_open_menu_shows_a_finished_command() -> None:
     # Found by clicking on 2026-11-27: a menu opened while a command ran kept
     # its busy line after the command finished, because each redraw handed
@@ -91,18 +92,6 @@ def test_the_menu_is_refilled_in_place_so_an_open_menu_shows_a_finished_command(
     source = (HELPER_FOLDER / "main.swift").read_text()
     assert source.count("statusItem.menu =") == 1
     assert "menu.removeAllItems()" in source
-
-
-def test_the_busy_line_stays_until_goodall_has_said_what_the_command_changed() -> None:
-    # Found by clicking on 2026-11-27: after Stop recording, an open menu
-    # flashed the old "Recording ..." line before settling on "Not
-    # recording", because the busy line was cleared while the helper still
-    # held goodall's answer from before the command. It is cleared only where
-    # a fresh answer is drawn, in askGoodallForState.
-    source = (HELPER_FOLDER / "main.swift").read_text()
-    assert source.count("busyLine = nil") == 1
-    ask_for_state = source.split("func askGoodallForState(")[1].split("\n    func ")[0]
-    assert "busyLine = nil" in ask_for_state
 
 
 needs_swift = pytest.mark.skipif(

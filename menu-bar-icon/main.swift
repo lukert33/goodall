@@ -1,16 +1,21 @@
 // The menu bar icon: goodall's icon at the top right of the Mac's screen (ADR 0024).
 //
-// This is the only Swift in goodall, because an icon in the menu bar cannot be made with
-// Python's standard library. It is written to be read top to bottom by someone who does
-// not know Swift, and it is kept small by one rule:
+// The helper is the only Swift in goodall, because an icon in the menu bar cannot be made
+// with Python's standard library. It is written to be read top to bottom by someone who
+// does not know Swift, and it is kept small by one rule:
 //
-//     THIS PROGRAM DECIDES NOTHING.
+//     THE HELPER DECIDES AS LITTLE AS IT CAN, AND THIS FILE DECIDES NOTHING.
 //
 // It asks goodall what to show by running `goodall icon-state --json`, and draws that.
 // Each menu item runs exactly one goodall command. Which items can be chosen, the words
 // of the status line, the list of workstreams and which of them is the main one all come
 // from goodall (src/goodall/icon_state.py). If you want to change what the icon says or
-// when an item is offered, change the Python, not this file.
+// when an item is offered, change the Python, not the Swift.
+//
+// The little the helper does decide (the line shown while a command runs, when a failure
+// is shown, what Quit goodall does first) is in MenuModel.swift, which has no AppKit and
+// is tested by tests/test_menu_bar_icon_model.py (ADR 0025). This file tells the model what
+// happened, draws what it says, and runs goodall.
 //
 // What it does, in order:
 //
@@ -62,69 +67,6 @@ let slowPollSeconds = 60.0
 // After the watched folder changes, wait this long before asking, so that the several
 // changes one goodall command makes lead to one question, not five.
 let settleSeconds = 0.3
-
-// ---------------------------------------------------------------------------------------
-// Every goodall command this program runs. Nothing else in this file names one.
-// tests/test_menu_bar_icon.py reads the "goodall-command:" notes and checks each exists.
-// ---------------------------------------------------------------------------------------
-
-let askStateArguments = ["icon-state", "--json"]  // goodall-command: icon-state
-let pauseArguments = ["pause"]  // goodall-command: pause
-let stopArguments = ["stop"]  // goodall-command: stop
-let settingsArguments = ["settings"]  // goodall-command: settings
-
-func recordArguments(workstream: String) -> [String] {
-    return ["start", "--workstream", workstream]  // goodall-command: start
-}
-
-// The gray first line of the menu while each command runs. Each says what that command is
-// doing; none says "work", because in goodall that word means a work block.
-let recordBusyLine = "Preparing to record…"
-let pauseBusyLine = "Pausing…"
-let stopBusyLine = "Stopping…"
-let settingsBusyLine = "Opening settings…"
-
-// One command a menu item runs: its arguments, and the line to show while it runs.
-struct MenuCommand {
-    let arguments: [String]
-    let busyLine: String
-}
-
-// ---------------------------------------------------------------------------------------
-// The document `goodall icon-state --json` prints (docs/menu-bar-icon.md describes it).
-// Only the keys this program draws are listed. `Decodable` lets Swift fill these in from
-// JSON; a key written `status_line` in the JSON arrives here as `statusLine`.
-// ---------------------------------------------------------------------------------------
-
-struct IconState: Decodable {
-    let state: String  // "recording", "paused" or "not_recording"
-    let statusLine: String
-    let workBlock: WorkBlock?
-    let workstreams: [Workstream]
-    let enabled: EnabledItems
-    let setup: Setup
-    let watchFolder: String?
-}
-
-struct WorkBlock: Decodable {
-    let startedAt: String  // for example 2026-11-16T09:30:00Z
-}
-
-struct Workstream: Decodable {
-    let name: String
-    let main: Bool
-}
-
-struct EnabledItems: Decodable {
-    let recordWorkBlock: Bool
-    let pause: Bool
-    let stopRecording: Bool
-}
-
-struct Setup: Decodable {
-    let usable: Bool
-    let reason: String?
-}
 
 // ---------------------------------------------------------------------------------------
 // Running goodall
@@ -214,18 +156,8 @@ final class MenuBarIcon: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // would not appear until the person closed and reopened it.
     let menu = NSMenu()
 
-    // What goodall last said. nil until the first answer, or when the answer was unreadable.
-    var iconState: IconState?
-
-    // The two gray lines shown after a failed command; empty when the last one worked.
-    var failureLines: [String] = []
-
-    // True from a failed command until the person next opens the menu: draws the "!".
-    var failureNotSeenYet = false
-
-    // While a menu command is running, the line saying what it is doing; nil when none is.
-    // Every item is gray meanwhile, so a second click cannot start another command.
-    var busyLine: String?
+    // What to show (MenuModel.swift). This file only tells it what happened and draws it.
+    var model = MenuModel(goodallIsKnown: goodallCommand != nil, logPathForPeople: logPathForPeople())
 
     // goodall commands run one at a time, in the order asked, away from the main thread, so
     // the menu bar never freezes while goodall works. Drawing always happens on the main thread.
@@ -259,51 +191,34 @@ final class MenuBarIcon: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // Asking goodall
     // -----------------------------------------------------------------------------------
 
-    // `afterCommand` is true when a menu command has just finished. Its busy line is cleared
-    // only here, in the same redraw as goodall's fresh answer: cleared any earlier, the menu
-    // would flash the state from before the command.
-    func askGoodallForState(afterCommand: Bool = false) {
+    func askGoodallForState() {
         goodallQueue.async {
             let result = runGoodall(askStateArguments, keepErrors: false)
-            let decoder = JSONDecoder()
-            decoder.keyDecodingStrategy = .convertFromSnakeCase
-            // goodall prints the document whether its exit code is 0 or 1, so only the
-            // document is looked at. Anything unreadable becomes nil.
-            let answer = try? decoder.decode(IconState.self, from: result.output.data(using: .utf8) ?? Data())
             DispatchQueue.main.async {
-                self.iconState = answer
-                if afterCommand {
-                    self.busyLine = nil
-                }
+                self.model.stateAnswered(output: result.output)
                 self.draw()
-                self.watch(folder: answer?.watchFolder)
+                self.watch(folder: self.model.iconState?.watchFolder)
             }
         }
     }
 
     // Run one menu command, then ask for the state again. `afterSuccess` is extra work for
     // the one item that needs it ("Quit goodall").
-    func runMenuCommand(title: String, command: MenuCommand, afterSuccess: (() -> Void)? = nil) {
-        busyLine = command.busyLine
+    func runMenuCommand(_ command: MenuCommand, afterSuccess: (() -> Void)? = nil) {
+        model.commandStarted(command)
         draw()
         goodallQueue.async {
             let result = runGoodall(command.arguments, keepErrors: true)
             if result.exitCode != 0 {
-                writeToLog(title: title, arguments: command.arguments, result: result)
+                writeToLog(title: command.itemTitle, arguments: command.arguments, result: result)
             }
             DispatchQueue.main.async {
+                self.model.commandFinished(exitCode: result.exitCode)
                 if result.exitCode == 0 {
-                    self.failureLines = []
-                    self.failureNotSeenYet = false
                     afterSuccess?()
-                } else {
-                    self.failureLines = ["\"\(title)\" did not work.", "Details are in \(logPathForPeople())"]
-                    self.failureNotSeenYet = true
                 }
-                // Only the icon now, for the "!". The menu keeps its busy line until goodall
-                // says what the command changed.
-                self.drawIcon()
-                self.askGoodallForState(afterCommand: true)
+                self.draw()
+                self.askGoodallForState()
             }
         }
     }
@@ -374,24 +289,17 @@ final class MenuBarIcon: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // broken, and the icon's job is only to say whether goodall is recording.
     func drawIcon() {
         guard let button = statusItem.button else { return }
-        let state = iconState?.state ?? "not_recording"
-        var description = "goodall: not recording"
-        if state == "recording" {
-            description = "goodall: recording"
-        } else if state == "paused" {
-            description = "goodall: paused"
-        }
-        button.image = binocularsImage(state: state, description: description)
+        button.image = binocularsImage(look: model.look, description: model.lookDescription)
         button.imagePosition = .imageLeading
-        button.title = failureNotSeenYet ? " !" : ""
-        button.toolTip = iconState?.statusLine ?? description
+        button.title = model.showsFailureMark ? " !" : ""
+        button.toolTip = model.toolTip
     }
 
     // Draws goodall's mark: a pair of binoculars seen from behind, the same drawing as the
     // onboarding page's masthead. It is drawn here, with lines and circles, so that no
     // picture file has to be shipped. The numbers are positions on a grid 46 wide and 34
     // tall, with (0, 0) at the top left; the grid is then shrunk to the menu bar's height.
-    func binocularsImage(state: String, description: String) -> NSImage {
+    func binocularsImage(look: IconLook, description: String) -> NSImage {
         let gridWidth: CGFloat = 46
         let gridHeight: CGFloat = 34
         let height: CGFloat = 16  // points; the menu bar is 22 or more tall
@@ -405,7 +313,7 @@ final class MenuBarIcon: NSObject, NSApplicationDelegate, NSMenuDelegate {
             shrink.scale(by: scale)
             shrink.concat()
             // Black here is only a stand-in when the image is a "template" (see below).
-            let color: NSColor = state == "recording" ? .systemOrange : .black
+            let color: NSColor = look == .recording ? .systemOrange : .black
             color.setStroke()
             color.setFill()
 
@@ -435,9 +343,9 @@ final class MenuBarIcon: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
             // What is inside the lenses says which of the three looks this is.
             for lens in [leftLens, rightLens] {
-                if state == "recording" {
+                if look == .recording {
                     NSBezierPath(ovalIn: NSRect(x: lens.x - 5, y: lens.y - 5, width: 10, height: 10)).fill()
-                } else if state == "paused" {
+                } else if look == .paused {
                     let bar = NSBezierPath()
                     bar.lineWidth = 3.4
                     bar.lineCapStyle = .round
@@ -451,87 +359,44 @@ final class MenuBarIcon: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // A "template" image is one macOS recolors black or white to suit the menu bar.
         // The recording look stays orange: macOS's own bright, citrus orange, which the
         // owner chose over red.
-        image.isTemplate = state != "recording"
+        image.isTemplate = look != .recording
         image.accessibilityDescription = description
         return image
     }
 
-    // Empty the menu and fill it again from what goodall last said.
+    // Empty the menu and fill it again with the model's rows.
     func fillMenu() {
         menu.removeAllItems()
-
-        // Whether goodall can be run at all, and whether its last answer could be read.
-        let goodallIsKnown = goodallCommand != nil
-        let canRunCommands = goodallIsKnown && busyLine == nil
-
-        // The status line, then any lines explaining a problem. All gray: they do nothing.
-        var grayLines: [String] = []
-        if !goodallIsKnown {
-            grayLines.append("This icon was not told where goodall is.")
-            grayLines.append("Choose Quit goodall, then run goodall start in Terminal.")
-        } else if let busyLine = busyLine {
-            grayLines.append(busyLine)
-        } else if let iconState = iconState {
-            grayLines.append(iconState.statusLine)
-            if let reason = iconState.setup.reason {
-                grayLines.append(reason)
-            }
-        } else {
-            grayLines.append("goodall did not answer.")
-            grayLines.append("Run goodall status in Terminal to see why.")
+        for row in model.rows {
+            menu.addItem(menuItem(for: row))
         }
-        for line in grayLines + failureLines {
-            let item = NSMenuItem(title: line, action: nil, keyEquivalent: "")
-            item.isEnabled = false
-            menu.addItem(item)
-        }
-        menu.addItem(NSMenuItem.separator())
-
-        // "Record work block", with one item per workstream. goodall lists the main one first.
-        let record = NSMenuItem(title: "Record work block", action: nil, keyEquivalent: "")
-        let workstreamMenu = NSMenu()
-        workstreamMenu.autoenablesItems = false
-        for workstream in iconState?.workstreams ?? [] {
-            let title = workstream.main ? "\(workstream.name) (main)" : workstream.name
-            let item = commandItem(
-                title: title,
-                command: MenuCommand(arguments: recordArguments(workstream: workstream.name), busyLine: recordBusyLine))
-            item.isEnabled = canRunCommands
-            workstreamMenu.addItem(item)
-        }
-        record.submenu = workstreamMenu
-        record.isEnabled =
-            canRunCommands && (iconState?.enabled.recordWorkBlock ?? false) && workstreamMenu.items.count > 0
-        menu.addItem(record)
-
-        let pause = commandItem(title: "Pause", command: MenuCommand(arguments: pauseArguments, busyLine: pauseBusyLine))
-        pause.isEnabled = canRunCommands && (iconState?.enabled.pause ?? false)
-        menu.addItem(pause)
-
-        let stop = commandItem(
-            title: "Stop recording", command: MenuCommand(arguments: stopArguments, busyLine: stopBusyLine))
-        stop.isEnabled = canRunCommands && (iconState?.enabled.stopRecording ?? false)
-        menu.addItem(stop)
-
-        menu.addItem(NSMenuItem.separator())
-
-        let settings = commandItem(
-            title: "Settings…", command: MenuCommand(arguments: settingsArguments, busyLine: settingsBusyLine))
-        settings.isEnabled = canRunCommands
-        menu.addItem(settings)
-
-        let quit = NSMenuItem(title: "Quit goodall", action: #selector(quitChosen(_:)), keyEquivalent: "q")
-        quit.target = self
-        quit.isEnabled = busyLine == nil
-        menu.addItem(quit)
     }
 
-    // A menu item that runs one goodall command. The command rides along on the item
-    // ("representedObject") and `commandChosen` reads it back when it is clicked.
-    func commandItem(title: String, command: MenuCommand) -> NSMenuItem {
-        let item = NSMenuItem(title: title, action: #selector(commandChosen(_:)), keyEquivalent: "")
-        item.target = self
-        item.representedObject = command
+    // The menu item that draws one row. A row that runs a command carries that command
+    // along on its item ("representedObject"), and `commandChosen` reads it back when the
+    // item is clicked.
+    func menuItem(for row: MenuRow) -> NSMenuItem {
+        if row.isSeparator {
+            return NSMenuItem.separator()
+        }
+        let item = NSMenuItem(title: row.title, action: nil, keyEquivalent: "")
+        item.isEnabled = row.enabled
+        if row.isQuit {
+            item.action = #selector(quitChosen(_:))
+            item.keyEquivalent = "q"
+            item.target = self
+        } else if let command = row.command {
+            item.action = #selector(commandChosen(_:))
+            item.target = self
+            item.representedObject = command
+        } else if let submenuRows = row.submenu {
+            let submenu = NSMenu()
+            submenu.autoenablesItems = false
+            for submenuRow in submenuRows {
+                submenu.addItem(menuItem(for: submenuRow))
+            }
+            item.submenu = submenu
+        }
         return item
     }
 
@@ -541,35 +406,27 @@ final class MenuBarIcon: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc func commandChosen(_ sender: NSMenuItem) {
         guard let command = sender.representedObject as? MenuCommand else { return }
-        // A workstream sits inside "Record work block"; a failure should name that item.
-        let title = sender.parent?.title ?? sender.title
-        runMenuCommand(title: title, command: command)
+        runMenuCommand(command)
     }
 
-    // "Quit goodall": stop any recording cleanly, exactly as "Stop recording" would, then
-    // leave. If stopping fails the icon stays, because goodall would still be recording
-    // with nothing on screen to say so.
+    // "Quit goodall". The model says whether to stop recording first. If stopping fails the
+    // icon stays, because goodall would still be recording with nothing on screen to say so.
     //
     // Leaving is done with exit status 0, which tells the LaunchAgent that this was meant
     // and the icon should not be started again until the next sign-in.
     @objc func quitChosen(_ sender: NSMenuItem) {
-        let somethingToStop = goodallCommand != nil && (iconState?.enabled.stopRecording ?? false)
-        if somethingToStop {
-            runMenuCommand(
-                title: sender.title, command: MenuCommand(arguments: stopArguments, busyLine: stopBusyLine),
-                afterSuccess: { exit(0) })
-        } else {
+        switch model.quitAction() {
+        case .leaveNow:
             exit(0)
+        case .stopThenLeave(let command):
+            runMenuCommand(command, afterSuccess: { exit(0) })
         }
     }
 
-    // macOS calls this as the menu opens. The person is now looking at the failure lines,
-    // so the "!" beside the icon has done its job.
+    // macOS calls this as the menu opens.
     func menuWillOpen(_ menu: NSMenu) {
-        if failureNotSeenYet {
-            failureNotSeenYet = false
-            drawIcon()
-        }
+        model.menuOpened()
+        drawIcon()
     }
 }
 
