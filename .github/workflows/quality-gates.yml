@@ -83,3 +83,23 @@ jobs:
 
       - name: Type check
         run: uv run mypy
+
+  menu-bar-icon:
+    # The menu bar icon's helper is Swift (ADR 0024), which the Linux job above
+    # cannot compile: there the test that builds it is skipped. This job builds
+    # it on a Mac, so a change that breaks the Swift fails the pull request.
+    # It needs no Python: the build script uses only the compiler and codesign
+    # that the runner already has. The helper is built and never started.
+    runs-on: macos-15
+    timeout-minutes: 10
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build the helper
+        run: menu-bar-icon/build.sh "$RUNNER_TEMP/menu-bar-icon"
+
+      - name: Check the signature
+        run: codesign --verify --strict "$RUNNER_TEMP/menu-bar-icon/goodall.app"
