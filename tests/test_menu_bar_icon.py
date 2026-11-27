@@ -4,7 +4,8 @@ Each test drives `goodall start` through `cli.main`, in a pretend account
 inside tmp_path, with the fake runner: `open`, the macOS program that
 starts an application, is scripted, so no test starts a real helper, and a
 test that forgets to script it fails. The "installed helper" is an empty
-folder named goodall.app in the pretend home folder's Applications folder.
+folder named goodall.app in a pretend Applications folder, which stands in
+for the Mac's real `/Applications`.
 
 The helper itself is tested in tests/test_menu_bar_icon_helper.py.
 """
@@ -21,7 +22,7 @@ from pathlib import Path
 
 import pytest
 
-from goodall import cli, exit_codes
+from goodall import cli, exit_codes, menu_bar_icon
 from goodall.fake_runner import (
     FAKE_PROGRAM_FOLDER,
     FakeBackgroundPrograms,
@@ -65,12 +66,13 @@ class Account:
     """A pretend macOS user account set up for goodall."""
 
     home_folder: Path
+    applications_folder: Path
     log_directory: Path
     background: FakeBackgroundPrograms
 
     @property
     def installed_helper(self) -> Path:
-        return self.home_folder / "Applications" / "goodall.app"
+        return self.applications_folder / "goodall.app"
 
     def install_helper(self) -> None:
         """Pretend the menu bar icon's helper is installed: goodall only looks for the folder."""
@@ -86,6 +88,9 @@ def account(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Account
     for folder in [config_directory, record_repo, log_directory]:
         folder.mkdir(parents=True)
     monkeypatch.setenv("HOME", str(home_folder))
+    # Beside the home folder, not inside it: the real one belongs to the whole Mac.
+    applications_folder = tmp_path / "Applications"
+    monkeypatch.setattr(menu_bar_icon, "APPLICATIONS_FOLDER", applications_folder)
     monkeypatch.setenv("GOODALL_CONFIG_DIR", str(config_directory))
     monkeypatch.setenv("TZ", "Europe/London")
     time.tzset()
@@ -106,7 +111,7 @@ def account(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Account
     (record_repo / "eval.toml").write_text(EVAL_CONFIG_TEXT)
     git(record_repo, "add", "eval.toml")
     git(record_repo, "commit", "--quiet", "-m", "Start the record repo")
-    account = Account(home_folder, log_directory, FakeBackgroundPrograms())
+    account = Account(home_folder, applications_folder, log_directory, FakeBackgroundPrograms())
     yield account
     account.background.stop_all()
     monkeypatch.undo()
@@ -189,6 +194,31 @@ def test_start_opens_the_installed_helper_in_the_background_and_tells_it_where_g
         str(account.installed_helper),
     ]
     assert start.standard_error == ""
+
+
+def test_the_helper_is_looked_for_in_the_applications_folder_the_whole_mac_shares() -> None:
+    # The owner's decision of 2026-11-27: one copy in `/Applications` serves
+    # every macOS user account, and only an administrator can change it
+    # (ADR 0022). Asked of a fresh Python, because every test here runs with
+    # the folder pointed somewhere else (tests/conftest.py).
+    asked = subprocess.run(
+        [sys.executable, "-c", "from goodall import menu_bar_icon; print(menu_bar_icon.APPLICATIONS_FOLDER)"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert asked.stdout.strip() == "/Applications"
+
+
+def test_a_helper_in_the_home_folder_is_not_the_installed_one(account: Account) -> None:
+    # A copy in `~/Applications` is one the account itself could have put
+    # there or changed. `open` is not scripted, so running it would fail.
+    (account.home_folder / "Applications" / "goodall.app").mkdir(parents=True)
+
+    start = run_start(account, open_exit_code=None)
+
+    assert start.exit_code == exit_codes.SUCCESS, start.standard_error
+    assert start.open_commands() == []
 
 
 def test_start_without_an_installed_helper_starts_no_program_for_it(account: Account) -> None:

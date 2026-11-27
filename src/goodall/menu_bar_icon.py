@@ -10,14 +10,19 @@ install; nothing here installs anything.
 
 Decisions a reader would otherwise reverse-engineer:
 
-- Where the helper is installed: `~/Applications/goodall.app`, in the home
-  folder of the macOS user account that records. It has to be a stable
-  place: macOS ties notification permission to where an application is,
-  and the spike (`goodall-fs9.29`) was refused permission from a temporary
-  folder and given it from `~/Applications`. The place uv installs goodall
-  itself is not stable either, because its path contains the Python
-  version. `~/Applications` needs no administrator, so it serves mixed
-  account mode too.
+- Where the helper is installed: `/Applications/goodall.app`, the folder
+  the whole Mac shares (the owner's decision of 2026-11-27). One copy
+  serves every macOS user account, in both account modes, and the
+  administrator install that will put it there already runs (ADR 0022).
+  Only an administrator can change what is in that folder, so an eval
+  account, and the agents working in it, cannot swap the recording
+  indicator for one that shows something else. A copy in `~/Applications`
+  is not looked for. The place also has to be stable: macOS ties
+  notification permission to where an application is, and the spike
+  (`goodall-fs9.29`) was refused permission from a temporary folder. The
+  spike was given it from `~/Applications`; `/Applications` has not been
+  tried yet. The place uv installs goodall itself is not stable, because
+  its path contains the Python version.
 - No helper installed means no program is started at all: goodall only
   looks for the folder. So `goodall start` is exactly as fast as before on
   a Mac without the helper.
@@ -45,9 +50,10 @@ from pathlib import Path
 from goodall.runner import Command, Runner
 from goodall.terminal import Failure
 
-# The helper's name as an installed application, and the folder in the home folder it is installed in.
+# The helper's name as an installed application, and the folder it is
+# installed in. Tests point the folder somewhere else (tests/conftest.py).
 APPLICATION_NAME = "goodall.app"
-APPLICATIONS_FOLDER_NAME = "Applications"
+APPLICATIONS_FOLDER = Path("/Applications")
 
 # The environment variable that tells the helper the full path of the goodall program.
 GOODALL_COMMAND_VARIABLE = "GOODALL_COMMAND"
@@ -58,8 +64,8 @@ OPEN_TIMEOUT_SECONDS = 5.0
 
 
 def installed_helper() -> Path | None:
-    """Where the menu bar icon's helper is installed in this macOS user account, or None when it is not."""
-    helper = Path.home() / APPLICATIONS_FOLDER_NAME / APPLICATION_NAME
+    """Where the menu bar icon's helper is installed on this Mac, or None when it is not."""
+    helper = APPLICATIONS_FOLDER / APPLICATION_NAME
     try:
         if helper.is_dir():
             return helper

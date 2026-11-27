@@ -156,14 +156,20 @@ goodall.app, says so in its menu and offers only **Quit goodall**.
 
 ## Where it is installed
 
-`~/Applications/goodall.app`, in the home folder of the macOS user account
-that records. The place has to be stable: macOS remembers notification
-permission by where an application is, and the spike was refused permission
-from a temporary folder and given it from `~/Applications`. It needs no
-administrator, so it works in mixed account mode.
+`/Applications/goodall.app`, the folder the whole Mac shares. One copy
+serves every macOS user account, in both account modes. Only an
+administrator can change what is in that folder, so an eval account, and
+the agents working in it, cannot swap the recording indicator for one that
+shows something else. The administrator install will put it there
+(ADR 0022). A copy in `~/Applications` is not looked for.
+
+The place also has to be stable: macOS remembers notification permission by
+where an application is, and the spike was refused permission from a
+temporary folder. The spike was given permission from `~/Applications`;
+`/Applications` has not been tried yet.
 
 `goodall start` looks for the helper there. If it finds it, it runs
-`open -g --env GOODALL_COMMAND=... ~/Applications/goodall.app`, which starts
+`open -g --env GOODALL_COMMAND=... /Applications/goodall.app`, which starts
 the helper without taking the keyboard, and does nothing to one that is
 already running. If it does not find it, it starts no program at all, so
 `goodall start` is no slower on a Mac without the helper. A helper that
@@ -194,20 +200,20 @@ The icon appears and the terminal stays busy; press Control-C, or choose
 **Quit goodall**, to end it. Run `goodall start` and `goodall stop` in
 another terminal and watch the icon follow.
 
-To try it the way `goodall start` will find it:
+To try it the way `goodall start` will find it, from an administrator
+account:
 
 ```sh
-mkdir -p ~/Applications
-cp -R menu-bar-icon/build/goodall.app ~/Applications/
+cp -R menu-bar-icon/build/goodall.app /Applications/
 goodall start
 ```
 
-Remove it again with `rm -rf ~/Applications/goodall.app` after choosing
+Remove it again with `rm -rf /Applications/goodall.app` after choosing
 **Quit goodall**.
 
 ## What is not built yet
 
-- **Installing.** Nothing copies goodall.app to `~/Applications`, and
+- **Installing.** Nothing copies goodall.app to `/Applications`, and
   nothing installs the LaunchAgent that starts it at sign-in and brings it
   back if it dies (`KeepAlive` with `SuccessfulExit` false, so **Quit
   goodall** is not undone). Both belong to onboarding.
