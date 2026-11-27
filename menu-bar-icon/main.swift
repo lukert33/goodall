@@ -77,6 +77,19 @@ func recordArguments(workstream: String) -> [String] {
     return ["start", "--workstream", workstream]  // goodall-command: start
 }
 
+// The gray first line of the menu while each command runs. Each says what that command is
+// doing; none says "work", because in goodall that word means a work block.
+let recordBusyLine = "Preparing to record…"
+let pauseBusyLine = "Pausing…"
+let stopBusyLine = "Stopping…"
+let settingsBusyLine = "Opening settings…"
+
+// One command a menu item runs: its arguments, and the line to show while it runs.
+struct MenuCommand {
+    let arguments: [String]
+    let busyLine: String
+}
+
 // ---------------------------------------------------------------------------------------
 // The document `goodall icon-state --json` prints (docs/menu-bar-icon.md describes it).
 // Only the keys this program draws are listed. `Decodable` lets Swift fill these in from
@@ -196,6 +209,11 @@ final class MenuBarIcon: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // The icon itself. macOS calls an icon in the menu bar a "status item".
     var statusItem: NSStatusItem!
 
+    // Its menu. There is only ever this one: each redraw empties it and fills it again,
+    // because a menu that is open goes on showing itself, and a new menu put in its place
+    // would not appear until the person closed and reopened it.
+    let menu = NSMenu()
+
     // What goodall last said. nil until the first answer, or when the answer was unreadable.
     var iconState: IconState?
 
@@ -205,8 +223,9 @@ final class MenuBarIcon: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // True from a failed command until the person next opens the menu: draws the "!".
     var failureNotSeenYet = false
 
-    // True while a menu command is running, so a second click cannot start another.
-    var commandIsRunning = false
+    // While a menu command is running, the line saying what it is doing; nil when none is.
+    // Every item is gray meanwhile, so a second click cannot start another command.
+    var busyLine: String?
 
     // goodall commands run one at a time, in the order asked, away from the main thread, so
     // the menu bar never freezes while goodall works. Drawing always happens on the main thread.
@@ -223,6 +242,9 @@ final class MenuBarIcon: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        menu.autoenablesItems = false  // each item is enabled or not exactly as set in fillMenu
+        menu.delegate = self
+        statusItem.menu = menu
         draw()
         askGoodallForState()
 
@@ -237,7 +259,10 @@ final class MenuBarIcon: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // Asking goodall
     // -----------------------------------------------------------------------------------
 
-    func askGoodallForState() {
+    // `afterCommand` is true when a menu command has just finished. Its busy line is cleared
+    // only here, in the same redraw as goodall's fresh answer: cleared any earlier, the menu
+    // would flash the state from before the command.
+    func askGoodallForState(afterCommand: Bool = false) {
         goodallQueue.async {
             let result = runGoodall(askStateArguments, keepErrors: false)
             let decoder = JSONDecoder()
@@ -247,6 +272,9 @@ final class MenuBarIcon: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let answer = try? decoder.decode(IconState.self, from: result.output.data(using: .utf8) ?? Data())
             DispatchQueue.main.async {
                 self.iconState = answer
+                if afterCommand {
+                    self.busyLine = nil
+                }
                 self.draw()
                 self.watch(folder: answer?.watchFolder)
             }
@@ -255,16 +283,15 @@ final class MenuBarIcon: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // Run one menu command, then ask for the state again. `afterSuccess` is extra work for
     // the one item that needs it ("Quit goodall").
-    func runMenuCommand(title: String, arguments: [String], afterSuccess: (() -> Void)? = nil) {
-        commandIsRunning = true
+    func runMenuCommand(title: String, command: MenuCommand, afterSuccess: (() -> Void)? = nil) {
+        busyLine = command.busyLine
         draw()
         goodallQueue.async {
-            let result = runGoodall(arguments, keepErrors: true)
+            let result = runGoodall(command.arguments, keepErrors: true)
             if result.exitCode != 0 {
-                writeToLog(title: title, arguments: arguments, result: result)
+                writeToLog(title: title, arguments: command.arguments, result: result)
             }
             DispatchQueue.main.async {
-                self.commandIsRunning = false
                 if result.exitCode == 0 {
                     self.failureLines = []
                     self.failureNotSeenYet = false
@@ -273,8 +300,10 @@ final class MenuBarIcon: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     self.failureLines = ["\"\(title)\" did not work.", "Details are in \(logPathForPeople())"]
                     self.failureNotSeenYet = true
                 }
-                self.draw()
-                self.askGoodallForState()
+                // Only the icon now, for the "!". The menu keeps its busy line until goodall
+                // says what the command changed.
+                self.drawIcon()
+                self.askGoodallForState(afterCommand: true)
             }
         }
     }
@@ -334,7 +363,7 @@ final class MenuBarIcon: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func draw() {
         drawIcon()
-        statusItem.menu = buildMenu()
+        fillMenu()
     }
 
     // The three looks, all the same binoculars:
@@ -427,22 +456,21 @@ final class MenuBarIcon: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return image
     }
 
-    func buildMenu() -> NSMenu {
-        let menu = NSMenu()
-        menu.autoenablesItems = false  // each item is enabled or not exactly as set below
-        menu.delegate = self
+    // Empty the menu and fill it again from what goodall last said.
+    func fillMenu() {
+        menu.removeAllItems()
 
         // Whether goodall can be run at all, and whether its last answer could be read.
         let goodallIsKnown = goodallCommand != nil
-        let canRunCommands = goodallIsKnown && !commandIsRunning
+        let canRunCommands = goodallIsKnown && busyLine == nil
 
         // The status line, then any lines explaining a problem. All gray: they do nothing.
         var grayLines: [String] = []
         if !goodallIsKnown {
             grayLines.append("This icon was not told where goodall is.")
             grayLines.append("Choose Quit goodall, then run goodall start in Terminal.")
-        } else if commandIsRunning {
-            grayLines.append("Working…")
+        } else if let busyLine = busyLine {
+            grayLines.append(busyLine)
         } else if let iconState = iconState {
             grayLines.append(iconState.statusLine)
             if let reason = iconState.setup.reason {
@@ -465,7 +493,9 @@ final class MenuBarIcon: NSObject, NSApplicationDelegate, NSMenuDelegate {
         workstreamMenu.autoenablesItems = false
         for workstream in iconState?.workstreams ?? [] {
             let title = workstream.main ? "\(workstream.name) (main)" : workstream.name
-            let item = commandItem(title: title, arguments: recordArguments(workstream: workstream.name))
+            let item = commandItem(
+                title: title,
+                command: MenuCommand(arguments: recordArguments(workstream: workstream.name), busyLine: recordBusyLine))
             item.isEnabled = canRunCommands
             workstreamMenu.addItem(item)
         }
@@ -474,33 +504,34 @@ final class MenuBarIcon: NSObject, NSApplicationDelegate, NSMenuDelegate {
             canRunCommands && (iconState?.enabled.recordWorkBlock ?? false) && workstreamMenu.items.count > 0
         menu.addItem(record)
 
-        let pause = commandItem(title: "Pause", arguments: pauseArguments)
+        let pause = commandItem(title: "Pause", command: MenuCommand(arguments: pauseArguments, busyLine: pauseBusyLine))
         pause.isEnabled = canRunCommands && (iconState?.enabled.pause ?? false)
         menu.addItem(pause)
 
-        let stop = commandItem(title: "Stop recording", arguments: stopArguments)
+        let stop = commandItem(
+            title: "Stop recording", command: MenuCommand(arguments: stopArguments, busyLine: stopBusyLine))
         stop.isEnabled = canRunCommands && (iconState?.enabled.stopRecording ?? false)
         menu.addItem(stop)
 
         menu.addItem(NSMenuItem.separator())
 
-        let settings = commandItem(title: "Settings…", arguments: settingsArguments)
+        let settings = commandItem(
+            title: "Settings…", command: MenuCommand(arguments: settingsArguments, busyLine: settingsBusyLine))
         settings.isEnabled = canRunCommands
         menu.addItem(settings)
 
         let quit = NSMenuItem(title: "Quit goodall", action: #selector(quitChosen(_:)), keyEquivalent: "q")
         quit.target = self
-        quit.isEnabled = !commandIsRunning
+        quit.isEnabled = busyLine == nil
         menu.addItem(quit)
-        return menu
     }
 
-    // A menu item that runs one goodall command. The arguments ride along on the item
-    // ("representedObject") and `commandChosen` reads them back when it is clicked.
-    func commandItem(title: String, arguments: [String]) -> NSMenuItem {
+    // A menu item that runs one goodall command. The command rides along on the item
+    // ("representedObject") and `commandChosen` reads it back when it is clicked.
+    func commandItem(title: String, command: MenuCommand) -> NSMenuItem {
         let item = NSMenuItem(title: title, action: #selector(commandChosen(_:)), keyEquivalent: "")
         item.target = self
-        item.representedObject = arguments
+        item.representedObject = command
         return item
     }
 
@@ -509,10 +540,10 @@ final class MenuBarIcon: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // -----------------------------------------------------------------------------------
 
     @objc func commandChosen(_ sender: NSMenuItem) {
-        guard let arguments = sender.representedObject as? [String] else { return }
+        guard let command = sender.representedObject as? MenuCommand else { return }
         // A workstream sits inside "Record work block"; a failure should name that item.
         let title = sender.parent?.title ?? sender.title
-        runMenuCommand(title: title, arguments: arguments)
+        runMenuCommand(title: title, command: command)
     }
 
     // "Quit goodall": stop any recording cleanly, exactly as "Stop recording" would, then
@@ -524,7 +555,9 @@ final class MenuBarIcon: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc func quitChosen(_ sender: NSMenuItem) {
         let somethingToStop = goodallCommand != nil && (iconState?.enabled.stopRecording ?? false)
         if somethingToStop {
-            runMenuCommand(title: sender.title, arguments: stopArguments, afterSuccess: { exit(0) })
+            runMenuCommand(
+                title: sender.title, command: MenuCommand(arguments: stopArguments, busyLine: stopBusyLine),
+                afterSuccess: { exit(0) })
         } else {
             exit(0)
         }
