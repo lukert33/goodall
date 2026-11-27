@@ -47,10 +47,15 @@ work. It goes away when you open the menu.
   goodall would still be recording with nothing on screen to say so. The
   icon comes back when you next run `goodall start`, and, once onboarding
   installs its LaunchAgent, when you next sign in.
-- **Settings…** will reopen the setup page with your current answers. The
-  setup page is not built, so `goodall settings` is a stub: choosing the item
-  counts as a command that did not work, and the stub's message, which says
-  how to change your settings by hand, is in the log file named below.
+- **Settings…** opens the setup page in your browser with your current
+  answers filled in, which is how you add a workstream
+  ([setup-page.md](setup-page.md), "Settings"). The command keeps waiting for
+  the answers file the page saves, so the item stays gray, and the first line
+  says "Opening settings…", until you save or stop it. The page says what to
+  expect, because no Terminal window is open. If goodall is not set up in
+  this account, the command stops at once, and counts as one that did not
+  work: its message, which says to run `goodall onboard`, is in the log file
+  named below.
 
 ### When a command does not work
 

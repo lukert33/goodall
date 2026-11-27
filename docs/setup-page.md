@@ -67,8 +67,67 @@ Onboarding is safe to run again. The page opens with what is already set up
 on this Mac filled in: your account mode, contributor id, main workstream,
 folders, the secret references in the env file, and the eval already on this
 Mac. Pressing Finish setup without changing anything leaves every file
-unchanged, and goodall says "Nothing to change". A later `goodall settings`
-will reopen the same page with your current answers.
+unchanged, and goodall says "Nothing to change". `goodall settings` (below)
+reopens the same page with your current answers.
+
+## Settings: `goodall settings`
+
+```
+goodall settings          # opens the page with your current answers, waits, applies what changed
+goodall settings --plan   # the same, but only shows the changes
+```
+
+This is what the menu bar icon's **Settings…** item runs
+([menu-bar-icon.md](menu-bar-icon.md)). It opens the same page with this
+account's current answers filled in, waits for the file the page saves,
+and applies it exactly as `goodall onboard` does, including the one-time
+code and the plan shown first. The page is a little different: it has no
+"new eval" choice and no steps to do before the page, its first section is
+**Workstreams**, and its button says **Save settings**. Its first use is
+registering a new workstream.
+
+**What a settings run may change.** It is `goodall onboard` with the eval
+already on this Mac, plus one thing it may do to `eval.toml`, which
+onboarding otherwise never writes for an existing eval:
+
+- It may **add workstreams** to the eval config's `workstreams` line, and
+  nothing else in `eval.toml`. Every other line, comment and blank line stays
+  byte for byte as written, and a comment at the end of the workstreams line
+  stays too. New names go at the end, in the order you added them.
+- It **never removes or reorders** a workstream: work blocks already
+  recorded name theirs, and the eval config is published with the record.
+  The page gives no way to remove one, and goodall refuses answers that leave
+  one out. To retire a workstream, edit `eval.toml` by hand and commit.
+- It **commits** that change in the record repo, as its own commit touching
+  only `eval.toml`, with a message naming the workstream. It never adds a
+  remote and never pushes (ADR 0023). If `eval.toml` has uncommitted edits
+  of yours, goodall refuses, so its commit never carries them; commit or
+  undo them and run it again.
+- If the workstreams are not one whole line above the first `[table]` (a
+  list spread over several lines, say), goodall leaves the file alone and
+  says to add the name by hand.
+- Everything else (local settings, the env file, the hooks) follows the
+  answers as `goodall onboard` does, and an unchanged one is reported
+  "unchanged". Saving without a change says "Nothing to change". The new
+  workstream can be your main workstream in the same save.
+
+The page carries the full list as an `[existing_eval]` section of the
+answers file ([answers-file.md](answers-file.md)), so the same change works
+from `goodall onboard --answers`.
+
+**Not set up yet.** `goodall settings` in an account where goodall is not
+set up (no local settings, or an eval config it cannot read) opens nothing,
+says to run `goodall onboard`, and exits `1`.
+
+**No terminal in sight.** From the menu bar there is no Terminal window:
+what goodall prints goes to the icon's log
+(`~/Library/Logs/goodall/menu-bar-icon.log`) when the command ends, which
+for a command that is still waiting is later. So after you press **Save
+settings** the page itself says what happens: goodall applies the file
+within a second or two, there is nothing more to do, choosing Settings…
+again shows what is saved, and answers goodall refuses keep it waiting for a
+corrected file. The page cannot show goodall's result; it has no server
+behind it (ADR 0012).
 
 ## What the page asks
 
@@ -86,6 +145,9 @@ will reopen the same page with your current answers.
   `~/evals/<name>-logs.noindex`.
 - Secrets: whether some work blocks are billed to API keys, and if so a
   1Password reference for each, never the key itself.
+
+`goodall settings` shows only the about-you, where, and secrets questions and
+the workstreams of the eval already here.
 
 It does not ask, yet: creating the eval account, ActivityWatch's own port
 (Part 3 of [setup-by-hand.md](setup-by-hand.md)), or the mixed account mode

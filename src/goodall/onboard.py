@@ -16,9 +16,12 @@ What it writes, in this order (each is one `PlannedChange`):
    remote, for a new eval. Goodall never adds a remote and never pushes
    (ADR 0023).
 2. The eval config, `eval.toml`, for a new eval. For an existing eval the
-   eval.toml already in the record repo is left exactly as it is.
+   eval.toml already in the record repo is left exactly as it is, except that
+   answers with an `[existing_eval]` workstream list (what `goodall settings`
+   saves) add the new names to its workstreams line.
 3. The construct file, `CONSTRUCT.md`, when the answers give a construct.
-4. A commit of those two files, and only those.
+4. A commit of those two files, and only those; for an existing eval, a
+   commit of eval.toml alone when a workstream was added.
 5. The log directory, readable by this account only, whose name should end
    in `.noindex` (ADR 0019).
 6. The env file, `.env` beside local settings, readable by this account
@@ -109,7 +112,14 @@ from goodall.record_repo import COMMIT_TIMEOUT_SECONDS, IDENTITY_SETTINGS, run_g
 from goodall.runner import Runner
 from goodall.secrets_checks import ENV_FILE_NAME, OTHER_ACCOUNTS_PERMISSION_BITS
 from goodall.terminal import Failure, Terminal
-from goodall.toml_writer import TomlDocument, TomlValue, append_marked_block, render_toml, replace_top_level_line
+from goodall.toml_writer import (
+    TomlDocument,
+    TomlValue,
+    append_marked_block,
+    render_toml,
+    replace_top_level_line,
+    replace_top_level_value,
+)
 
 # The construct file's name at the top of the record repo.
 CONSTRUCT_FILE_NAME = "CONSTRUCT.md"
@@ -487,7 +497,11 @@ def plan_record_repo(planning: Planning) -> bool:
 
 
 def plan_eval_config(planning: Planning, location: LocalSettingsLocation) -> EvalConfig | None:
-    """Plan eval.toml; return the eval config this account will belong to, once onboarding is done."""
+    """Plan eval.toml; return the eval config this account will belong to, once onboarding is done.
+
+    For an existing eval eval.toml is read, and written only to add
+    workstreams, when the answers carry a workstream list (plan_workstream_additions).
+    """
     answers = planning.answers
     config_file = answers.record_repo.path / EVAL_CONFIG_FILE_NAME
     if answers.new_eval is None:
@@ -496,10 +510,12 @@ def plan_eval_config(planning: Planning, location: LocalSettingsLocation) -> Eva
         if isinstance(reading, list):
             planning.failures.extend(reading)
             return None
-        planning.changes.append(
-            PlannedChange(id="eval_config", what="Eval config", path=config_file, action=ChangeAction.UNCHANGED)
-        )
-        return reading
+        if answers.existing_workstreams is None:
+            planning.changes.append(
+                PlannedChange(id="eval_config", what="Eval config", path=config_file, action=ChangeAction.UNCHANGED)
+            )
+            return reading
+        return plan_workstream_additions(planning, reading, config_file, answers.existing_workstreams)
 
     wanted_text = render_toml(eval_config_document(answers, answers.new_eval))
     wanted_table = tomllib.loads(wanted_text)
@@ -543,6 +559,85 @@ def plan_eval_config(planning: Planning, location: LocalSettingsLocation) -> Eva
         planning.failures.extend(reading)
         return None
     return reading
+
+
+def plan_workstream_additions(
+    planning: Planning, eval_config: EvalConfig, config_file: Path, wanted_workstreams: list[str]
+) -> EvalConfig | None:
+    """Plan adding workstreams to an existing eval's eval.toml; return the eval config as it will be, or None.
+
+    The one thing goodall changes in an eval.toml it did not write (the rule
+    is in docs/setup-page.md, "Settings"):
+
+    - Only the `workstreams` line changes, and only by names added at its
+      end. Every other line, comment and blank line stays as written.
+    - Names are never removed or reordered. Work blocks already recorded
+      name their workstream, and the eval config is published with the
+      record; a workstream that vanished from it would leave records naming
+      something the config does not.
+    - The change is committed on its own, so a person's other uncommitted
+      edits to eval.toml are never swept in: if eval.toml has any, goodall
+      refuses and says to commit or discard them first.
+    """
+    answers = planning.answers
+    record_repo = answers.record_repo.path
+    current = list(eval_config.workstreams)
+    dropped = [name for name in current if name not in wanted_workstreams]
+    if dropped:
+        planning.failures.append(workstream_removal_refused_failure(config_file, dropped))
+        return None
+    added = [name for name in wanted_workstreams if name not in current]
+    if not added:
+        planning.changes.append(
+            PlannedChange(id="eval_config", what="Eval config", path=config_file, action=ChangeAction.UNCHANGED)
+        )
+        return eval_config
+
+    status = run_git(planning.runner, record_repo, ["status", "--porcelain", "--", EVAL_CONFIG_FILE_NAME])
+    if not status.succeeded or status.standard_output.strip() != "":
+        planning.failures.append(eval_config_not_committed_failure(config_file))
+        return None
+    if not git_identity_is_set(planning.runner, record_repo):
+        planning.failures.append(git_identity_missing_failure(record_repo))
+        return None
+    existing_text = read_text_if_present(config_file)
+    new_text = None
+    if existing_text is not None:
+        new_text = replace_top_level_value(existing_text, "workstreams", current + added)
+    if new_text is None:
+        planning.failures.append(workstreams_line_not_replaceable_failure(config_file, added))
+        return None
+    # The safety net again: what goodall writes must pass the eval config's own reader.
+    checked = check_eval_config_table(config_file, tomllib.loads(new_text))
+    if isinstance(checked, list):
+        planning.failures.extend(checked)
+        return None
+
+    planning.changes.append(
+        PlannedChange(
+            id="eval_config",
+            what="Eval config",
+            path=config_file,
+            action=ChangeAction.CHANGE,
+            details=[f"workstreams gain {', '.join(added)}; nothing else in eval.toml changes"],
+            steps=[WriteFile(config_file, new_text, ORDINARY_FILE)],
+        )
+    )
+    message = (
+        f"Add workstream {', '.join(added)} to the eval config\n\n"
+        f"Written by goodall for contributor {answers.contributor_id}. Only the workstreams line changed."
+    )
+    planning.changes.append(
+        PlannedChange(
+            id="record_repo_commit",
+            what="Record repo commit",
+            path=record_repo,
+            action=ChangeAction.CREATE,
+            details=[f"commits {EVAL_CONFIG_FILE_NAME}, and nothing else"],
+            steps=[CommitFiles(record_repo, [EVAL_CONFIG_FILE_NAME], message)],
+        )
+    )
+    return checked
 
 
 def eval_config_document(answers: Answers, new_eval: NewEval) -> TomlDocument:
@@ -1437,6 +1532,62 @@ def record_repo_file_differs_warning(path: Path, keys: list[str]) -> Failure:
         what_to_do_next=(
             "If the answers are right, edit the file by hand to match and commit the change with git in the record "
             "repo. Otherwise nothing needs doing."
+        ),
+    )
+
+
+def workstream_removal_refused_failure(config_file: Path, dropped: list[str]) -> Failure:
+    """The failure for answers that would remove workstreams from the eval config."""
+    return Failure(
+        kind="workstream_removal_refused",
+        what_happened=(
+            f"The answers leave out {', '.join(dropped)}, which the eval config at {config_file} already lists. "
+            "Nothing was changed."
+        ),
+        why=(
+            "Goodall only adds workstreams. Work blocks already recorded name their workstream, and a workstream "
+            "that vanished from the eval config would leave records naming something it does not list."
+        ),
+        what_to_do_next=(
+            f"Keep {', '.join(dropped)} in the list. To retire a workstream, edit the workstreams line of "
+            "eval.toml by hand and commit the change with git in the record repo."
+        ),
+    )
+
+
+def eval_config_not_committed_failure(config_file: Path) -> Failure:
+    """The failure for an eval.toml with changes git has not committed, when goodall must edit it."""
+    return Failure(
+        kind="eval_config_not_committed",
+        what_happened=(
+            f"The eval config at {config_file} has changes that are not committed, or git could not say. "
+            "Nothing was changed."
+        ),
+        why=(
+            "Goodall commits its own edit to the eval config on its own, and it will not sweep your uncommitted "
+            "edits into that commit."
+        ),
+        what_to_do_next=(
+            "Run git status in the record repo, commit your changes to eval.toml (or undo them), then run the "
+            "command again."
+        ),
+    )
+
+
+def workstreams_line_not_replaceable_failure(config_file: Path, added: list[str]) -> Failure:
+    """The failure for an eval.toml whose workstreams line goodall cannot safely edit."""
+    return Failure(
+        kind="workstreams_line_not_replaceable",
+        what_happened=(
+            f"Goodall could not add {', '.join(added)} to the workstreams in {config_file}. Nothing was changed."
+        ),
+        why=(
+            "It edits only a workstreams line written as one whole line above the first [table], and this file's "
+            "is written some other way."
+        ),
+        what_to_do_next=(
+            f"Add {', '.join(added)} to the workstreams list in eval.toml by hand, commit the change with git in "
+            "the record repo, then run goodall status."
         ),
     )
 

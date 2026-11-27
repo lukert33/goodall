@@ -81,6 +81,8 @@ function startingState(starting) {
     secret_references: references,
     goodall_program: answers.goodall_program,
     known_workstreams: starting.known_workstreams.slice(),
+    // True for goodall settings: the existing eval's workstreams can be added to.
+    settings_run: starting.settings_run === true,
     edited: {
       contributor_id: answers.contributor.id !== "",
       folders: answers.folders.record_repo !== "" || answers.folders.log_directory !== ""
@@ -208,6 +210,17 @@ function problemsIn(state) {
         if (problem) {
           problems["new_eval.repositories"] = problem;
         }
+      }
+    }
+  }
+
+  if (!isNewEval && state.settings_run) {
+    for (var knownIndex = 0; knownIndex < state.known_workstreams.length; knownIndex++) {
+      var knownWorkstream = state.known_workstreams[knownIndex];
+      if (!isName(knownWorkstream)) {
+        problems["known_workstreams"] = "Workstream names use lowercase letters, digits and hyphens only, such as go-to-market.";
+      } else if (knownWorkstream === "unknown") {
+        problems["known_workstreams"] = "unknown cannot be a workstream: goodall keeps that word for itself.";
       }
     }
   }
@@ -398,6 +411,17 @@ function answersFileText(state, oneTimeCode) {
     }
   }
 
+  if (!isNewEval && state.settings_run) {
+    // The eval's whole list; goodall adds the names the eval config lacks and never removes one.
+    var knownWorkstreams = [];
+    for (var knownIndex = 0; knownIndex < state.known_workstreams.length; knownIndex++) {
+      knownWorkstreams.push(tomlString(state.known_workstreams[knownIndex]));
+    }
+    lines.push("");
+    lines.push("[existing_eval]");
+    lines.push("workstreams = [" + knownWorkstreams.join(", ") + "]");
+  }
+
   lines.push("");
   lines.push("[contributor]");
   lines.push("id = " + tomlString(state.contributor.id.trim()));
@@ -441,6 +465,9 @@ function changesGoodallMakes(state, places) {
     changes.push([recordRepo, "the record repo: a git repository on this Mac, never pushed anywhere"]);
     changes.push([recordRepo + "/eval.toml", "the eval config: its name, workstreams, scope and you in its roster"]);
     changes.push([recordRepo + "/CONSTRUCT.md", "the construct"]);
+  } else if (state.settings_run) {
+    changes.push([recordRepo, "used as it is, and committed to only if you added a workstream"]);
+    changes.push([recordRepo + "/eval.toml", "the eval config: only new workstreams are added to its list; nothing else in it changes"]);
   } else {
     changes.push([recordRepo, "used as it is: goodall checks that you are in its roster"]);
   }

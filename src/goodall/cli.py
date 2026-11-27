@@ -50,6 +50,7 @@ from goodall.icon_state import run_icon_state
 from goodall.onboard import run_onboard
 from goodall.runner import RealRunner, Runner
 from goodall.scout_export import run_export_scout
+from goodall.settings_command import run_settings
 from goodall.setup_page import run_setup_page_onboarding
 from goodall.status import run_status
 from goodall.terminal import Failure, Terminal
@@ -213,10 +214,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     icon_state.set_defaults(command_name="icon-state")
 
-    # A stub until the setup page is built (ADR 0012). The menu bar icon's
-    # "Settings…" item runs it (ADR 0024), so it has a by-hand way below.
+    # The menu bar icon's "Settings…" item runs this (ADR 0024).
     settings = commands.add_parser(
-        "settings", help="Open the setup page with your current answers, to change them or add a workstream."
+        "settings",
+        help="Open the setup page with your current answers, to change them or add a workstream.",
+        description=(
+            "Open the setup page in your browser with this macOS user account's current answers filled in, wait "
+            "for the answers file its Save settings button saves, and apply what changed (docs/setup-page.md). "
+            "The one thing it can change in the eval config is its list of workstreams, by adding to it."
+        ),
+    )
+    settings.add_argument(
+        "--plan", action="store_true", help="Show every change the answers call for, and make none of them."
     )
     settings.set_defaults(command_name="settings")
 
@@ -398,15 +407,7 @@ def add_entry_text_arguments(parser: argparse.ArgumentParser, text_help: str) ->
 # command that is not built, provided its stub says how to do the same step by
 # hand. So a command that a message points at needs a real entry here, and
 # tests/test_cli.py fails when it has none.
-BY_HAND_STEPS = {
-    "settings": (
-        "open local-settings.toml in a text editor to change this macOS user account's own settings, such as "
-        "your main workstream; it is in the folder ~/.config/goodall/ in the account's home folder. To add a "
-        "workstream, add its name to the workstreams line of eval.toml in the record repo, which "
-        "local-settings.toml names as record_repo, and commit that change there with git. Then run goodall "
-        "status, which checks both files and says what to correct."
-    ),
-}
+BY_HAND_STEPS: dict[str, str] = {}
 NOTHING_BY_HAND = "Nothing for now: this command will come in a later version of goodall."
 
 
@@ -480,6 +481,8 @@ def main(
         return run_setup_page_onboarding(terminal, runner, clock, arguments.plan, arguments.json)
     if command_name == "onboard":
         return run_onboard(terminal, runner, clock, arguments.answers, arguments.plan, arguments.json)
+    if command_name == "settings":
+        return run_settings(terminal, runner, clock, arguments.plan)
     if command_name == "status":
         return run_status(terminal, runner, clock, as_json=arguments.json)
     if command_name == "icon-state":

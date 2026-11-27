@@ -27,9 +27,9 @@ In the order goodall does it:
 | Change | What | For an existing eval |
 |---|---|---|
 | `record_repo` | The record repo folder, made a git repository with **no remote**. Goodall commits to it and never pushes (ADR 0023). | Must already be there, and be a git repository. |
-| `eval_config` | `eval.toml` in the record repo, with you as the one contributor. | Left exactly as it is. You must already be in its roster. |
+| `eval_config` | `eval.toml` in the record repo, with you as the one contributor. | Left exactly as it is. You must already be in its roster. The one exception: names added in `[existing_eval]` (below) join its `workstreams` line. |
 | `construct` | `CONSTRUCT.md` in the record repo, when the answers give a construct. | Not written. |
-| `record_repo_commit` | One commit of `eval.toml` and `CONSTRUCT.md`, and nothing else. | No commit. |
+| `record_repo_commit` | One commit of `eval.toml` and `CONSTRUCT.md`, and nothing else. | No commit, unless a workstream was added: then one commit of `eval.toml` alone. |
 | `log_directory` | The log directory, which only this macOS user account can open. | The same. |
 | `env_file` | The env file, `.env` beside local settings, readable by this account only, holding secret references only. | The same. |
 | `local_settings` | `local-settings.toml` in `~/.config/goodall/`. | The same. |
@@ -101,6 +101,14 @@ account_mode = "dedicated"
 # record repo, and its eval.toml, already on this Mac.
 eval = "new"
 
+# Only with eval = "existing", and optional: the eval's whole workstream
+# list. Goodall adds the names eval.toml lacks to its workstreams line, in
+# the order given after the ones already there, and commits that change in
+# the record repo. It never removes or reorders one: a list that leaves out
+# a workstream eval.toml has is refused. `goodall settings` saves this.
+# [existing_eval]
+# workstreams = ["engineering", "research", "go-to-market"]
+
 # Only with eval = "new": what becomes eval.toml and CONSTRUCT.md.
 [new_eval]
 name = "goodall-pilot"
@@ -167,6 +175,12 @@ would refuse:
   (ADR 0019); the plan warns when it does not.
 - A scope `repository` is `host/owner/name`, never a path or a web address,
   and `paths` are patterns inside it.
+- `[existing_eval]` is the only way an answers file changes an eval.toml
+  goodall did not write, and it changes one line of it, the workstreams
+  (docs/setup-page.md, "Settings"). Goodall refuses it when eval.toml has
+  uncommitted edits, so its commit never carries yours, and when the
+  workstreams are not written as one whole line, in which case it says to
+  add the name by hand.
 - Nothing in `[new_eval]` or `display_name` may be an email address: the
   eval config is made to be published as it stands (ADR 0009).
 - `activitywatch` `port` may not be 5600, ActivityWatch's default (ADR 0016).

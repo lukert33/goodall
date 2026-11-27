@@ -219,11 +219,13 @@ function evalField() {
 }
 
 // A list of short names shown as chips, for workstreams and repositories.
-function chipsField(place, name, help, placeholder, problemPlace) {
+// The first `lockedCount` chips have no remove button: goodall settings only adds workstreams.
+function chipsField(place, name, help, placeholder, problemPlace, lockedCount) {
   var items = valueAt(place);
   var chips = "";
   for (var index = 0; index < items.length; index++) {
-    chips += '<span class="chip">' + escapeHtml(items[index]) + '<button title="Remove" data-action="remove-chip" data-place="' + place + '" data-index="' + index + '">×</button></span>';
+    var removeButton = index < (lockedCount || 0) ? "" : '<button title="Remove" data-action="remove-chip" data-place="' + place + '" data-index="' + index + '">×</button>';
+    chips += '<span class="chip">' + escapeHtml(items[index]) + removeButton + "</span>";
   }
   return '<div class="field"><span class="name">' + name + '</span><span class="help">' + help + "</span>" +
     '<div class="chips">' + chips + '</div><div class="row"><input type="text" data-new-chip="' + place + '" placeholder="' + escapeHtml(placeholder) + '">' +
@@ -241,6 +243,11 @@ function evalItemBody() {
       '<span class="help">ActivityWatch has to be installed and given its own port by hand first (Part 3 of setup-by-hand.md in goodall\'s documentation). Leave this off if you are not sure.</span></span></label>';
   }
   return html;
+}
+
+function workstreamsItemBody() {
+  return chipsField("known_workstreams", "Workstreams", "The divisions of the work. You can add one; goodall adds it to the eval config's list and never removes one, because work already recorded names its workstream. Lowercase, with hyphens: go-to-market.",
+    "Add a workstream", "known_workstreams", starting.known_workstreams.length);
 }
 
 function constructItemBody() {
@@ -308,6 +315,7 @@ function secretsItemBody() {
 function itemSummary(id) {
   if (id === "eval") return state.new_eval.name ? state.new_eval.name + " · " + state.new_eval.workstreams.length + " workstreams" : "";
   if (id === "construct") return state.new_eval.construct;
+  if (id === "workstreams") return state.known_workstreams.join(", ");
   if (id === "who") return state.contributor.id ? state.contributor.id + " · " + state.contributor.main_workstream : "";
   if (id === "where") return state.folders.record_repo && state.folders.log_directory ? state.folders.record_repo + " · " + state.folders.log_directory : "";
   if (id === "secrets") return state.uses_api_keys ? "API keys, by reference" : "no API keys";
@@ -317,6 +325,7 @@ function itemSummary(id) {
 var ITEM_PLACES = {
   eval: ["new_eval.name", "new_eval.description", "new_eval.workstreams", "new_eval.repositories"],
   construct: ["new_eval.construct"],
+  workstreams: ["known_workstreams"],
   who: ["contributor.display_name", "contributor.id", "contributor.main_workstream"],
   where: ["folders.record_repo", "folders.log_directory"],
   secrets: ["secret_references."]
@@ -365,7 +374,10 @@ function finishBlock() {
   for (var index = 0; index < changes.length; index++) {
     rows += '<tr><td class="path">' + escapeHtml(changes[index][0]) + '</td><td class="muted">' + escapeHtml(changes[index][1]) + "</td></tr>";
   }
-  var html = "<h3>When you finish, goodall sets up these</h3><p class=\"small muted\">Goodall shows its own list in Terminal first, and changes nothing that is already right.</p>" +
+  var intro = state.settings_run
+    ? "<h3>When you save, goodall changes these</h3><p class=\"small muted\">It changes nothing that is already right.</p>"
+    : "<h3>When you finish, goodall sets up these</h3><p class=\"small muted\">Goodall shows its own list in Terminal first, and changes nothing that is already right.</p>";
+  var html = intro +
     '<table class="filelist">' + rows + "</table>";
   if (messages.length) {
     html += '<div class="note trouble"><strong>' + messages.length + (messages.length === 1 ? " answer needs" : " answers need") + " attention first.</strong><ul class=\"plain\">";
@@ -374,8 +386,16 @@ function finishBlock() {
     }
     html += "</ul></div>";
   }
-  html += '<button class="finish-button" data-action="finish"' + (messages.length ? " disabled" : "") + ">Finish setup</button>";
-  if (finishPresses > 0 && !messages.length) {
+  html += '<button class="finish-button" data-action="finish"' + (messages.length ? " disabled" : "") + ">" + (state.settings_run ? "Save settings" : "Finish setup") + "</button>";
+  if (finishPresses > 0 && !messages.length && state.settings_run) {
+    // Settings can be opened from the menu bar with no Terminal window anywhere, so this page says all there is to say.
+    html += '<div class="handed"><strong>Your browser has saved your answers as ' + escapeHtml(starting.answers_file_name) + " in " + escapeHtml(starting.downloads_folder) + ".</strong><br>" +
+      "Goodall is waiting for that file and applies it within a second or two. There is nothing more to do here: you can close this tab. " +
+      "To check, choose Settings… again: the page opens with what is saved now. " +
+      "If goodall refuses your answers, it keeps waiting and this page stays good: change the answer and press Save settings again. " +
+      "If the browser asked where to save, or saved the file somewhere else, move it into " + escapeHtml(starting.downloads_folder) + ". " +
+      "What goodall printed is in Terminal if you ran goodall settings there, or in ~/Library/Logs/goodall/menu-bar-icon.log once it stops.</div>";
+  } else if (finishPresses > 0 && !messages.length) {
     html += '<div class="handed"><strong>Your browser has saved your answers as ' + escapeHtml(starting.answers_file_name) + " in " + escapeHtml(starting.downloads_folder) + ".</strong><br>" +
       "Go back to the Terminal window where you ran goodall onboard. Goodall picks up the file, shows every change it will make, makes them, and reports there. " +
       "If your browser asked where to save it, or saved it somewhere else, move it into " + escapeHtml(starting.downloads_folder) + ". " +
@@ -387,12 +407,15 @@ function finishBlock() {
 function render() {
   var isNewEval = state.eval === "new";
   var before = "";
-  if (state.account_mode === "dedicated") {
+  if (!state.settings_run && state.account_mode === "dedicated") {
     before += tickItem("account", "Create a standard macOS user account for this eval, and sign in to it",
       "System Settings → Users &amp; Groups → Add User, type Standard. You should be reading this page from that account.");
   }
-  before += tickItem("manager", "If the eval uses API keys, sign in to 1Password in this account", "Goodall only ever handles references to keys; 1Password hands the keys to the programs that need them.");
+  if (!state.settings_run) before += tickItem("manager", "If the eval uses API keys, sign in to 1Password in this account", "Goodall only ever handles references to keys; 1Password hands the keys to the programs that need them.");
   var answerItems = "";
+  if (state.settings_run) {
+    answerItems += checklistItem("workstreams", "Workstreams", workstreamsItemBody);
+  }
   if (isNewEval) {
     answerItems += checklistItem("eval", "Name the eval and its workstreams", evalItemBody) + checklistItem("construct", "Write the construct", constructItemBody);
   }
@@ -400,10 +423,10 @@ function render() {
   document.getElementById("app").innerHTML =
     '<div class="wrap"><h1>' + escapeHtml(starting.page_title) + "</h1>" +
     '<p class="muted">An eval is a study of real work done with AI agents. Goodall records what you and your agents each did, so the record can be analyzed. Everything it records stays on this Mac. Nothing is uploaded: you share only an export you choose to make.</p>' +
-    '<div class="stage"><span class="num">1</span> How you will record</div>' + accountModeField() + evalField() +
-    '<div class="stage"><span class="num">2</span> Before this page · on your Mac</div>' + before +
-    '<div class="stage"><span class="num">3</span> On this page · your answers</div>' + answerItems +
-    '<div class="stage"><span class="num">4</span> Finish</div><div class="finish" data-live="finish"></div></div>';
+    '<div class="stage"><span class="num">1</span> How you will record</div>' + accountModeField() + (state.settings_run ? "" : evalField()) +
+    (state.settings_run ? "" : '<div class="stage"><span class="num">2</span> Before this page · on your Mac</div>' + before) +
+    '<div class="stage"><span class="num">' + (state.settings_run ? 2 : 3) + '</span> On this page · your answers</div>' + answerItems +
+    '<div class="stage"><span class="num">' + (state.settings_run ? 3 : 4) + '</span> Finish</div><div class="finish" data-live="finish"></div></div>';
   refreshLive();
 }
 
@@ -452,11 +475,11 @@ function followSuggestions() {
 function addChip(place) {
   var input = document.querySelector('[data-new-chip="' + place + '"]');
   var value = input.value.trim();
-  if (place === "new_eval.workstreams") value = value.toLowerCase();
+  if (place === "new_eval.workstreams" || place === "known_workstreams") value = value.toLowerCase();
   var items = valueAt(place);
   if (value && items.indexOf(value) === -1) {
     items.push(value);
-    if (place === "new_eval.workstreams" && !state.contributor.main_workstream) state.contributor.main_workstream = value;
+    if ((place === "new_eval.workstreams" || place === "known_workstreams") && !state.contributor.main_workstream) state.contributor.main_workstream = value;
     render();
     var again = document.querySelector('[data-new-chip="' + place + '"]');
     if (again) again.focus();
@@ -526,6 +549,9 @@ document.addEventListener("click", function (event) {
     var removed = valueAt(place).splice(Number(target.getAttribute("data-index")), 1)[0];
     if (place === "new_eval.workstreams" && state.contributor.main_workstream === removed) {
       state.contributor.main_workstream = state.new_eval.workstreams[0] || "";
+    }
+    if (place === "known_workstreams" && state.contributor.main_workstream === removed) {
+      state.contributor.main_workstream = "";
     }
     render();
   } else if (action === "add-reference") {
