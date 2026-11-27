@@ -34,11 +34,12 @@ These commands work today:
 |---|---|
 | `goodall status` | Shows whether a work block is active, and what is wrong with the setup if anything. |
 | `goodall start` | Begins a **work block**: a logged stretch of your work on one workstream. This opens the prompt gate. |
-| `goodall stop` | Ends the current work block, and copies every agent session that has a record inside it into the log directory. This closes the prompt gate. |
-| `goodall pause` | Ends the current work block, meaning to continue it. The next `goodall start` begins a new work block whose record names the paused one. |
+| `goodall stop` | Ends the current work block, copies every agent session that has a record inside it into the log directory, and builds the timeline. This closes the prompt gate. |
+| `goodall pause` | Ends the current work block, meaning to continue it, and does everything `goodall stop` does. The next `goodall start` begins a new work block whose record names the paused one. |
 | `goodall fixblock` | Corrects which workstream a work block was for, by recording a fix beside it. |
 | `goodall journal` | Adds a **journal entry**: your written note about what was decided or done. |
 | `goodall intervene` | Records an **intervention**: a moment you overrode, corrected or rescued an agent. |
+| `goodall timeline` | Shows one ended work block in time order: who did what and when, with no private text ([docs/timeline.md](docs/timeline.md)). |
 | `goodall doctor` | Checks the account and setup, and changes nothing. |
 | `goodall hook` | Called by Claude Code, not by people. It is the prompt gate, and it leaves heartbeats. |
 
@@ -49,7 +50,7 @@ The full by-hand steps are in [docs/setup-by-hand.md](docs/setup-by-hand.md).
 
 For an eval that includes ActivityWatch, goodall copies what apps and windows
 were in use into the log directory when a work block ends
-(`docs/activitywatch-rules.md`); nothing reads those copies yet. The
+(`docs/activitywatch-rules.md`), and the timeline lists them. The
 telemetry receiver is written but not yet started and stopped by a command.
 Copying agent sessions works for the Claude family:
 the Claude desktop app's Code tab and Claude Code in a terminal
@@ -168,7 +169,10 @@ one of three places.
    history and file-edit backups, never settings or credentials). An agent
    session is copied when a work block ends, if any of its records carries
    a time inside the work block (`docs/source-applications.md`). Goodall's
-   own working notes sit beside them in separate folders.
+   own working notes sit beside them in separate folders, and so does the
+   timeline, in `timeline/`: a derived database that lists what happened in
+   time order and holds no private text, only pointers into the raw records
+   (`docs/timeline.md`). It can be deleted and built again at any time.
 
 Two small files sit in the eval account's home folder and belong to neither
 place: the local settings (`~/.config/goodall/local-settings.toml`: where the

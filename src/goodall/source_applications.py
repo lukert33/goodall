@@ -16,11 +16,15 @@ This module holds the words the two sides share and nothing else:
 
 To add an app family: write a module that builds one AppFamily, as
 goodall.claude_family does at its end, and add it to APP_FAMILIES in
-goodall.agent_session_copies. Nothing here assumes one file per agent
-session, because applications differ: the Claude family keeps a transcript
-with a folder beside it, another keeps a database and a transcript for each
-conversation. An AgentSession only names the session and the folder it is
-kept in; the family's own functions know the rest.
+goodall.agent_session_copies. For its agent sessions to be in the timeline
+too, write a module that turns its copies into entries, as
+goodall.timeline_claude does, and call it from goodall.timeline.
+
+Nothing here assumes one file per agent session, because applications
+differ: the Claude family keeps a transcript with a folder beside it,
+another keeps a database and a transcript for each conversation. An
+AgentSession only names the session and the folder it is kept in; the
+family's own functions know the rest.
 
 Standard library only: goodall.claude_family imports this module and is on
 the hook path (ADR 0005).

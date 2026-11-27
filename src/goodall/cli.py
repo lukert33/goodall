@@ -8,7 +8,8 @@ exit code, so `main` returns a number instead of calling `sys.exit` itself.
 `goodall status` (goodall.status), `goodall doctor` (goodall.doctor),
 `goodall journal` and `goodall intervene` (goodall.entries),
 `goodall start`, `goodall pause` and `goodall stop` (goodall.work_block_commands),
-`goodall fixblock` (goodall.fixblock), `goodall export scout`
+`goodall fixblock` (goodall.fixblock), `goodall timeline`
+(goodall.timeline_command), `goodall export scout`
 (goodall.scout_export), and `goodall hook` (goodall.hook) are built. The `goodall` command itself starts
 in goodall.entry_point, which sends `goodall hook` to goodall.hook without
 loading this module, for speed; `main` routes it there too, so both agree.
@@ -47,6 +48,7 @@ from goodall.runner import RealRunner, Runner
 from goodall.scout_export import run_export_scout
 from goodall.status import run_status
 from goodall.terminal import Failure, Terminal
+from goodall.timeline_command import TimelineRequest, run_timeline
 from goodall.work_block_commands import Clock, run_pause, run_start, run_stop
 
 
@@ -228,6 +230,26 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     intervene.set_defaults(command_name="intervene")
+
+    timeline = commands.add_parser(
+        "timeline", help="Show one ended work block in time order: who did what, when, with no private text."
+    )
+    # Named as goodall fixblock names one: the id by itself, first.
+    timeline.add_argument(
+        "work_block_id",
+        nargs="?",
+        metavar="<work block id>",
+        help="The id of the work block to show, as goodall stop shows it. Leave it out for the last one.",
+    )
+    timeline.add_argument(
+        "--rebuild", action="store_true", help="Build the timeline again from the raw records before showing it."
+    )
+    timeline.add_argument("--all", dest="show_all", action="store_true", help="Show bookkeeping entries too.")
+    timeline.add_argument(
+        "--pointers", action="store_true", help="Show where each entry is in a raw record: the file and the line."
+    )
+    timeline.add_argument("--json", action="store_true", help="Print the entries as one JSON document.")
+    timeline.set_defaults(command_name="timeline")
 
     hook = commands.add_parser("hook", help="Handle a Claude Code hook event (called by Claude Code, not by people).")
     # Optional to argparse so a missing event name is reported by
@@ -418,6 +440,16 @@ def main(
 
     if command_name == "export scout":
         return run_export_scout(terminal, arguments.output, as_json=arguments.json)
+
+    if command_name == "timeline":
+        timeline_request = TimelineRequest(
+            work_block_id=arguments.work_block_id,
+            rebuild=arguments.rebuild,
+            show_all=arguments.show_all,
+            show_pointers=arguments.pointers,
+            as_json=arguments.json,
+        )
+        return run_timeline(terminal, clock, timeline_request)
 
     if command_name == "hook":
         return run_hook(arguments.event_name, terminal, clock)
