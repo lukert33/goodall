@@ -91,6 +91,7 @@ def icon_state_output(
         "enabled": {"record_work_block": record_work_block, "pause": pause, "stop_recording": stop_recording},
         "setup": {"usable": True, "reason": None},
         "watch_folder": "/Volumes/EvalLogs/goodall-pilot/work-blocks",
+        "ask_notification_permission": True,
     }
     if state == "recording":
         document["work_block"] = {
@@ -116,9 +117,16 @@ def chosen(*titles: str) -> dict[str, Any]:
     return {"event": "item_chosen", "titles": list(titles)}
 
 
-def finished(exit_code: int) -> dict[str, Any]:
-    """The event: the menu command that was running ended with this exit code."""
-    return {"event": "command_finished", "exit_code": exit_code}
+def finished(exit_code: int, arguments: list[str] | None = None) -> dict[str, Any]:
+    """The event: a menu command ended with this exit code.
+
+    `arguments` say which, when two run at once (Settings… and another);
+    left out, it is the one the menu is waiting for, else the only one.
+    """
+    event: dict[str, Any] = {"event": "command_finished", "exit_code": exit_code}
+    if arguments is not None:
+        event["arguments"] = arguments
+    return event
 
 
 def menu_opened() -> dict[str, Any]:
@@ -221,7 +229,6 @@ def test_each_menu_item_runs_its_one_goodall_command(driver: Path) -> None:
         (NOT_RECORDING, ["Record work block", "go-to-market"], "Preparing to record…"),
         (RECORDING, ["Pause"], "Pausing…"),
         (RECORDING, ["Stop recording"], "Stopping…"),
-        (NOT_RECORDING, ["Settings…"], "Opening settings…"),
         (RECORDING, ["Quit goodall"], "Stopping…"),
     ],
 )
@@ -366,6 +373,35 @@ def test_the_menu_draws_goodalls_real_answer_when_setup_is_not_usable(driver: Pa
     assert enabled_titles(rendering) == ["Settings…", "Quit goodall"]
 
 
+def test_the_icon_asks_for_notification_permission_once_when_goodall_first_says_to(driver: Path) -> None:
+    # macOS asks the person once, and a dismissed question counts as no for
+    # good (spike of 2026-11-27), so the icon asks only once goodall says
+    # setup is done, and only once per run: macOS ignores a repeat, and the
+    # menu should not keep calling on it every minute.
+    renderings = run_driver(driver, [answered(NOT_RECORDING), answered(RECORDING), menu_opened(), answered(PAUSED)])
+
+    asks = []
+    for rendering in renderings:
+        asks.append(rendering["ask_notification_permission"])
+    assert asks == [True, False, False, False]
+
+
+def test_the_icon_does_not_ask_for_notification_permission_before_goodall_is_set_up(driver: Path) -> None:
+    # The real document, from an account with no local settings.
+    standard_output = io.StringIO()
+    terminal = Terminal(standard_output=standard_output, standard_error=io.StringIO())
+    cli.main(["icon-state", "--json"], terminal=terminal, runner=FakeRunner(real_programs=[]))
+
+    renderings = run_driver(
+        driver, [answered(standard_output.getvalue()), answered("not JSON"), answered(NOT_RECORDING)]
+    )
+
+    asks = []
+    for rendering in renderings:
+        asks.append(rendering["ask_notification_permission"])
+    assert asks == [False, False, True]
+
+
 def test_no_menu_text_says_eval(driver: Path) -> None:
     # The menu never says "eval" (ADR 0021). Every state and failure line is
     # drawn once here and every title checked, submenus included.
@@ -392,3 +428,76 @@ def test_no_menu_text_says_eval(driver: Path) -> None:
             rows_to_check.extend(current["submenu"])
     for title in titles:
         assert "eval" not in title.lower()
+
+
+# Settings… opens the setup page, and `goodall settings` then waits up to
+# an hour for the person to press Save settings. Until 2026-11-27 the menu
+# waited with it, gray, so the person could not stop recording from the
+# icon while the page was open. Now Settings… starts its command without
+# holding the menu; only Settings… itself stays gray until that command
+# ends, so a second click cannot open a second page or pile up a second
+# waiting command.
+
+SETTINGS_WAITING_LINE = "Settings… is open in your browser."
+
+
+def test_settings_opens_its_page_without_holding_the_menu(driver: Path) -> None:
+    _, waiting = run_driver(driver, [answered(RECORDING), chosen("Settings…")])
+
+    assert row_titles(waiting)[:2] == ["Recording research since 09:30", SETTINGS_WAITING_LINE]
+    assert enabled_titles(waiting) == ["Pause", "Stop recording", "Quit goodall"]
+    assert waiting["running_arguments"] is None
+    assert waiting["waiting_arguments"] == ["settings"]
+
+
+def test_stop_recording_can_be_chosen_while_the_settings_page_waits(driver: Path) -> None:
+    renderings = run_driver(
+        driver,
+        [
+            answered(RECORDING),
+            chosen("Settings…"),
+            chosen("Stop recording"),
+            finished(0, ["stop"]),
+            answered(NOT_RECORDING),
+        ],
+    )
+    stopping, stopped = renderings[2], renderings[4]
+
+    assert stopping["rows"][0]["title"] == "Stopping…"
+    assert stopping["running_arguments"] == ["stop"]
+    assert stopping["waiting_arguments"] == ["settings"]
+    assert row_titles(stopped)[:2] == ["Not recording", SETTINGS_WAITING_LINE]
+    assert enabled_titles(stopped) == ["Record work block", "Quit goodall"]
+
+
+def test_a_second_click_on_settings_is_refused_until_its_page_is_done(driver: Path) -> None:
+    renderings = run_driver(
+        driver, [answered(NOT_RECORDING), chosen("Settings…"), finished(0, ["settings"]), answered(NOT_RECORDING)]
+    )
+    waiting, done = renderings[1], renderings[3]
+
+    assert row(waiting, "Settings…")["enabled"] is False
+    assert row(done, "Settings…")["enabled"] is True
+    assert SETTINGS_WAITING_LINE not in row_titles(done)
+    assert done["waiting_arguments"] is None
+
+
+def test_a_settings_run_that_fails_while_another_command_runs_names_settings(driver: Path) -> None:
+    renderings = run_driver(
+        driver,
+        [
+            answered(RECORDING),
+            chosen("Settings…"),
+            chosen("Pause"),
+            finished(1, ["settings"]),
+            finished(0, ["pause"]),
+            answered(PAUSED),
+        ],
+    )
+
+    assert row_titles(renderings[-1])[:3] == [
+        "Paused on research since 10:15",
+        '"Settings…" did not work.',
+        f"Details are in {LOG_PATH_FOR_PEOPLE}",
+    ]
+    assert renderings[-1]["failure_mark"] is True

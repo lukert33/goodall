@@ -63,9 +63,25 @@ otherwise reverse-engineer:
   was still running when goodall drops it. The trap: while goodall itself
   is still running (in tests, chiefly), an ended background program is its
   child and lingers as a zombie until reaped, so every check reaps first.
-- Handing the terminal over to a program (a new `OutputMode`, with no
-  timeout, since it is a person's working session) is planned but not built,
-  because nothing calls it yet.
+
+Handing the terminal over (`OutputMode.HAND_OVER`, ADR 0011): the program
+reads from and prints to the terminal goodall was started in, so a person
+can answer it directly. The administrator install uses it for `sudo` and
+`sysadminctl` (ADR 0022): macOS asks for the administrator password, and
+the new account's password, in the terminal, and goodall never sees either.
+Decisions a reader would otherwise reverse-engineer:
+
+- It is the one exception to "a program never reads from goodall's
+  standard input". Goodall itself still asks nothing: the question belongs
+  to the program, which a person chose to run by starting the command.
+- It has no timeout, because a person is answering it.
+- The program stays in goodall's own session, unlike every other command.
+  Trap: a program started in a new session has no controlling terminal,
+  and `sudo` then cannot ask for a password at all.
+- What it prints goes to the person, never to goodall, so the result holds
+  only the outcome and the exit code. Pressing Control-C there reaches both
+  the program and goodall; goodall waits for the program to end and reports
+  how it ended, rather than leaving it running without a terminal.
 
 This module imports only the standard library, because the hook path will
 use it (ADR 0005); tests/test_hook_path_imports.py proves it.
@@ -140,6 +156,10 @@ class OutputMode(StrEnum):
     # a program can echo what it was given in an error message. The caller
     # still gets the outcome and the exit code.
     DISCARD = "discard"
+    # The program is given goodall's own terminal: it reads what the person
+    # types and prints straight to them, with no timeout. Nothing it prints
+    # reaches goodall (see the module docstring).
+    HAND_OVER = "hand_over"
 
 
 class CommandOutcome(StrEnum):
@@ -452,6 +472,8 @@ class RealRunner:
         """
         # DEVNULL for discarded output: the bytes go straight from the
         # program to nowhere, never through goodall's memory.
+        if command.output == OutputMode.HAND_OVER:
+            return self.run_handed_over(command)
         output_destination = subprocess.PIPE
         if command.output == OutputMode.DISCARD:
             output_destination = subprocess.DEVNULL
@@ -503,6 +525,34 @@ class RealRunner:
             standard_output=standard_output or "",
             standard_error=standard_error or "",
         )
+
+    def run_handed_over(self, command: Command) -> CommandResult:
+        """Run `command` with goodall's own terminal handed over to it, and wait for as long as it takes.
+
+        Standard input, output and error are goodall's own, and the program
+        stays in goodall's session so it keeps the terminal (see the module
+        docstring for why each matters).
+        """
+        if command.working_directory is not None and not command.working_directory.is_dir():
+            return CommandResult(
+                command=command,
+                outcome=CommandOutcome.COULD_NOT_START,
+                start_error=f"the folder it runs in, {command.working_directory}, does not exist",
+            )
+        try:
+            process = subprocess.Popen(command.arguments, cwd=command.working_directory, env=environment_for(command))
+        except FileNotFoundError:
+            return CommandResult(command=command, outcome=CommandOutcome.NOT_FOUND)
+        except OSError as start_error:
+            return CommandResult(
+                command=command, outcome=CommandOutcome.COULD_NOT_START, start_error=start_error.strerror
+            )
+        try:
+            exit_code = process.wait()
+        except KeyboardInterrupt:
+            # Control-C reached the program too; let it finish ending.
+            exit_code = process.wait()
+        return CommandResult(command=command, outcome=CommandOutcome.COMPLETED, exit_code=exit_code)
 
     def find_program(self, name: str) -> Path | None:
         """Where the program `name` is on the PATH, or None when it is not installed."""

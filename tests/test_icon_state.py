@@ -203,6 +203,9 @@ def test_icon_state_when_not_recording_gives_the_whole_documented_shape(account:
         # No work block has ever started, so the folder that will hold the
         # marker is not there yet: the icon watches the one it will appear in.
         "watch_folder": str(account.log_directory),
+        # goodall is set up here, so the icon may ask macOS for permission
+        # to show notifications; macOS itself asks the person only once.
+        "ask_notification_permission": True,
     }
 
 
@@ -377,6 +380,8 @@ def test_icon_state_without_local_settings_says_setup_is_not_usable_and_exits_1(
             ),
         },
         "watch_folder": None,
+        # Not before setup: the person has not yet been told the question is coming.
+        "ask_notification_permission": False,
     }
     assert snapshot(account.root) == before
 

@@ -466,14 +466,86 @@ def test_a_folder_of_someone_s_files_is_not_made_the_record_repo(tmp_path: Path)
     assert not (config_folder() / "local-settings.toml").exists()
 
 
-def test_without_a_git_identity_nothing_is_changed_and_the_commands_are_shown(tmp_path: Path) -> None:
+# A new eval account has no git identity, so the record repo's first commit
+# would fail. Goodall gives the record repo it makes an identity of its own,
+# in that repository's own settings only, from the contributor's display name
+# and a placeholder address that reaches nobody; the record repo is local
+# and never pushed (ADR 0023), so this only labels local history.
+
+PLACEHOLDER_EMAIL = "ada-lovelace@goodall.invalid"
+
+
+def test_without_a_git_identity_the_new_record_repo_gets_one_of_its_own(tmp_path: Path) -> None:
+    global_git_settings = Path(os.environ["HOME"]) / ".gitconfig"
+    global_git_settings.unlink()
+    record_repo = tmp_path / "evals" / "goodall-pilot-records"
+
+    exit_code, output, errors = run_goodall(
+        ["onboard", "--answers", str(write_answers(tmp_path, answers_text(tmp_path)))]
+    )
+
+    assert exit_code == exit_codes.SUCCESS, errors
+    assert "Record repo git identity" in output
+    assert PLACEHOLDER_EMAIL in one_line(output)
+    assert git(record_repo, "config", "--local", "user.name").strip() == "Ada Lovelace"
+    assert git(record_repo, "config", "--local", "user.email").strip() == PLACEHOLDER_EMAIL
+    assert git(record_repo, "log", "-1", "--format=%an <%ae>").strip() == f"Ada Lovelace <{PLACEHOLDER_EMAIL}>"
+    # Global git settings are never touched.
+    assert not global_git_settings.exists()
+
+
+def test_the_plan_shows_the_record_repo_identity_and_makes_nothing(tmp_path: Path) -> None:
+    (Path(os.environ["HOME"]) / ".gitconfig").unlink()
+
+    exit_code, output, _ = run_goodall(
+        ["onboard", "--answers", str(write_answers(tmp_path, answers_text(tmp_path))), "--plan"]
+    )
+
+    assert exit_code == exit_codes.SUCCESS
+    assert "Record repo git identity" in output
+    assert not (tmp_path / "evals").exists()
+
+
+def test_an_identity_git_already_has_is_never_overridden(tmp_path: Path) -> None:
+    (Path(os.environ["HOME"]) / ".gitconfig").write_text("[user]\n\tname = Grace Hopper\n")
+    record_repo = tmp_path / "evals" / "goodall-pilot-records"
+
+    exit_code, _, errors = run_goodall(["onboard", "--answers", str(write_answers(tmp_path, answers_text(tmp_path)))])
+
+    assert exit_code == exit_codes.SUCCESS, errors
+    assert git(record_repo, "log", "-1", "--format=%an <%ae>").strip() == f"Grace Hopper <{PLACEHOLDER_EMAIL}>"
+    local_settings = git(record_repo, "config", "--local", "--list")
+    assert "user.name" not in local_settings
+
+
+def test_with_a_git_identity_the_record_repo_gets_none_of_its_own(tmp_path: Path) -> None:
+    record_repo = tmp_path / "evals" / "goodall-pilot-records"
+
+    exit_code, output, errors = run_goodall(
+        ["onboard", "--answers", str(write_answers(tmp_path, answers_text(tmp_path)))]
+    )
+
+    assert exit_code == exit_codes.SUCCESS, errors
+    assert "Record repo git identity" not in output
+    assert "user." not in git(record_repo, "config", "--local", "--list")
+    assert git(record_repo, "log", "-1", "--format=%ae").strip() == "ada@example.org"
+
+
+def test_a_record_repo_with_history_and_no_identity_is_left_to_its_owner(tmp_path: Path) -> None:
+    # Goodall gives an identity only to a record repo it makes, or one with no
+    # commits yet (a first setup that stopped part way); a repository with
+    # history is someone's, so goodall says how to give git an identity.
+    record_repo = tmp_path / "evals" / "goodall-pilot-records"
+    record_repo.mkdir(parents=True)
+    git(record_repo, "init", "--quiet")
+    git(record_repo, "commit", "--quiet", "--allow-empty", "-m", "An earlier commit")
     (Path(os.environ["HOME"]) / ".gitconfig").unlink()
 
     exit_code, _, errors = run_goodall(["onboard", "--answers", str(write_answers(tmp_path, answers_text(tmp_path)))])
 
     assert exit_code == exit_codes.ERROR
     assert 'git config --global user.name "Your Name"' in errors
-    assert not (tmp_path / "evals").exists()
+    assert "user." not in git(record_repo, "config", "--local", "--list")
 
 
 def test_an_existing_eval_whose_roster_lacks_this_contributor_is_refused(tmp_path: Path) -> None:

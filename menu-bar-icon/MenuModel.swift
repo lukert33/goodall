@@ -10,13 +10,21 @@
 // `goodall icon-state --json`: the status line, which items are enabled, the workstreams
 // and which is the main one. This file turns that answer, and what the person has just
 // done, into rows of a menu: which line comes first while a command runs, when a failure
-// is shown and when its mark clears, and what Quit goodall has to do first.
+// is shown and when its mark clears, what Quit goodall has to do first, and when to ask
+// macOS for permission to show notifications.
 //
 // The model changes only through four events, each a function below:
-//   stateAnswered     goodall answered `icon-state --json`
+//   stateAnswered     goodall answered `icon-state --json`; says whether to ask for permission
 //   commandStarted    the person chose an item that runs a goodall command
 //   commandFinished   that command ended, with this exit code
 //   menuOpened        the person opened the menu
+//
+// Most commands hold the menu: every item is gray until the command ends, so a second
+// click cannot start a second command. Settings… does not. `goodall settings` opens the
+// setup page and then waits, up to an hour, for the person to press Save settings; a menu
+// held all that time would leave no way to stop recording. So Settings… waits for the
+// person on its own (`holdsTheMenu` false), the rest of the menu stays usable, and only
+// Settings… itself is gray until its command ends, so a second click opens no second page.
 //
 // A few Swift words, for reading on:
 //   let / var        a name whose value cannot / can change
@@ -49,6 +57,9 @@ let pauseBusyLine = "Pausing…"
 let stopBusyLine = "Stopping…"
 let settingsBusyLine = "Opening settings…"
 
+// The gray line under the status line while the settings page waits for the person.
+let settingsWaitingLine = "Settings… is open in your browser."
+
 // The titles of the items that are not one per workstream.
 let recordTitle = "Record work block"
 let pauseTitle = "Pause"
@@ -70,6 +81,7 @@ struct IconState: Decodable {
     let enabled: EnabledItems
     let setup: Setup
     let watchFolder: String?
+    let askNotificationPermission: Bool
 }
 
 struct WorkBlock: Decodable {
@@ -112,6 +124,9 @@ struct MenuCommand {
     // The item a failure line names: "Record work block" for a workstream, since the
     // workstreams sit inside it.
     let itemTitle: String
+    // False for a command that waits for the person (Settings…): the menu goes on working
+    // while it runs, and main.swift runs it apart from the commands that hold the menu.
+    var holdsTheMenu = true
 }
 
 // One row of the menu. A row is a gray line, a separator, an item that runs a command, an
@@ -160,11 +175,25 @@ struct MenuModel {
     var runningCommand: MenuCommand? = nil
     var runningCommandHasFinished = false
 
+    // The command that waits for the person (Settings…) while it runs; nil otherwise. It
+    // does not hold the menu, and is cleared as soon as it finishes.
+    var waitingCommand: MenuCommand? = nil
+
     // The two gray lines shown after a failed command; empty when the last one worked.
     var failureLines: [String] = []
 
     // True from a failed command until the person next opens the menu: draws the "!".
     var failureNotSeenYet = false
+
+    // How many commands have failed in this run, and how many had when each running command
+    // started. A command that works clears only failures from before it started: with two
+    // running at once, Pause working must not hide that Settings… failed meanwhile.
+    var failureCount = 0
+    var failureCountWhenRunningStarted = 0
+    var failureCountWhenWaitingStarted = 0
+
+    // Whether this run of the helper has asked macOS for permission to show notifications.
+    var notificationPermissionAsked = false
 
     init(goodallIsKnown: Bool, logPathForPeople: String) {
         self.goodallIsKnown = goodallIsKnown
@@ -175,28 +204,55 @@ struct MenuModel {
     // The four events
     // -----------------------------------------------------------------------------------
 
-    mutating func stateAnswered(output: String) {
+    // Returns true when main.swift should ask macOS, now, for permission to show
+    // notifications. goodall says when that may be (`ask_notification_permission`, true
+    // once goodall is set up); the model asks only the first time it hears so in this run.
+    // macOS itself shows its question only once ever, and a question dismissed counts as
+    // "no", which is why goodall waits until setup has told the person it is coming.
+    mutating func stateAnswered(output: String) -> Bool {
         iconState = readIconState(output)
         if runningCommandHasFinished {
             runningCommand = nil
             runningCommandHasFinished = false
         }
+        if iconState?.askNotificationPermission == true && !notificationPermissionAsked {
+            notificationPermissionAsked = true
+            return true
+        }
+        return false
     }
 
     mutating func commandStarted(_ command: MenuCommand) {
+        if !command.holdsTheMenu {
+            waitingCommand = command
+            failureCountWhenWaitingStarted = failureCount
+            return
+        }
         runningCommand = command
         runningCommandHasFinished = false
+        failureCountWhenRunningStarted = failureCount
     }
 
-    mutating func commandFinished(exitCode: Int32) {
-        guard let command = runningCommand else { return }
-        runningCommandHasFinished = true
-        if exitCode == 0 {
-            failureLines = []
-            failureNotSeenYet = false
+    // `command` is the one that ended. Two can be running: Settings…, waiting for the
+    // person, and one that holds the menu.
+    mutating func commandFinished(_ command: MenuCommand, exitCode: Int32) {
+        let failureCountWhenStarted: Int
+        if !command.holdsTheMenu {
+            guard waitingCommand != nil else { return }
+            waitingCommand = nil
+            failureCountWhenStarted = failureCountWhenWaitingStarted
         } else {
+            guard runningCommand != nil else { return }
+            runningCommandHasFinished = true
+            failureCountWhenStarted = failureCountWhenRunningStarted
+        }
+        if exitCode != 0 {
+            failureCount += 1
             failureLines = ["\"\(command.itemTitle)\" did not work.", "Details are in \(logPathForPeople)"]
             failureNotSeenYet = true
+        } else if failureCount == failureCountWhenStarted {
+            failureLines = []
+            failureNotSeenYet = false
         }
     }
 
@@ -256,6 +312,9 @@ struct MenuModel {
             grayLines.append("goodall did not answer.")
             grayLines.append("Run goodall status in Terminal to see why.")
         }
+        if goodallIsKnown && runningCommand == nil && waitingCommand != nil {
+            grayLines.append(settingsWaitingLine)
+        }
 
         var rows: [MenuRow] = []
         for line in grayLines + failureLines {
@@ -289,8 +348,9 @@ struct MenuModel {
 
         rows.append(MenuRow(title: "", enabled: false, isSeparator: true))
 
-        let settings = MenuCommand(arguments: settingsArguments, busyLine: settingsBusyLine, itemTitle: settingsTitle)
-        rows.append(MenuRow(title: settingsTitle, enabled: canRunCommands, command: settings))
+        let settings = MenuCommand(
+            arguments: settingsArguments, busyLine: settingsBusyLine, itemTitle: settingsTitle, holdsTheMenu: false)
+        rows.append(MenuRow(title: settingsTitle, enabled: canRunCommands && waitingCommand == nil, command: settings))
 
         rows.append(MenuRow(title: quitTitle, enabled: runningCommand == nil, isQuit: true))
         return rows

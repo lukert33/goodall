@@ -26,6 +26,12 @@
 //      second), after every menu command, and once a minute in case anything was missed.
 //   3. Builds the menu from the answer. It never asks a question: there is no window, no
 //      dialog and no text field anywhere in this file.
+//   4. Once goodall says it is set up, asks macOS whether goodall may show notifications.
+//      The question is macOS's own, and macOS asks it only once.
+//
+// The same program has a second, short job: notify mode (near the end of this file).
+// goodall runs it as `goodall-menu-bar-icon --notify TITLE BODY` to show one
+// notification, and it exits without drawing an icon. All the words come from goodall.
 //
 // How it finds goodall: whoever starts this program puts the full path of the `goodall`
 // program in the environment variable GOODALL_COMMAND. `goodall start` does that when it
@@ -46,6 +52,7 @@
 //   [weak self]      "do not keep this object alive just for this block"
 
 import AppKit
+import UserNotifications
 
 // ---------------------------------------------------------------------------------------
 // Settings read once, from the environment this program was started with
@@ -163,6 +170,11 @@ final class MenuBarIcon: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // the menu bar never freezes while goodall works. Drawing always happens on the main thread.
     let goodallQueue = DispatchQueue(label: "goodall commands")
 
+    // A command the model says waits for the person (Settings…, `holdsTheMenu` false) runs
+    // here instead, so the state questions and the other commands are not stuck behind it
+    // while the setup page is open. The model lets only one start at a time.
+    let waitingQueue = DispatchQueue(label: "goodall commands that wait for the person")
+
     // The folder being watched, the watch on it, and the question waiting to be asked.
     var watchedFolder: String?
     var folderWatch: DispatchSourceFileSystemObject?
@@ -195,7 +207,9 @@ final class MenuBarIcon: NSObject, NSApplicationDelegate, NSMenuDelegate {
         goodallQueue.async {
             let result = runGoodall(askStateArguments, keepErrors: false)
             DispatchQueue.main.async {
-                self.model.stateAnswered(output: result.output)
+                if self.model.stateAnswered(output: result.output) {
+                    askForNotificationPermission()
+                }
                 self.draw()
                 self.watch(folder: self.model.iconState?.watchFolder)
             }
@@ -207,13 +221,14 @@ final class MenuBarIcon: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func runMenuCommand(_ command: MenuCommand, afterSuccess: (() -> Void)? = nil) {
         model.commandStarted(command)
         draw()
-        goodallQueue.async {
+        let queue = command.holdsTheMenu ? goodallQueue : waitingQueue
+        queue.async {
             let result = runGoodall(command.arguments, keepErrors: true)
             if result.exitCode != 0 {
                 writeToLog(title: command.itemTitle, arguments: command.arguments, result: result)
             }
             DispatchQueue.main.async {
-                self.model.commandFinished(exitCode: result.exitCode)
+                self.model.commandFinished(command, exitCode: result.exitCode)
                 if result.exitCode == 0 {
                     afterSuccess?()
                 }
@@ -431,8 +446,102 @@ final class MenuBarIcon: NSObject, NSApplicationDelegate, NSMenuDelegate {
 }
 
 // ---------------------------------------------------------------------------------------
+// Notifications
+// ---------------------------------------------------------------------------------------
+
+// Ask macOS whether goodall may show notifications. macOS shows its own question only
+// while it has no answer yet; once it has one, this shows nothing. The answer is not
+// needed here: notify mode finds out, and tells goodall.
+func askForNotificationPermission() {
+    UNUserNotificationCenter.current().requestAuthorization(options: [.alert]) { _, _ in }
+}
+
+// Notify mode. goodall shows a notification when a work block is started or stopped by
+// something other than the person (src/goodall/notifications.py says when, and why this
+// way). It runs this same program a second time, as
+//
+//     goodall-menu-bar-icon --notify "Recording started" "On research, because you signed in."
+//
+// That run shows the notification and leaves. It draws no icon, so it works the same
+// whether or not the icon is already running, and macOS shows the notification under
+// goodall's name and permission because it is the same application. The notification has
+// no buttons and asks nothing. The exit code tells goodall what happened:
+let notifyArgument = "--notify"
+let notificationShownExitCode: Int32 = 0
+let notificationFailedExitCode: Int32 = 1
+let notificationUsageExitCode: Int32 = 2
+let notificationsNotAllowedExitCode: Int32 = 3  // the person said no, or dismissed the question
+let notificationsNotAskedYetExitCode: Int32 = 4  // macOS has not asked the person yet
+
+// How long to wait for macOS each time it is asked something.
+let notificationWaitSeconds = 5.0
+
+// What macOS answered, kept where the code waiting for the answer can read it.
+// "@unchecked Sendable": only one side touches it at a time, because of the wait.
+final class NotificationAnswer: @unchecked Sendable {
+    var status = UNAuthorizationStatus.notDetermined
+    var problem: Error? = nil
+}
+
+func printError(_ message: String) {
+    FileHandle.standardError.write((message + "\n").data(using: .utf8) ?? Data())
+}
+
+func showNotification(arguments: [String]) -> Int32 {
+    guard arguments.count == 2 else {
+        printError("--notify needs a title and a body, as two arguments.")
+        return notificationUsageExitCode
+    }
+    let center = UNUserNotificationCenter.current()
+    let answer = NotificationAnswer()
+    let answered = DispatchSemaphore(value: 0)
+
+    // Asked first, rather than posting and seeing, so that goodall can say where to turn
+    // notifications on instead of reporting a bare failure.
+    center.getNotificationSettings { settings in
+        answer.status = settings.authorizationStatus
+        answered.signal()
+    }
+    if answered.wait(timeout: .now() + notificationWaitSeconds) == .timedOut {
+        printError("macOS did not say whether goodall may show notifications.")
+        return notificationFailedExitCode
+    }
+    if answer.status == .notDetermined {
+        printError("macOS has not asked yet whether goodall may show notifications.")
+        return notificationsNotAskedYetExitCode
+    }
+    if answer.status != .authorized && answer.status != .provisional {
+        printError("macOS is not letting goodall show notifications.")
+        return notificationsNotAllowedExitCode
+    }
+
+    let content = UNMutableNotificationContent()
+    content.title = arguments[0]
+    content.body = arguments[1]
+    // No trigger means "show it now".
+    let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
+    center.add(request) { problem in
+        answer.problem = problem
+        answered.signal()
+    }
+    if answered.wait(timeout: .now() + notificationWaitSeconds) == .timedOut {
+        printError("macOS did not say whether it took the notification.")
+        return notificationFailedExitCode
+    }
+    if let problem = answer.problem {
+        printError("macOS did not take the notification: \(problem.localizedDescription)")
+        return notificationFailedExitCode
+    }
+    return notificationShownExitCode
+}
+
+// ---------------------------------------------------------------------------------------
 // The program starts here.
 // ---------------------------------------------------------------------------------------
+
+if CommandLine.arguments.count >= 2 && CommandLine.arguments[1] == notifyArgument {
+    exit(showNotification(arguments: Array(CommandLine.arguments.dropFirst(2))))
+}
 
 let application = NSApplication.shared
 let menuBarIcon = MenuBarIcon()

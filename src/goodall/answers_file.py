@@ -32,6 +32,15 @@ What the checks protect:
   that `goodall doctor` would refuse. goodall.onboard also reads every file
   it would write back through that file's own reader before writing it.
 
+The `[eval_account]` table (ADR 0022) is answered in an administrator
+account: `create = true` and a `name` ask the administrator install
+(goodall.administrator_install) to create the eval account and stage its
+first sign-in setup. It is checked here only for its own form and for
+agreeing with the rest of the file: an eval account is for dedicated
+account mode, and a new account has no record repo, so it must start a new
+eval. Whether an account of that name already exists is a question about
+the machine, answered by the administrator install.
+
 What this module cannot check, because it does not look at the machine:
 whether folders exist, whether an existing record repo's eval config agrees
 with these answers, or whether git can commit. goodall.onboard does that.
@@ -43,6 +52,7 @@ file is accepted and ignored, so a file the page saved can also be used
 unattended.
 """
 
+import re
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -106,6 +116,7 @@ KNOWN_KEYS = {
         "secrets",
         "activitywatch",
         "claude_code",
+        "eval_account",
     ],
     "new_eval": [
         "name",
@@ -123,6 +134,7 @@ KNOWN_KEYS = {
     "secrets": ["manager", "references"],
     "activitywatch": ["port", "device_id"],
     "claude_code": ["goodall_program"],
+    "eval_account": ["create", "name"],
 }
 
 # A correct line for each key, shown in "for example" advice. Every value is
@@ -158,7 +170,18 @@ EXAMPLE_LINES = {
     "activitywatch.port": "port = 5610",
     "activitywatch.device_id": 'device_id = "8d3f2c1e-4b5a-4c6d-9e7f-0a1b2c3d4e5f"',
     "claude_code.goodall_program": 'goodall_program = "/Users/ada/.local/bin/goodall"',
+    "eval_account.create": "create = true",
+    "eval_account.name": 'name = "goodall-eval"',
 }
+
+# The account names goodall will ask macOS to create: a lowercase letter
+# first, then lowercase letters, digits and hyphens, not ending in a hyphen.
+# Narrower than what macOS accepts, on purpose: no capitals, spaces or dots
+# to get wrong when typing it at the sign-in window, and no leading
+# underscore, which macOS keeps for its own accounts.
+ACCOUNT_NAME_PATTERN = re.compile(r"[a-z][a-z0-9]*(-[a-z0-9]+)*")
+ACCOUNT_NAME_RULE = "a lowercase letter, then lowercase letters, digits and single hyphens, not ending in a hyphen"
+
 
 # The one secrets manager used when the answers file does not name one.
 DEFAULT_SECRETS_MANAGER = "1password"
@@ -185,6 +208,17 @@ class NewEval:
 
 
 @dataclass(frozen=True)
+class EvalAccountAnswer:
+    """The `[eval_account]` answers: whether to create the eval account, and its name.
+
+    `name` is set exactly when `create` is True.
+    """
+
+    create: bool
+    name: str | None
+
+
+@dataclass(frozen=True)
 class Answers:
     """An answers file that passed every check in this module.
 
@@ -200,6 +234,8 @@ class Answers:
       list the person wants in the eval config (`goodall settings` saves
       it); None leaves the eval config as it is. Goodall only ever adds
       names to the eval config's list (docs/setup-page.md).
+    - `eval_account` is the `[eval_account]` answer, or None when the file
+      has no such table, which creates no account.
     """
 
     answers_file: Path
@@ -217,6 +253,7 @@ class Answers:
     activitywatch_device_id: str | None = None
     goodall_program: str | None = None
     existing_workstreams: list[str] | None = None
+    eval_account: EvalAccountAnswer | None = None
 
 
 def read_answers_file(answers_file: Path, expected_one_time_code: str | None = None) -> Answers | list[Failure]:
@@ -338,6 +375,11 @@ class AnswersReader:
         secrets_manager, secret_references = self.read_secrets()
         activitywatch_port, activitywatch_device_id = self.read_activitywatch()
         goodall_program = self.read_goodall_program()
+        eval_account = self.read_eval_account(account_mode, eval_choice)
+        if eval_account is not None and eval_account.create:
+            for key, folder in [("record_repo", record_repo), ("log_directory", log_directory)]:
+                if folder is not None and not folder.as_written.startswith("~/"):
+                    self.problems.append(eval_account_folder_outside_its_home_failure(self.answers_file, key))
 
         if self.problems:
             return self.problems
@@ -361,6 +403,7 @@ class AnswersReader:
             activitywatch_device_id=activitywatch_device_id,
             goodall_program=goodall_program,
             existing_workstreams=existing_workstreams,
+            eval_account=eval_account,
         )
 
     def find_secret_values(self, value: object, place: str) -> None:
@@ -673,6 +716,46 @@ class AnswersReader:
             )
             return None
         return program
+
+    def read_eval_account(self, account_mode: str | None, eval_choice: str | None) -> EvalAccountAnswer | None:
+        """The `[eval_account]` table, or None when the file has none."""
+        table = self.read_section("eval_account", required=False)
+        if table is None:
+            return None
+        if "create" not in table:
+            self.problems.append(self.key_missing("create", "eval_account"))
+            return None
+        create = table["create"]
+        if not isinstance(create, bool):
+            self.invalid("create", "eval_account", "must be true or false, without quotes")
+            return None
+        if not create:
+            if "name" in table:
+                self.invalid(
+                    "name",
+                    "eval_account",
+                    "has no effect, because goodall creates an account only with create = true. Remove the name, "
+                    "or set create = true",
+                )
+                return None
+            return EvalAccountAnswer(create=False, name=None)
+
+        name = self.read_text(table, "eval_account", "name", required=True)
+        if "name" in table and name is None:
+            # read_text has already said why: not text, or empty.
+            return None
+        if name is not None and ACCOUNT_NAME_PATTERN.fullmatch(name) is None:
+            self.invalid("name", "eval_account", f"is not an account name goodall will create: use {ACCOUNT_NAME_RULE}")
+            return None
+        if account_mode is not None and account_mode != DEDICATED_ACCOUNT_MODE:
+            self.problems.append(eval_account_needs_dedicated_mode_failure(self.answers_file))
+            return None
+        if eval_choice is not None and eval_choice != NEW_EVAL:
+            self.problems.append(eval_account_needs_new_eval_failure(self.answers_file))
+            return None
+        if name is None:
+            return None
+        return EvalAccountAnswer(create=True, name=name)
 
     def refuse_email_address(self, value: str | None, section: str, key: str) -> None:
         """Refuse an email address in what will be the eval config, which may be published (ADR 0009)."""
@@ -1030,6 +1113,62 @@ def email_address_failure(answers_file: Path, place: str) -> Failure:
         ),
         why="It would be written into the eval config, which is made to be published as it stands (ADR 0009).",
         what_to_do_next='Write a name instead, such as display_name = "Ada Lovelace".',
+    )
+
+
+def eval_account_needs_dedicated_mode_failure(answers_file: Path) -> Failure:
+    """The failure for an eval account to create in mixed account mode, which records in an account of one's own."""
+    return Failure(
+        kind="answers_eval_account_needs_dedicated_mode",
+        what_happened=(
+            f"The answers file at {answers_file} asks goodall to create an eval account, but its account_mode is "
+            "not dedicated. Nothing was changed."
+        ),
+        why=(
+            "An eval account is used for one eval and nothing else, which is dedicated account mode. Mixed account "
+            "mode records in an account you already use, so there is no account to create (ADR 0021)."
+        ),
+        what_to_do_next=(
+            f'Set account_mode = "{DEDICATED_ACCOUNT_MODE}" to create the eval account, or remove the '
+            "[eval_account] section and run goodall onboard in the account you mean to record in."
+        ),
+    )
+
+
+def eval_account_folder_outside_its_home_failure(answers_file: Path, key: str) -> Failure:
+    """The failure for a folder not written from the home of the eval account goodall is to create."""
+    example = "~/evals/goodall-pilot-records" if key == "record_repo" else "~/evals/goodall-pilot-logs.noindex"
+    return Failure(
+        kind="answers_eval_account_folder_outside_its_home",
+        what_happened=(
+            f"The answers file at {answers_file} asks goodall to create an eval account, but [folders] {key} does "
+            "not start with ~/. Nothing was changed."
+        ),
+        why=(
+            "These answers are used at the new account's first sign-in, where ~/ means that account's home folder. "
+            "A folder written any other way is in another account's home, which the eval account cannot open, or "
+            "somewhere every account shares."
+        ),
+        what_to_do_next=f'Write the folder starting with ~/, such as {key} = "{example}".',
+    )
+
+
+def eval_account_needs_new_eval_failure(answers_file: Path) -> Failure:
+    """The failure for an eval account to create for an existing eval, whose record repo a new account cannot have."""
+    return Failure(
+        kind="answers_eval_account_needs_new_eval",
+        what_happened=(
+            f"The answers file at {answers_file} asks goodall to create an eval account, but says eval = "
+            f'"{EXISTING_EVAL}". Nothing was changed.'
+        ),
+        why=(
+            "An existing eval's record repo is in the macOS user account that already records it. A new account "
+            "starts empty, so it has no record repo to use."
+        ),
+        what_to_do_next=(
+            f'Set eval = "{NEW_EVAL}" and describe the eval under [new_eval] to start it in the new account. To '
+            "carry on an existing eval, run goodall onboard in the account that has its record repo instead."
+        ),
     )
 
 

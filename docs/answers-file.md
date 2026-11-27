@@ -42,9 +42,9 @@ Goodall onboard does **not** do these; they stay by-hand steps in
 [setup-by-hand.md](setup-by-hand.md):
 
 - Create the eval account, or install anything for the whole Mac (Part 1).
-- Install goodall, git's name and email, and Claude Code (Part 2). Goodall
-  needs git's name and email for the record repo's first commit, and stops
-  before changing anything if git has none.
+- Install goodall, git's name and email, and Claude Code (Part 2). Git's
+  name and email are optional now: see "The record repo's git identity"
+  below.
 - Give ActivityWatch its own port (Part 3). When the eval includes
   ActivityWatch, follow Part 3, then add its port and identifier to the
   answers file (below) and run goodall onboard again. Until then the plan
@@ -155,6 +155,13 @@ device_id = "8d3f2c1e-4b5a-4c6d-9e7f-0a1b2c3d4e5f"
 # prints it. Left out, goodall uses the goodall it finds on the PATH.
 [claude_code]
 goodall_program = "/Users/ada/.local/bin/goodall"
+
+# Optional, and only in an administrator account: create the eval account and
+# stage its first sign-in setup (administrator-install.md). Needs
+# account_mode = "dedicated" and eval = "new".
+[eval_account]
+create = true            # false, or leaving the section out, creates nothing
+name = "goodall-eval"    # only with create = true
 ```
 
 The rules, which are those of the files the answers become, so that goodall
@@ -184,6 +191,30 @@ would refuse:
 - Nothing in `[new_eval]` or `display_name` may be an email address: the
   eval config is made to be published as it stands (ADR 0009).
 - `activitywatch` `port` may not be 5600, ActivityWatch's default (ADR 0016).
+- `[eval_account]` `name` is the new account's short name: a lowercase
+  letter, then lowercase letters, digits and single hyphens. Goodall checks
+  that no account on the Mac has it before creating anything. A name with
+  `create = false` is refused, because it would have no effect.
+
+### `[eval_account]`: the administrator install
+
+With `create = true`, `goodall onboard --answers <file>` run in an
+**administrator account** does not set up that account. It runs the
+administrator install instead: it creates the eval account and stages the
+same answers file for the eval account's first sign-in, where goodall sets
+up the eval account from it by itself.
+[administrator-install.md](administrator-install.md) says what it changes
+and what is not yet confirmed on a real Mac. Run in the eval account itself
+(the account the name names), the same file sets up that account as usual.
+
+With `create = true`, the record repo and the log directory must be written
+starting with `~/`: the file is used at the new account's first sign-in,
+where `~/` means that account's home folder, and a folder written any other
+way would be in another account's home or somewhere every account shares.
+
+The setup page asks this question for a new eval in an eval account ("Create
+it for me", [setup-page.md](setup-page.md)) and writes the table for you. An
+eval account made by hand needs no table.
 
 ### No secrets, only references
 
@@ -205,6 +236,28 @@ Goodall refuses the whole answers file, and changes nothing, when:
 
 Goodall never repeats a refused value in what it prints. If you did paste a
 real key, replace it with whoever issued it.
+
+### The record repo's git identity
+
+Every commit in the record repo names who made it, so git needs a name and
+an email. Goodall never asks for an email address. When git has no
+`user.name` or no `user.email` for the record repo (a new eval account has
+neither), goodall sets the missing ones in **that repository's own
+settings** (`git config --local`), and shows it in the plan as **Record
+repo git identity**:
+
+- `user.name` is your `display_name`;
+- `user.email` is your contributor id at `goodall.invalid`, such as
+  `ada-lovelace@goodall.invalid`. `.invalid` is reserved for names that can
+  never exist, so the address reaches nobody.
+
+The record repo is local and never pushed (ADR 0023), so this only labels
+its local history, and every later goodall commit uses it too. Goodall sets
+only what git lacks: an identity git already has, even only a name, is never
+overridden, and your global git settings are never touched. It does this
+only for a record repo it makes, or one with no commits yet; a repository
+that already has history and no identity is refused, with the
+`git config` commands that give it one.
 
 ### The one-time code
 

@@ -66,6 +66,16 @@ other value is a failure, never a guess: the mode decides whether the prompt
 gate refuses prompts, and a misspelled "mixed" silently read as dedicated
 would refuse a person's own prompts with no explanation.
 
+One more is optional: `start_at_sign_in`, true or false, which says whether
+signing in to this account starts a work block (ADR 0021, `goodall
+sign-in`). Left out, it means true: in an eval account signing in means
+recording, and the account is the consent boundary. `start_at_sign_in =
+false` turns it off. It is read only where `goodall sign-in` runs, which is
+the eval account named by the administrator install, so in mixed account
+mode it has no effect: nothing starts there unless the person starts it.
+It lives here, not in the eval config, because it is about one account on
+one Mac (ADR 0009).
+
 The file's shape is provisional by the owner's instruction (goodall-xes.8);
 `schema_version` is there so it can change.
 """
@@ -114,7 +124,13 @@ MIXED_ACCOUNT_MODE = "mixed"
 ACCOUNT_MODES = [DEDICATED_ACCOUNT_MODE, MIXED_ACCOUNT_MODE]
 
 # Every key local settings may contain, in the order goodall reports them.
-KNOWN_SETTING_NAMES = ["schema_version", *TEXT_SETTING_NAMES, *ACTIVITYWATCH_SETTING_NAMES, "account_mode"]
+KNOWN_SETTING_NAMES = [
+    "schema_version",
+    *TEXT_SETTING_NAMES,
+    *ACTIVITYWATCH_SETTING_NAMES,
+    "account_mode",
+    "start_at_sign_in",
+]
 
 # ActivityWatch's own default port, which the eval account's copy must not
 # use; see the module docstring.
@@ -193,6 +209,7 @@ class LocalSettings:
     does not have them; whether the eval needs them is for goodall.eval_config
     to say. The device_id is always lowercase. `account_mode` is one of
     ACCOUNT_MODES, and is DEDICATED_ACCOUNT_MODE when the file does not say.
+    `start_at_sign_in` is True when the file does not say.
     """
 
     settings_file: Path
@@ -205,6 +222,7 @@ class LocalSettings:
     activitywatch_port: int | None = None
     activitywatch_device_id: str | None = None
     account_mode: str = DEDICATED_ACCOUNT_MODE
+    start_at_sign_in: bool = True
 
 
 class RelativeConfigDirectoryError(ValueError):
@@ -376,6 +394,7 @@ def check_settings_table(settings_file: Path, settings_table: dict[str, object])
     activitywatch_port = read_activitywatch_port(settings_file, settings_table, problems)
     activitywatch_device_id = read_activitywatch_device_id(settings_file, settings_table, problems)
     account_mode = read_account_mode(settings_file, settings_table, problems)
+    start_at_sign_in = read_start_at_sign_in(settings_file, settings_table, problems)
 
     if problems:
         return problems
@@ -392,6 +411,7 @@ def check_settings_table(settings_file: Path, settings_table: dict[str, object])
         activitywatch_port=activitywatch_port,
         activitywatch_device_id=activitywatch_device_id,
         account_mode=account_mode,
+        start_at_sign_in=start_at_sign_in,
     )
 
 
@@ -465,6 +485,24 @@ def read_account_mode(settings_file: Path, settings_table: dict[str, object], pr
             )
         )
         return DEDICATED_ACCOUNT_MODE
+    return value
+
+
+def read_start_at_sign_in(settings_file: Path, settings_table: dict[str, object], problems: list[Failure]) -> bool:
+    """Whether signing in starts a work block: True when the file does not say, or when a problem was recorded."""
+    if "start_at_sign_in" not in settings_table:
+        return True
+    value = settings_table["start_at_sign_in"]
+    if not isinstance(value, bool):
+        problems.append(
+            value_invalid_failure(
+                settings_file,
+                "start_at_sign_in",
+                "must be true, to start a work block each time you sign in, or false, to start none, without quotes",
+                "start_at_sign_in = false",
+            )
+        )
+        return True
     return value
 
 

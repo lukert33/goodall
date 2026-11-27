@@ -11,11 +11,14 @@
 //
 //     {"event": "state_answered", "output": "<what goodall icon-state --json printed>"}
 //     {"event": "item_chosen", "titles": ["Record work block", "research"]}
-//     {"event": "command_finished", "exit_code": 1}
+//     {"event": "command_finished", "exit_code": 1, "arguments": ["settings"]}
+//
+// ("arguments", which may be left out, say which command ended when two run at once.)
 //     {"event": "menu_opened"}
 //
 // It hands each event to the model exactly as main.swift does, and prints a JSON list with
-// one entry per event: the menu and icon as they would be drawn right after it. Choosing
+// one entry per event: the menu and icon as they would be drawn right after it, and
+// whether main.swift would ask macOS for notification permission at that moment. Choosing
 // an item that is missing or gray is a mistake in the test, so the driver stops with exit
 // code 2 and says which.
 
@@ -73,10 +76,12 @@ var renderings: [[String: Any]] = []
 for event in events {
     // What Quit goodall did, when this event chose it.
     var quit: Any = NSNull()
+    // Whether this event made the model say to ask for notification permission.
+    var askNotificationPermission = false
 
     switch event["event"] as? String {
     case "state_answered":
-        model.stateAnswered(output: event["output"] as? String ?? "")
+        askNotificationPermission = model.stateAnswered(output: event["output"] as? String ?? "")
     case "item_chosen":
         let titles = event["titles"] as? [String] ?? []
         guard let row = findRow(titles: titles, in: model.rows) else {
@@ -97,7 +102,21 @@ for event in events {
             stop("\(titles) runs nothing.")
         }
     case "command_finished":
-        model.commandFinished(exitCode: Int32(event["exit_code"] as? Int ?? -1))
+        // Which command ended: the one with these arguments, or else the one holding the
+        // menu, or else the one waiting for the person.
+        let exitCode = Int32(event["exit_code"] as? Int ?? -1)
+        var ended: MenuCommand? = model.runningCommand ?? model.waitingCommand
+        if let arguments = event["arguments"] as? [String] {
+            ended = nil
+            for candidate in [model.runningCommand, model.waitingCommand] {
+                if let candidate = candidate, candidate.arguments == arguments {
+                    ended = candidate
+                }
+            }
+        }
+        if let command = ended {
+            model.commandFinished(command, exitCode: exitCode)
+        }
     case "menu_opened":
         model.menuOpened()
     default:
@@ -114,7 +133,9 @@ for event in events {
         "tool_tip": model.toolTip,
         "rows": rows,
         "running_arguments": model.runningCommand?.arguments ?? NSNull(),
+        "waiting_arguments": model.waitingCommand?.arguments ?? NSNull(),
         "quit": quit,
+        "ask_notification_permission": askNotificationPermission,
     ])
 }
 

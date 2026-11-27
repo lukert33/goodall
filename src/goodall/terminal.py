@@ -444,14 +444,15 @@ class Terminal:
             paragraphs.append(self.commands_paragraph(failure.commands_to_try, self.error_color))
         self.standard_error.write("\n\n".join(paragraphs) + "\n")
 
-    def commands_paragraph(self, commands: tuple[str, ...], color: bool) -> str:
-        """Commands to copy, labeled "Try", one per line and never wrapped, so each pastes as it stands.
+    def commands_paragraph(self, commands: tuple[str, ...], color: bool, label_word: str = "Try") -> str:
+        """Commands, labeled "Try" unless `label_word` says otherwise, one per line and never wrapped.
 
-        `color` says whether the stream it goes to shows color.
+        Never wrapped, so each pastes as it stands. `color` says whether the
+        stream it goes to shows color.
         """
-        label = "Try".ljust(LABEL_COLUMN_WIDTH)
+        label = label_word.ljust(LABEL_COLUMN_WIDTH)
         if color:
-            label = BOLD + "Try" + RESET + label[len("Try") :]
+            label = BOLD + label_word + RESET + label[len(label_word) :]
         lines = []
         for position, command in enumerate(commands):
             if position == 0:
@@ -460,14 +461,16 @@ class Terminal:
                 lines.append(" " * LABEL_COLUMN_WIDTH + command)
         return "\n".join(lines)
 
-    def show_commands(self, commands: tuple[str, ...]) -> None:
-        """Write commands to copy to standard output under a "Try" label, one per line and never wrapped.
+    def show_commands(self, commands: tuple[str, ...], label_word: str = "Try") -> None:
+        """Write commands to standard output under a "Try" label, one per line and never wrapped.
 
         The same layout as a failure's commands, for a command that succeeded
-        and has a next step to suggest, such as opening what it made.
+        and has a next step to suggest, such as opening what it made. A plan
+        that shows the commands goodall is about to run labels them "Runs"
+        instead (goodall.administrator_install).
         """
         self.start_output_block()
-        self.standard_output.write(self.commands_paragraph(commands, self.output_color) + "\n")
+        self.standard_output.write(self.commands_paragraph(commands, self.output_color, label_word) + "\n")
 
     def show_hook_message(self, message: str) -> None:
         """Write a message for Claude Code to show the person, as one unwrapped line on standard error.
