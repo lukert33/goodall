@@ -78,7 +78,8 @@ of the status line, which items are enabled, the list of workstreams and
 which is the main one all come from the Python (`src/goodall/icon_state.py`).
 To change what the icon says, change the Python. What the helper does
 decide (the line shown while a command runs, when a failure shows, what
-Quit goodall does first) is in `MenuModel.swift`, and
+Quit goodall does first, and asking for notification permission only once
+per run) is in `MenuModel.swift`, and
 `tests/test_menu_bar_icon_model.py` tests it by running it.
 
 It asks goodall for the state:
@@ -127,7 +128,8 @@ The document is printed either way.
   ],
   "enabled": {"record_work_block": false, "pause": true, "stop_recording": true},
   "setup": {"usable": true, "reason": null},
-  "watch_folder": "/Volumes/EvalLogs/goodall-pilot/work-blocks"
+  "watch_folder": "/Volumes/EvalLogs/goodall-pilot/work-blocks",
+  "ask_notification_permission": true
 }
 ```
 
@@ -143,9 +145,80 @@ The document is printed either way.
 | `enabled` | Which menu items make sense now: `record_work_block`, `pause`, `stop_recording`. All false when setup is not usable. |
 | `setup` | `usable` is false when goodall cannot record in this account at all, for example with no local settings or an unreachable log directory. `reason` is then one sentence for a person, which points at `goodall status`; otherwise `null`. |
 | `watch_folder` | The folder whose changes mean "ask again": the one holding `active-work-block.json` and `pause.json`, or, before the first work block has made that folder, the log directory it will appear in. `null` when setup is not usable. |
+| `ask_notification_permission` | `true` when setup is usable, `false` otherwise. The first time the helper reads `true` in a run, it asks macOS whether goodall may show notifications (see "Notifications" below). |
 
 Nothing in `status_line` or `setup.reason` says "eval": the icon shows them
 as they are.
+
+## Notifications
+
+The helper also shows goodall's notifications, under goodall's own name.
+Goodall shows one whenever recording starts or stops without the person's
+own command: signing in or out, a script or schedule, or goodall closing a
+work block by itself ([work-block-endings.md](work-block-endings.md) lists
+each and its words). A menu item is the person's own command, so the menu
+never causes one. Goodall never uses `osascript`, whose notifications come
+from Script Editor and are often dropped (ADR 0024).
+
+**How goodall hands one over.** Goodall runs the helper's own program a
+second time, through its runner:
+
+```sh
+/Applications/goodall.app/Contents/MacOS/goodall-menu-bar-icon --notify "Recording started" "On research, because you signed in."
+```
+
+That second process posts the notification and exits at once. It draws no
+icon, so it works the same whether or not the icon is running, and macOS
+counts it as the same application, so the permission is goodall.app's
+alone. The words are goodall's (`src/goodall/notifications.py`); the
+helper only passes them on. Its exit code tells goodall what happened:
+
+| Exit code | Meaning | What goodall does |
+| --- | --- | --- |
+| `0` | Shown | nothing more |
+| `1` | macOS did not answer, or refused the notification | a warning with the reason |
+| `2` | Not given exactly a title and a body | a warning (a mistake in goodall) |
+| `3` | macOS is not letting goodall show notifications | a warning pointing at System Settings > Notifications > goodall |
+| `4` | macOS has not asked yet | a warning saying to bring the icon back with `goodall start` and choose Allow |
+
+A notification that is not shown is never more than a warning: the work
+block has started or ended by then.
+
+Two other ways were compared on 2026-11-27 and set aside:
+
+- `open -g /Applications/goodall.app --args --notify ...`. `open` passes
+  `--args` only to an instance it launches; one already running gets
+  nothing (seen on this Mac). `open -n` does launch a second instance with
+  the arguments, but `open` exits 0 before the helper has tried, so goodall
+  could not warn when a notification failed. It is the fallback if a
+  directly run helper turns out not to be allowed to post.
+- A file in the folder the icon watches. It reaches nobody while the icon
+  is not running, which is exactly when a sign-in start happens, and the
+  helper would need logic to read, show and delete files.
+
+**When macOS asks for permission.** The question is macOS's own; goodall
+adds no dialog of its own. macOS asks only once: a question dismissed or
+left unanswered counts as no, and only System Settings > Notifications >
+goodall changes it (spike `goodall-fs9.29`). So the helper asks when the
+icon starts and `goodall icon-state` first says `ask_notification_permission`
+is true, which is once goodall is set up in the account: the setup page
+can say beforehand that the question is coming, and the person is at the
+screen. It never asks from `--notify`, because a background moment is
+exactly when nobody may be watching. When macOS already has an answer,
+asking again shows nothing.
+
+**Known gaps.**
+
+- Not seen on a Mac yet: a notification shown by a directly run helper.
+  On 2026-11-27 a build in a scratch folder, run directly and through
+  `open -n`, both reported that macOS had not asked yet (exit code 4);
+  posting one needs a person to answer macOS's question first.
+- Untested: `/Applications`, a standard account, and whether an ad-hoc
+  signed rebuild keeps the permission given to the build before it.
+- Clicking a notification opens goodall.app. With the icon running, that
+  is the running icon. With no icon running, macOS starts a new one
+  without `GOODALL_COMMAND`, whose menu says it was not told where goodall
+  is and offers only Quit goodall.
 
 ## How the helper finds goodall
 
@@ -209,6 +282,21 @@ The icon appears and the terminal stays busy; press Control-C, or choose
 **Quit goodall**, to end it. Run `goodall start` and `goodall stop` in
 another terminal and watch the icon follow.
 
+Trap: in an account where goodall is set up, the icon asks macOS for
+notification permission when it starts, and macOS remembers the answer
+under the bundle identifier, which every build shares. Dismissing the
+question from a test build counts as no for the installed one too. Answer
+it, or try the icon in an account where goodall is not set up.
+
+To try a notification by hand, run the second process goodall runs; it
+prints why and exits non-zero if macOS would not show it:
+
+```sh
+menu-bar-icon/build/goodall.app/Contents/MacOS/goodall-menu-bar-icon \
+    --notify "goodall test" "A test notification. Nothing is recording."
+echo $?
+```
+
 To try it the way `goodall start` will find it, from an administrator
 account:
 
@@ -228,13 +316,15 @@ Remove it again with `rm -rf /Applications/goodall.app` after choosing
   goodall** is not undone). Both belong to onboarding.
 - **Shipping.** How the built helper travels inside goodall's package, and
   what that does to the package's platform tag, is not decided (ADR 0024).
-- **Notifications.** A background start or stop will show a notification
-  under goodall's name from this same helper. The bundle is named and
-  identified for that, but the helper sends none yet.
+- **Starting at sign-in.** The notifications for a sign-in start and a
+  sign-out stop are built (`--background sign-in`, `--background
+  sign-out`), but nothing passes them yet.
 - **The timeout** for mixed account mode, and its "Keep recording"
   notification.
-- **Settings…** needs the setup page.
-- **`goodall doctor`** does not check the helper yet.
+- **Settings…** needs the setup page, which should also say, before the
+  icon first starts, that macOS is about to ask about notifications.
+- **`goodall doctor`** does not check the helper yet, nor whether goodall
+  may show notifications.
 - **Tried by a person once.** On 2026-11-27 every menu item was clicked
   against a throwaway eval, in light and dark menu bars, from a development
   account. It has not been run in a standard account or from a LaunchAgent.
