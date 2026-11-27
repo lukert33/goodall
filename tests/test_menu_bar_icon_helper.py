@@ -73,6 +73,38 @@ def test_the_recording_look_is_orange() -> None:
     assert ".systemRed" not in source
 
 
+def test_the_line_shown_while_a_command_runs_says_what_it_is_doing() -> None:
+    # The owner's copy note of 2026-11-27, from clicking the menu: "work" is
+    # a word with a meaning in goodall (a work block), so the menu does not
+    # say "Working…" while a command runs. Each command names what it does.
+    source = (HELPER_FOLDER / "main.swift").read_text()
+    assert "Working" not in source
+    for busy_line in ["Preparing to record…", "Pausing…", "Stopping…", "Opening settings…"]:
+        assert f'"{busy_line}"' in source
+
+
+def test_the_menu_is_refilled_in_place_so_an_open_menu_shows_a_finished_command() -> None:
+    # Found by clicking on 2026-11-27: a menu opened while a command ran kept
+    # its busy line after the command finished, because each redraw handed
+    # the icon a new menu and an open menu goes on showing the old one. The
+    # helper makes one menu at startup and refills that same menu instead.
+    source = (HELPER_FOLDER / "main.swift").read_text()
+    assert source.count("statusItem.menu =") == 1
+    assert "menu.removeAllItems()" in source
+
+
+def test_the_busy_line_stays_until_goodall_has_said_what_the_command_changed() -> None:
+    # Found by clicking on 2026-11-27: after Stop recording, an open menu
+    # flashed the old "Recording ..." line before settling on "Not
+    # recording", because the busy line was cleared while the helper still
+    # held goodall's answer from before the command. It is cleared only where
+    # a fresh answer is drawn, in askGoodallForState.
+    source = (HELPER_FOLDER / "main.swift").read_text()
+    assert source.count("busyLine = nil") == 1
+    ask_for_state = source.split("func askGoodallForState(")[1].split("\n    func ")[0]
+    assert "busyLine = nil" in ask_for_state
+
+
 needs_swift = pytest.mark.skipif(
     sys.platform != "darwin" or shutil.which("swiftc") is None or shutil.which("codesign") is None,
     reason="building the menu bar icon's helper needs macOS with the Swift compiler",

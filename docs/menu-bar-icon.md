@@ -37,6 +37,10 @@ work. It goes away when you open the menu.
 
 - Items that make no sense right now are gray: you cannot pause when nothing
   is recording, or record while a work block is already active.
+- While a command runs, the first line says what it is doing ("Preparing to
+  record…", "Pausing…", "Stopping…", "Opening settings…") and every item is
+  gray, so a second click starts nothing. An open menu changes to the new
+  state as soon as goodall has said what the command changed.
 - The menu never asks a question, and it never opens a window or a dialog.
 - **Quit goodall** stops any recording cleanly, exactly as **Stop recording**
   would, and then removes the icon. If stopping fails the icon stays, because
@@ -226,7 +230,8 @@ Remove it again with `rm -rf /Applications/goodall.app` after choosing
   notification.
 - **Settings…** needs the setup page.
 - **`goodall doctor`** does not check the helper yet.
-- **Not tried by a person.** The helper has been built and run, and watched
-  asking goodall for its state after each change made in a terminal. Nobody
-  has yet looked at the icon or clicked its menu, and it has not been run in
-  a standard account or from a LaunchAgent.
+- **Tried by a person once.** On 2026-11-27 every menu item was clicked
+  against a throwaway eval, in light and dark menu bars, from a development
+  account. It has not been run in a standard account or from a LaunchAgent.
+  What the menu does when clicked is still checked only by hand: the tests
+  read the Swift as text and build it, and never run it.
