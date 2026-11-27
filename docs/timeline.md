@@ -196,7 +196,9 @@ Read from `activitywatch/` in the log directory (`docs/activitywatch-rules.md`,
    its category and the person's decision.
 3. A work block is not an entry. Each ended one is a row of `work_blocks`,
    including one whose record is still waiting in the log directory. A work
-   block still running is not in the timeline.
+   block still running is not in the timeline. Neither is a deleted work
+   block (`goodall delete`): its record no longer says when it ran, so it is
+   passed over, and that is not a problem to report.
 
 ## Not in this version
 

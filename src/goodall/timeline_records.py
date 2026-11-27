@@ -18,7 +18,8 @@ TIMELINE_RULES_VERSION (goodall.timeline_entries).
 3. A work block is not an entry. Each ended one is kept beside the
    entries, with when it ran and how it ended, so that a reader can ask
    for the entries of one work block. A work block still running is not
-   in the timeline.
+   in the timeline, and neither is a deleted work block (`goodall delete`,
+   ADR 0021), whose record no longer says when it ran.
 
 What is kept is never the words: no body, no workstream's name. The
 pointer leads to the record's file.
@@ -53,6 +54,10 @@ def read_record_files[RecordType](
 
     A file that cannot be read, or is not a record, becomes a problem
     naming the file and is left out.
+
+    A deleted work block (`goodall delete`) sits in `work-blocks/` in place
+    of the record it replaced. That is as it should be, and it says nothing
+    of when the work block ran, so it is passed over without a problem.
     """
     found: list[tuple[RecordType, RawRecordPointer]] = []
     folder = record_repo / folder_name
@@ -61,9 +66,13 @@ def read_record_files[RecordType](
     for record_file in sorted(folder.glob(pattern)):
         relative_path = PurePosixPath(folder_name, record_file.name)
         try:
-            record = parse(record_file.read_text(encoding="utf-8")).record
+            text = record_file.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
-            record = None
+            problems.append(f"The record {relative_path} in the record repo could not be read.")
+            continue
+        if pattern == "*.json" and records.json_record_type(text) == records.DELETED_WORK_BLOCK_RECORD_TYPE:
+            continue
+        record = parse(text).record
         if record is None:
             problems.append(f"The record {relative_path} in the record repo could not be read.")
             continue

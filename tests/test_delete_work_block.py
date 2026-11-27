@@ -709,3 +709,33 @@ def test_what_a_work_block_captured_is_found_the_same_way_in_both_account_modes(
     assert {"kind": "agent_session_copies", "files": 3} in previews["mixed"][0]
     assert previews["mixed"][1] == [{"app_family": "Claude", "id": DELETED_SESSION}]
     assert files_left["mixed"] == files_left["dedicated"] == ([], [], [])
+
+
+# ---------------------------------------------------------------------------
+# The timeline, which is derived from every raw record
+
+
+def record_an_afternoon_work_block(eval_account: EvalAccount, monkeypatch: pytest.MonkeyPatch) -> GoodallRun:
+    """Start, work in another Claude session, and stop; return what `goodall stop` printed."""
+    run_goodall(eval_account, monkeypatch, ["start"], AFTERNOON_START)
+    write_claude_session(eval_account, KEPT_SESSION, [AFTERNOON_START + timedelta(minutes=5)])
+    run_hook(eval_account, monkeypatch, KEPT_SESSION, AFTERNOON_START + timedelta(minutes=6))
+    stop = run_goodall(eval_account, monkeypatch, ["stop"], AFTERNOON_END)
+    assert stop.exit_code == 0, stop.standard_error
+    return stop
+
+
+def test_after_a_deletion_a_later_goodall_stop_and_a_rebuild_report_no_timeline_problem(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    eval_account = make_eval_account(tmp_path)
+    work_block_id = record_a_morning_work_block(eval_account, monkeypatch)
+    run_goodall(eval_account, monkeypatch, ["delete", work_block_id, "--delete-captured-data"], MORNING_END)
+
+    stop = record_an_afternoon_work_block(eval_account, monkeypatch)
+    rebuild = run_goodall(eval_account, monkeypatch, ["timeline", "--rebuild", "--json"], AFTERNOON_END)
+
+    assert "could not be read" not in stop.everything_printed
+    assert "timeline" not in stop.standard_error
+    assert rebuild.exit_code == 0, rebuild.everything_printed
+    assert json.loads(rebuild.standard_output)["warnings"] == []
