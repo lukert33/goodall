@@ -17,11 +17,18 @@ goodall copies transcripts out of Claude Code's projects folder, which is
 inside the home folder by default and holds a person's private prompts.
 HOME is pointed at a fresh empty folder too, because the sweep also looks
 in the default `~/.claude/projects` whatever CLAUDE_CONFIG_DIR says.
+
+The folder goodall looks in for the menu bar icon's helper is pointed at a
+fresh empty folder as well. The real one is `/Applications`, shared by the
+whole Mac, and a developer who has the helper installed there would
+otherwise have every `goodall start` in a test try to start it.
 """
 
 from pathlib import Path
 
 import pytest
+
+from goodall import menu_bar_icon
 
 
 @pytest.fixture(autouse=True)
@@ -51,3 +58,9 @@ def not_inside_claude_code(monkeypatch: pytest.MonkeyPatch) -> None:
 def isolated_home_folder(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> None:
     home_folder = tmp_path_factory.mktemp("isolated-home")
     monkeypatch.setenv("HOME", str(Path(home_folder)))
+
+
+@pytest.fixture(autouse=True)
+def isolated_applications_folder(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> None:
+    applications_folder = tmp_path_factory.mktemp("isolated-applications")
+    monkeypatch.setattr(menu_bar_icon, "APPLICATIONS_FOLDER", Path(applications_folder))

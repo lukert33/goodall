@@ -43,11 +43,18 @@ These commands work today:
 | `goodall timeline` | Shows one ended work block in time order: who did what and when, with no private text ([docs/timeline.md](docs/timeline.md)). |
 | `goodall doctor` | Checks the account and setup, and changes nothing. |
 | `goodall hook` | Called by Claude Code, not by people. It is the prompt gate, and it leaves heartbeats. |
+| `goodall icon-state` | Called by the menu bar icon, every minute. Says whether goodall is recording, paused or not recording, and changes nothing ([docs/menu-bar-icon.md](docs/menu-bar-icon.md)). |
 
-These commands exist but are not built yet: `onboard` (setup), `sync`, `logs`,
-`export scout`, `dry-run`, `teardown` and `release`. Each tells you so when you
-run it, and `goodall onboard` says how to do its job by hand.
+These commands exist but are not built yet: `onboard` (setup), `settings`,
+`sync`, `logs`, `export scout`, `dry-run`, `teardown` and `release`. Each tells
+you so when you run it, and `goodall onboard` and `goodall settings` say how to
+do their jobs by hand.
 The full by-hand steps are in [docs/setup-by-hand.md](docs/setup-by-hand.md).
+
+The **menu bar icon** shows whether goodall is recording and starts, pauses
+and stops a work block from its menu. Its first version can be built and
+tried by hand, and nothing installs it yet:
+[docs/menu-bar-icon.md](docs/menu-bar-icon.md).
 
 For an eval that includes ActivityWatch, goodall copies what apps and windows
 were in use into the log directory when a work block ends
