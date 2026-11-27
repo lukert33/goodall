@@ -5,8 +5,9 @@ is drawn by a small Swift helper, an application named goodall.app
 (ADR 0024; its source is in `menu-bar-icon/`). "Quit goodall" in its menu
 removes the icon, and the ADR says it returns at the next sign-in or when
 the person runs `goodall start`. This module is the second half of that.
-Starting it at sign-in is the LaunchAgent's job, which onboarding will
-install; nothing here installs anything.
+Starting it at sign-in is the job of a LaunchAgent that the administrator
+install stages (goodall.system_places, ADR 0022); nothing here installs
+anything.
 
 Decisions a reader would otherwise reverse-engineer:
 

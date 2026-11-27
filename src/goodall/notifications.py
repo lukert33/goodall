@@ -12,8 +12,10 @@ How goodall knows a start or stop is "background":
 - Signing in and out, and scripts and schedules, say so. They run
   `goodall start`, `goodall stop` or `goodall pause` with `--background`
   and a reason (`BACKGROUND_STARTS`, `BACKGROUND_STOPS`,
-  `BACKGROUND_PAUSES`). Nothing passes `sign-in` or `sign-out` yet: the
-  LaunchAgent that will is a later issue.
+  `BACKGROUND_PAUSES`). `goodall sign-in`, which the first-run script
+  runs at every sign-in (goodall.sign_in), starts with `sign-in`. Nothing
+  passes `sign-out` yet: whether anything can run dependably at sign-out
+  waits for the hand test (`goodall-ayy.11`).
 - Goodall's own endings count without being told. Settling
   (goodall.work_block_commands.settle), which `goodall start`, `stop`,
   `pause` and `status` all do first, closes a work block left idle past the

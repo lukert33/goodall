@@ -69,6 +69,13 @@ Claude, Antigravity or Codex sign-ins.
 An eval account cannot install software for the whole Mac, so these come
 first.
 
+**Or let goodall create the eval account.** The administrator install
+([administrator-install.md](administrator-install.md)) installs nothing
+for you, but after the installs below, and goodall itself in
+`/usr/local/goodall`, it creates the eval account and stages its first
+sign-in setup, which then does Parts 4 and 5 by itself. **Not yet
+confirmed** on a real Mac.
+
 - [ ] Create the eval account: System Settings, Users & Groups, Add User,
       with the account type **Standard**.
 - [ ] Install, for every account on the Mac: `git`, ActivityWatch, and

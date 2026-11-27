@@ -230,8 +230,9 @@ so it cannot look goodall up, and it never searches.
 - `goodall start` sets the variable when it brings the icon back: it names
   the `goodall` beside the Python that is running it, or failing that the
   one on its `PATH`.
-- The LaunchAgent that will start the icon at sign-in must set it too, in
-  its `EnvironmentVariables`. That LaunchAgent is not built yet.
+- The LaunchAgent that starts the icon at sign-in sets it too, in its
+  `EnvironmentVariables`, to `/usr/local/goodall/bin/goodall`. The
+  administrator install stages it ([administrator-install.md](administrator-install.md)).
 
 A helper started without the variable, for example by double-clicking
 goodall.app, says so in its menu and offers only **Quit goodall**.
@@ -310,15 +311,18 @@ Remove it again with `rm -rf /Applications/goodall.app` after choosing
 
 ## What is not built yet
 
-- **Installing.** Nothing copies goodall.app to `/Applications`, and
-  nothing installs the LaunchAgent that starts it at sign-in and brings it
-  back if it dies (`KeepAlive` with `SuccessfulExit` false, so **Quit
-  goodall** is not undone). Both belong to onboarding.
+- **Installing.** Nothing copies goodall.app to `/Applications`; an
+  administrator does, by hand. The LaunchAgent that starts it at sign-in
+  and brings it back if it dies (`KeepAlive` with `SuccessfulExit` false,
+  so **Quit goodall** is not undone) is staged by the administrator install
+  ([administrator-install.md](administrator-install.md)), and has not been
+  run on a real Mac yet.
 - **Shipping.** How the built helper travels inside goodall's package, and
   what that does to the package's platform tag, is not decided (ADR 0024).
-- **Starting at sign-in.** The notifications for a sign-in start and a
+- **Stopping at sign-out.** The notifications for a sign-in start and a
   sign-out stop are built (`--background sign-in`, `--background
-  sign-out`), but nothing passes them yet.
+  sign-out`). `goodall sign-in` passes the first at every sign-in to the
+  eval account; nothing passes the second yet.
 - **The timeout** for mixed account mode, and its "Keep recording"
   notification.
 - **Settings…** needs the setup page, which should also say, before the

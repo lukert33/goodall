@@ -61,6 +61,14 @@ _Avoid_: Project (for an eval), project config, project account, project setting
 The setup goodall completes by itself the first time a person signs in to a new eval account, from pieces the administrator install put in place beforehand (ADR 0022).
 _Avoid_: First-login setup, first run, bootstrap
 
+**Administrator install**:
+What `goodall onboard` does in an administrator account when the answers file asks for an eval account: it stages first sign-in setup where only root can change it and creates the eval account as a standard account, running each privileged command with the terminal handed over (ADR 0022, docs/administrator-install.md). It sets up nothing in the administrator account itself.
+_Avoid_: Admin install, system install, root setup
+
+**First-run script**:
+The short script, owned by root, that a LaunchAgent runs at every sign-in to every account. It runs `goodall sign-in`, which does nothing outside the eval account (ADR 0022).
+_Avoid_: Login script, login hook, startup script
+
 ### Recording
 
 **Recording**:

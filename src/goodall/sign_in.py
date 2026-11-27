@@ -1,7 +1,7 @@
 """`goodall sign-in`: what the first-run script does at every sign-in to every account (ADR 0022).
 
 Called by `cli.main`. The first-run script, which the administrator install
-staged owned by root, is three lines that run this command
+staged owned by root, is a few lines that run this command
 (goodall.system_places), so every decision is here, in Python, where it can
 be tested and read. launchd runs that script at every sign-in to every
 account on the Mac, through the LaunchAgent in `/Library/LaunchAgents`.
