@@ -25,8 +25,10 @@ What each command does, in order:
 - `goodall pause`: end the active work block exactly as `goodall stop`
   does, then remember that recording is paused and which work block was
   paused (goodall.work_blocks, `pause.json`). There is no paused state
-  inside a work block (ADR 0021): while paused goodall is not recording
-  and the prompt gate is closed. `goodall start` while paused starts a NEW
+  inside a work block (ADR 0021): while paused goodall is not recording,
+  so in dedicated account mode the prompt gate is closed, and in mixed
+  account mode, where the gate is off, prompts go through unrecorded as at
+  any time outside a work block. `goodall start` while paused starts a NEW
   work block whose record names the paused one in `continues_work_block`,
   on the paused one's workstream unless --workstream says another, and
   forgets the pause. `goodall stop` while paused only forgets the pause,
@@ -84,12 +86,13 @@ from goodall import (
 )
 from goodall.eval_config import (
     EvalForThisAccount,
+    activitywatch_is_used,
     activitywatch_settings_missing_failure,
     missing_activitywatch_settings,
     read_eval_for_this_account,
 )
 from goodall.folders import describe_folder_problem, log_directory_unreachable_failure, record_repo_missing_failure
-from goodall.local_settings import read_local_settings
+from goodall.local_settings import ACCOUNT_MODES, MIXED_ACCOUNT_MODE, read_local_settings
 from goodall.record_repo import write_record
 from goodall.runner import Command, Runner
 from goodall.terminal import Failure, Terminal
@@ -155,6 +158,7 @@ def run_start(
         workstream=workstream,
         started_at=now,
         machine=observe_machine_facts(runner),
+        account_mode=eval_reading.local_settings.account_mode,
         continues_work_block=continues_work_block,
     )
     created = work_blocks.create_marker(log_directory, running_record)
@@ -408,7 +412,7 @@ def run_pause(terminal: Terminal, runner: Runner, clock: Clock) -> int:
     if active is not None:
         end_active_work_block(terminal, runner, eval_reading, active, now, "Paused")
         work_blocks.write_pause(log_directory, active.id, active.record.workstream, now)
-        terminal.show_paragraph(RECORDING_IS_PAUSED + HOW_TO_RECORD_AGAIN)
+        terminal.show_paragraph(recording_is_paused(eval_reading) + HOW_TO_RECORD_AGAIN)
         return exit_codes.SUCCESS
 
     # Nothing to end, but a work block that settling has just closed, or an
@@ -417,7 +421,7 @@ def run_pause(terminal: Terminal, runner: Runner, clock: Clock) -> int:
     forgotten = marker_before_settling
     if isinstance(forgotten, work_blocks.RunningWorkBlock) and forgotten.is_overdue(now) and settling.closings:
         work_blocks.write_pause(log_directory, forgotten.id, forgotten.record.workstream, now)
-        terminal.show_paragraph(RECORDING_IS_PAUSED + HOW_TO_RECORD_AGAIN)
+        terminal.show_paragraph(recording_is_paused(eval_reading) + HOW_TO_RECORD_AGAIN)
         return exit_codes.SUCCESS
     pause = work_blocks.read_pause(log_directory)
     if pause is not None:
@@ -430,10 +434,22 @@ def run_pause(terminal: Terminal, runner: Runner, clock: Clock) -> int:
     return exit_codes.ERROR
 
 
-# Said after a pause, so the person knows what it means and both ways out of it.
-RECORDING_IS_PAUSED = (
-    "Recording is paused: goodall is not recording, and Claude Code refuses prompts until you record again. "
-)
+def recording_is_paused(eval_reading: EvalForThisAccount) -> str:
+    """The sentence said after a pause, so the person knows what it means for their prompts.
+
+    That depends on the account mode (ADR 0021): the prompt gate refuses
+    prompts in dedicated account mode, and is off in mixed account mode,
+    where a prompt sent while paused goes through and is not recorded.
+    """
+    if eval_reading.local_settings.account_mode == MIXED_ACCOUNT_MODE:
+        return (
+            "Recording is paused: goodall is not recording, and what you do with Claude Code until you record "
+            "again is not recorded. "
+        )
+    return "Recording is paused: goodall is not recording, and Claude Code refuses prompts until you record again. "
+
+
+# Said after a pause as well: both ways out of it.
 HOW_TO_RECORD_AGAIN = (
     "To record again, run goodall start, which starts a new work block that continues the paused one. To finish "
     "instead, run goodall stop."
@@ -458,7 +474,7 @@ def end_active_work_block(
     log_directory = eval_reading.local_settings.log_directory.path
     telemetry = telemetry_receivers.finish_telemetry(runner, log_directory, active.id, now)
     ended_record = end_work_block(
-        log_directory, active, now, "clean", telemetry, eval_reading.eval_config.activitywatch
+        log_directory, active, now, "clean", telemetry, activitywatch_is_used_by(eval_reading)
     )
     copies = agent_session_copies.copy_work_block(log_directory, ended_record.id, now)
     copy_warnings = []
@@ -535,7 +551,7 @@ def end_work_block(
     has stopped (goodall.telemetry_receivers.finish_telemetry). The order
     matters: first the note that its agent sessions are still to be copied
     (goodall.agent_session_copies) and, when the eval includes ActivityWatch
-    (`activitywatch_included`), the note that its data is to be copied
+    and the account mode uses it (`activitywatch_included`), the note that its data is to be copied
     (goodall.activitywatch_copies), then the record, and the marker goes
     last, so neither the copies nor the work block are ever lost in between.
     Returns the finished record.
@@ -738,7 +754,7 @@ def settle(
             marker.last_heartbeat_at,
             "inferred",
             telemetry,
-            eval_reading.eval_config.activitywatch,
+            activitywatch_is_used_by(eval_reading),
         )
         closings.append(
             f"Your work block on {marker.record.workstream}, started {describe_moment(marker.record.started_at)}, "
@@ -822,7 +838,7 @@ def close_damaged_work_block(
     recovered = dataclasses.replace(recovered, telemetry=telemetry)
     assert recovered.ended_at is not None
     agent_session_copies.note_work_block_to_copy(log_directory, recovered.id, recovered.started_at, recovered.ended_at)
-    if eval_reading.eval_config.activitywatch:
+    if activitywatch_is_used_by(eval_reading):
         activitywatch_copies.note_copy_wanted(log_directory, recovered.ended_at)
     work_blocks.save_unrecorded(log_directory, recovered)
     if recovered.workstream == records.UNKNOWN_WORKSTREAM:
@@ -858,7 +874,7 @@ def recover_work_block(
       even that, None is returned and nothing is recorded, because any
       start goodall wrote would be invented and would look real.
     - The machine facts, if lost, are observed again now, on what is the
-      same Mac.
+      same Mac. So is the account mode, read from local settings.
     """
     values = damaged.values
     workstream = values.get("workstream")
@@ -873,6 +889,9 @@ def recover_work_block(
         started_at = datetime.fromisoformat(started_at_text)
     if started_at is None:
         return None
+    account_mode = values.get("account_mode")
+    if account_mode not in ACCOUNT_MODES:
+        account_mode = eval_reading.local_settings.account_mode
     work_block_id = values.get("id")
     if not isinstance(work_block_id, str) or not records.RECORD_ID_PATTERN.fullmatch(work_block_id):
         work_block_id = records.make_record_id(started_at, contributor)
@@ -889,6 +908,7 @@ def recover_work_block(
         end_state="abnormal",
         machine=recover_machine_facts(runner, values.get("machine")),
         claude_sessions=work_blocks.read_claude_sessions(log_directory, work_block_id),
+        account_mode=account_mode,
     )
     if records.validate_record(recovered):
         return None
@@ -938,10 +958,11 @@ def copy_activitywatch(
     """Copy ActivityWatch's data into the log directory, if the eval includes it and a copy is wanted.
 
     For an eval without ActivityWatch nothing is asked or written (ADR
-    0016). Local settings that lack its port or identifier are a problem
-    like any other: the copy stays wanted until they are recorded.
+    0016), and nor is it in mixed account mode, which leaves ActivityWatch
+    out (ADR 0021). Local settings that lack its port or identifier are a
+    problem like any other: the copy stays wanted until they are recorded.
     """
-    if not eval_reading.eval_config.activitywatch:
+    if not activitywatch_is_used_by(eval_reading):
         return activitywatch_copies.CopyResult()
     local_settings = eval_reading.local_settings
     log_directory = local_settings.log_directory.path
@@ -957,6 +978,11 @@ def copy_activitywatch(
     return activitywatch_copies.copy_if_wanted(
         runner, log_directory, port, device_id, local_settings.settings_file, now
     )
+
+
+def activitywatch_is_used_by(eval_reading: EvalForThisAccount) -> bool:
+    """True when ActivityWatch's data is part of this account's record (goodall.eval_config.activitywatch_is_used)."""
+    return activitywatch_is_used(eval_reading.local_settings, eval_reading.eval_config)
 
 
 def show_activitywatch_copy(terminal: Terminal, activitywatch: activitywatch_copies.CopyResult) -> None:

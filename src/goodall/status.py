@@ -46,12 +46,17 @@ In the order goodall checks:
 Each result is built once as records and then shown either as text (results
 on standard output, failures and warnings on standard error) or as one JSON
 document on standard output, so the two renderings cannot drift apart. The
-JSON document always has the keys `work_block_active`, `eval`,
+JSON document always has the keys `work_block_active`, `account_mode`, `eval`,
 `contributor`, `work_block`, `ended_work_blocks`,
 `work_blocks_waiting_for_workstream`, `paused`, `paused_work_block`,
-`warnings` and `failures`; `eval` and `contributor` are null whenever
-`failures` is not empty, `work_block` is null whenever no work block is
-active, and `paused_work_block` is null whenever `paused` is false.
+`warnings` and `failures`; `eval`, `contributor` and `account_mode` are null
+whenever `failures` is not empty, `work_block` is null whenever no work
+block is active, and `paused_work_block` is null whenever `paused` is false.
+
+`account_mode` is `dedicated` or `mixed`, as local settings say now
+(ADR 0021). It is shown because it changes what "no work block is active"
+means for the person, paused or not: in dedicated account mode the prompt
+gate refuses their prompts, in mixed account mode it does not.
 
 The folder checks themselves live in goodall.folders, because
 `goodall doctor` asks the same questions and must word the answers the same
@@ -125,6 +130,7 @@ def show_status(
     facts = [
         ("Eval", eval_for_this_account.eval_config.name),
         ("Contributor", f"{contributor.display_name} ({contributor.id})"),
+        ("Account mode", eval_for_this_account.local_settings.account_mode),
     ]
     if active is None and pause is not None:
         facts.append(("Workstream", pause.workstream))
@@ -252,6 +258,7 @@ def status_document(
         warning_documents.append(warning.as_json())
     return {
         "work_block_active": active is not None,
+        "account_mode": eval_for_this_account.local_settings.account_mode,
         "eval": {"name": eval_for_this_account.eval_config.name},
         "contributor": {
             "id": contributor.id,
@@ -273,9 +280,9 @@ def report_failures(terminal: Terminal, failures: list[Failure], as_json: bool) 
 
     The JSON document has the same keys whatever went wrong. No work block
     can be active while goodall is failing, so `work_block_active` is false
-    and `work_block` null, and `eval` and `contributor` are null because
-    goodall has not confirmed them. `paused` is false for the same reason:
-    goodall could not look.
+    and `work_block` null, and `eval`, `contributor` and `account_mode` are
+    null because goodall has not confirmed them. `paused` is false for the
+    same reason: goodall could not look.
     """
     if as_json:
         failure_documents = []
@@ -284,6 +291,7 @@ def report_failures(terminal: Terminal, failures: list[Failure], as_json: bool) 
         terminal.write_json(
             {
                 "work_block_active": False,
+                "account_mode": None,
                 "eval": None,
                 "contributor": None,
                 "work_block": None,

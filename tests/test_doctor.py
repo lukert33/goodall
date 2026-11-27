@@ -958,6 +958,64 @@ def test_the_account_check_also_recognizes_administrators_on_linux(
     assert check_document(document, "eval_account.standard_account")["status"] == expected_status
 
 
+# Mixed account mode (ADR 0021): the account is one the person also uses for
+# other things, so the eval account's rules are advice there, not a requirement.
+MIXED_ACCOUNT_MODE_LINE = 'account_mode = "mixed"\n'
+
+
+def test_in_mixed_account_mode_an_administrator_account_is_a_warning_that_recommends_an_eval_account(
+    healthy_account: EvalAccount,
+) -> None:
+    healthy_account.settings_file.write_text(healthy_account.settings_text() + MIXED_ACCOUNT_MODE_LINE)
+    runner = healthy_runner()
+    runner.answer(ACCOUNT_GROUPS_COMMAND, standard_output=ADMINISTRATOR_ACCOUNT_GROUPS)
+
+    exit_code, standard_output, _ = run_goodall(["doctor"], runner)
+
+    assert exit_code == exit_codes.SUCCESS
+    assert "  warn        This macOS user account is a standard account, not an\n" in standard_output
+    report_text = " ".join(standard_output.split())
+    assert "is an administrator (it is in the admin group)" in report_text
+    assert "mixed account mode" in report_text
+    assert "An eval account is the recommended setup" in report_text
+    assert standard_output.endswith("25 passed, 1 warned, 0 failed, 0 skipped, 1 unverified\n")
+
+
+def test_in_mixed_account_mode_a_standard_account_passes(healthy_account: EvalAccount) -> None:
+    healthy_account.settings_file.write_text(healthy_account.settings_text() + MIXED_ACCOUNT_MODE_LINE)
+
+    exit_code, document = doctor_json()
+
+    assert exit_code == exit_codes.SUCCESS
+    assert statuses(document)["eval_account.standard_account"] == "pass"
+
+
+def test_in_mixed_account_mode_an_account_check_that_cannot_tell_is_a_warning_too(
+    healthy_account: EvalAccount,
+) -> None:
+    healthy_account.settings_file.write_text(healthy_account.settings_text() + MIXED_ACCOUNT_MODE_LINE)
+    runner = healthy_runner()
+    runner.answer(ACCOUNT_GROUPS_COMMAND, exit_code=1, standard_error="id: cannot find name\n")
+
+    exit_code, document = doctor_json(runner)
+
+    assert exit_code == exit_codes.SUCCESS
+    assert statuses(document)["eval_account.standard_account"] == "warn"
+
+
+def test_an_administrator_account_still_fails_when_local_settings_cannot_say_the_mode(
+    healthy_account: EvalAccount,
+) -> None:
+    # Dedicated account mode is the safe assumption, as it is for the prompt gate.
+    healthy_account.settings_file.write_text(healthy_account.settings_text() + 'account_mode = "mixd"\n')
+    runner = healthy_runner()
+    runner.answer(ACCOUNT_GROUPS_COMMAND, standard_output=ADMINISTRATOR_ACCOUNT_GROUPS)
+
+    _, document = doctor_json(runner)
+
+    assert statuses(document)["eval_account.standard_account"] == "fail"
+
+
 def test_a_record_repo_folder_that_is_not_a_git_repository_fails(healthy_account: EvalAccount) -> None:
     # Real git, asked about a real folder that holds the eval config but
     # was never made a repository (copied instead of cloned, say).
@@ -2524,6 +2582,30 @@ def test_activitywatch_settings_in_an_eval_without_activitywatch_are_ignored(hea
 
     assert exit_code == exit_codes.SUCCESS
     assert statuses(document)[ACTIVITYWATCH_CHECK] == "pass"
+
+
+def test_in_mixed_account_mode_doctor_says_plainly_that_activitywatch_is_not_used_and_asks_it_nothing(
+    healthy_account: EvalAccount,
+) -> None:
+    # ADR 0021: ActivityWatch records the whole account all the time, so
+    # mixed account mode leaves it out. The eval config still includes it,
+    # and local settings hold no port; neither is a failure here.
+    healthy_account.eval_config_file.write_text(EVAL_CONFIG_WITH_ACTIVITYWATCH_TEXT)
+    healthy_account.settings_file.write_text(healthy_account.settings_text() + 'account_mode = "mixed"\n')
+
+    # healthy_runner() knows no curl, so asking ActivityWatch anything fails the test.
+    exit_code, standard_output, _ = run_goodall(["doctor"])
+    _, document = doctor_json()
+
+    assert exit_code == exit_codes.SUCCESS
+    assert statuses(document)[ACTIVITYWATCH_CHECK] == "pass"
+    for check_id in statuses(document):
+        if check_id.startswith("activitywatch."):
+            assert statuses(document)[check_id] == "pass", check_id
+    report = " ".join(standard_output.split())
+    assert "ActivityWatch is not used in mixed account mode" in report
+    assert "The eval config includes ActivityWatch" in report
+    assert "This eval does not include ActivityWatch" not in report
 
 
 def test_a_broken_eval_config_skips_the_activitywatch_settings_check(healthy_account: EvalAccount) -> None:

@@ -106,9 +106,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="End the current work block, meaning to continue: the next goodall start names it.",
         description=(
             "End the current work block and remember that recording is paused. While paused goodall is not "
-            "recording, and the prompt gate is closed. goodall start then begins a new work block whose record "
-            "names the paused one, on the same workstream unless --workstream names another. goodall stop clears "
-            "the pause instead."
+            "recording, and the prompt gate is closed (in mixed account mode it stays off). goodall start then "
+            "begins a new work block whose record names the paused one, on the same workstream unless --workstream "
+            "names another. goodall stop clears the pause instead."
         ),
     )
     pause.set_defaults(command_name="pause")

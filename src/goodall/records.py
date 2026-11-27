@@ -55,6 +55,8 @@ from datetime import UTC, datetime
 from pathlib import PurePosixPath
 from typing import Any
 
+from goodall.local_settings import ACCOUNT_MODES
+
 # The version of the schemas in this file. A file with a higher number was
 # written by a newer goodall; one with a lower number needs migrating.
 SCHEMA_VERSION = 1
@@ -187,10 +189,16 @@ class WorkBlockRecord:
     a tuple, not a list, so a record cannot be changed after it is built.
     `telemetry` is one of TELEMETRY_STATES once the work block has ended, or
     None when goodall does not say (while running, and in records written
-    before goodall captured telemetry). `continues_work_block` is the id of
-    the work block this one continues: the one that was paused when this
-    one started (`goodall pause`, ADR 0021). None for a work block that
-    continues none, which is most of them.
+    before goodall captured telemetry). `account_mode` is the account mode
+    local settings named when the work block started, one of
+    goodall.local_settings.ACCOUNT_MODES (ADR 0021): an observation, like the
+    machine facts, so an analyst can tell a work block recorded in an eval
+    account from one recorded in an account also used for other things. It
+    is None only in records written before account modes existed.
+    `continues_work_block` is the id of the work block this one continues:
+    the one that was paused when this one started (`goodall pause`,
+    ADR 0021). None for a work block that continues none, which is most of
+    them.
     """
 
     schema_version: int
@@ -203,6 +211,7 @@ class WorkBlockRecord:
     machine: MachineFacts
     claude_sessions: tuple[str, ...]
     telemetry: str | None = None
+    account_mode: str | None = None
     continues_work_block: str | None = None
 
 
@@ -341,6 +350,7 @@ def build_work_block_record(
     claude_sessions: Collection[str] = (),
     suffix: str | None = None,
     telemetry: str | None = None,
+    account_mode: str | None = None,
     continues_work_block: str | None = None,
 ) -> WorkBlockRecord:
     """Build a work block record, giving it an id from the time it started.
@@ -363,6 +373,7 @@ def build_work_block_record(
         machine=machine,
         claude_sessions=tuple(claude_sessions),
         telemetry=telemetry,
+        account_mode=account_mode,
         continues_work_block=continues_work_block,
     )
 
@@ -469,10 +480,10 @@ def _render_work_block_record(record: WorkBlockRecord) -> str:
 
     Unlike TOML, JSON has null, so an empty optional field is written as null
     rather than left out: a reader sees every field the schema has. The
-    exceptions are `telemetry` and `continues_work_block`, added after
-    records were already being written: each is left out when it has nothing
-    to say, so a record without it looks exactly as before, and
-    `schema_version` did not need raising.
+    exceptions are `telemetry`, `account_mode` and `continues_work_block`,
+    added after records were already being written: each is left out when
+    it has nothing to say, so a record without it looks exactly as before,
+    and `schema_version` did not need raising.
     """
     ended_at = None
     if record.ended_at is not None:
@@ -496,6 +507,8 @@ def _render_work_block_record(record: WorkBlockRecord) -> str:
     }
     if record.telemetry is not None:
         values["telemetry"] = record.telemetry
+    if record.account_mode is not None:
+        values["account_mode"] = record.account_mode
     if record.continues_work_block is not None:
         values["continues_work_block"] = record.continues_work_block
     return json.dumps(values, indent=2, ensure_ascii=False) + "\n"
@@ -702,6 +715,7 @@ def parse_work_block_record(text: str) -> ParseResult[WorkBlockRecord]:
     machine = _read_machine_facts(reader)
     claude_sessions = reader.text_list("claude_sessions")
     telemetry = reader.optional_text("telemetry")
+    account_mode = reader.optional_text("account_mode")
     continues_work_block = reader.optional_text("continues_work_block")
     reader.report_unknown_keys()
 
@@ -723,6 +737,7 @@ def parse_work_block_record(text: str) -> ParseResult[WorkBlockRecord]:
         machine=machine,
         claude_sessions=tuple(claude_sessions),
         telemetry=telemetry,
+        account_mode=account_mode,
         continues_work_block=continues_work_block,
     )
     return ParseResult(record=work_block, problems=problems)
@@ -1028,6 +1043,12 @@ def _validate_work_block_record(
         checker.add(
             "telemetry",
             "telemetry must be captured, incomplete or missing, or left out when goodall does not say; correct it.",
+        )
+    if record.account_mode is not None and record.account_mode not in ACCOUNT_MODES:
+        checker.add(
+            "account_mode",
+            "account_mode must be dedicated or mixed, or left out in a record written before goodall recorded it; "
+            "correct it.",
         )
     checker.optional_record_id("continues_work_block", record.continues_work_block)
     if record.continues_work_block == record.id:

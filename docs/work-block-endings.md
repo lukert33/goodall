@@ -79,6 +79,9 @@ block exactly as `goodall stop` does: the end state is `clean`, the agent
 sessions are copied, and the record is written. There is no paused state
 inside a work block. While paused, goodall is simply not recording, so
 Claude Code refuses prompts, and the refusal says that recording is paused.
+That is dedicated account mode. In mixed account mode the prompt gate is
+off, so a prompt sent while paused goes through and is not recorded, as at
+any time outside a work block.
 
 What `goodall pause` adds is a small note in the log directory
 (`work-blocks/pause.json`) saying which work block was paused. Then:

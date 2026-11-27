@@ -67,6 +67,13 @@ the Claude desktop app's Code tab and Claude Code in a terminal
   workstream, with a start and an end.
 - **Prompt gate**: the check that refuses a prompt to an agent while no work
   block is active. This is deliberate: unrecorded work is the worse failure.
+  It is on in **dedicated account mode**, the recommended setup, where
+  goodall records in an eval account. In **mixed account mode**, for trying
+  goodall in a macOS user account you also use for other things, it is off:
+  no prompt is refused, and only work inside a work block is recorded. Any
+  agent conversation held during a work block is copied whatever it was
+  about. The mode is one line in local settings
+  ([docs/setup-by-hand.md](docs/setup-by-hand.md)).
 - **Transcript**: Claude Code's own file recording one conversation (a
   **Claude session**).
 - **Telemetry**: the stream of events Claude Code reports about a session as
