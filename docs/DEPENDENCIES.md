@@ -24,20 +24,19 @@ sections give the reasons and the checks behind each row.
 | [Python 3.12 or newer](#adopted-runtime) | Required | Comes with the installer below | Runs goodall. The Python that comes with macOS is too old. |
 | [An installer: uv, or an alternative](#needed-to-install) | Required to install | Administrator, if installed with Homebrew or for every account on the Mac. uv can also be installed inside one account without administrator rights. | Puts goodall and a new enough Python on the Mac. uv is the documented route; pipx or pip are allowed. Use uv 0.13.4 or newer. |
 | goodall itself | Required | Whoever ran the installer. It must end up somewhere the eval account can run it. | Records the eval. |
-| [git](#programs-goodall-runs-or-works-alongside) | Required | Administrator | Saves the eval's records and sends them to the record repo. |
+| [git](#programs-goodall-runs-or-works-alongside) | Required | Administrator | Saves the eval's records as commits in the record repo, on this Mac. |
 | [Claude Code](#programs-goodall-runs-or-works-alongside) | Required | Not yet checked: see the note below | The AI agent tool whose work goodall records. |
-| [GitHub's `gh`](#programs-goodall-runs-or-works-alongside) | Required by `goodall doctor` | Administrator | Lets `goodall doctor` check the GitHub sign-in, so goodall never handles the token itself. |
 | [1Password's `op`](#programs-goodall-runs-or-works-alongside) | Required only when the eval uses secrets | Administrator | Looks up secrets the eval needs, without goodall storing them. |
 | [`inspect-ai` and `inspect-scout`](#adopted-optional-extra-for-the-export) | Optional, only for `goodall export scout` | Whoever installed goodall, as the `scout` extra | Turns records into a database the Inspect analysis tools read. Brings about 95 packages, so only those who export install them. |
 | [ActivityWatch](#activitywatch-the-highest-risk-recommendation) | Optional, recommended | Administrator | Notes which app and window were in use, to back up what the human did. |
 | curl | Used by `goodall doctor` when the eval includes ActivityWatch | Comes with macOS (`/usr/bin/curl`); nothing to install | Asks ActivityWatch's server on this Mac's own address (`127.0.0.1`) its status, with no credentials, no proxy, curl's own settings file (`~/.curlrc`) not read (`--disable`), and GET requests only (ADR 0011, ADR 0016). Not checked for advisories today: it is Apple's build, updated with macOS. |
 
 Signing in is separate from installing, and always happens inside the eval
-account: Claude Code, `gh` and, when the eval uses secrets, 1Password.
+account: Claude Code and, when the eval uses secrets, 1Password.
 
 None of the "who installs it" column has been tried in a real eval account
 yet. It is written from how each program is normally installed on macOS:
-git, `gh`, `op` and ActivityWatch are installed for the whole Mac, through
+git, `op` and ActivityWatch are installed for the whole Mac, through
 Apple's developer tools, Homebrew or an installer that asks for an
 administrator's password. Whether Claude Code and uv install cleanly inside a
 standard account, and where goodall should live so that an eval account can
@@ -112,15 +111,14 @@ security advisories, the PyPI JSON API, OSV.dev and 1Password's release notes.
 
 | Program | Needed when | Provenance (checked 2026-11-17) | Decision |
 |---|---|---|---|
-| **git** | Always. Goodall commits and pushes records with it (ADR 0001). | The Git project, maintained by Junio C Hamano with a large contributor base; `git/git` is a mirror of the mailing-list repository, ~64,400 stars; GPL-2.0 (from the project's own license file, not re-read today; GitHub's detector reports none). Newest release v2.56.1. 33 published advisories, most fixed promptly. One is open: GHSA-vp2w-7xxj-jvxr (high, 2026-11-10), code execution when cloning an attacker's repository with `--recurse-submodules`, no patch yet. Goodall never clones, so it does not take that path; a researcher cloning a record repo by hand should not use that option on a repository they do not trust. | **adopt** |
+| **git** | Always. Goodall commits records with it, and never pushes them (ADR 0023). | The Git project, maintained by Junio C Hamano with a large contributor base; `git/git` is a mirror of the mailing-list repository, ~64,400 stars; GPL-2.0 (from the project's own license file, not re-read today; GitHub's detector reports none). Newest release v2.56.1. 33 published advisories, most fixed promptly. One is open: GHSA-vp2w-7xxj-jvxr (high, 2026-11-10), code execution when cloning an attacker's repository with `--recurse-submodules`, no patch yet. Goodall never clones, so it does not take that path; a researcher cloning a record repo by hand should not use that option on a repository they do not trust. | **adopt** |
 | **Claude Code** | Always. It is the agent tool goodall records (ADR 0002). | Anthropic; `anthropics/claude-code`, ~156,000 stars; no open-source license in the repository, so treat it as proprietary. Newest release v2.1.326 (2026-11-16), with releases most days. 36 published advisories between 2025-06 and 2026-10 (29 high, 4 medium, 3 low), covering sandbox escapes, writes outside the workspace and plugin pinning; each names a fixed release. Goodall depends on its hook input and transcript layout, which Anthropic does not promise to keep stable. | **adopt**: it is the subject of the eval, so there is no alternative to weigh. Keep it updated. |
 | **1Password's command-line tool, `op`** | Only when the env file holds a secret reference (ADR 0006). | 1Password (AgileBits Inc.); closed source, proprietary, so the code cannot be reviewed. Newest stable release 2.42.0 (2026-11-03). Known issues: CVE-2022-32550 (medium, fixed in 2.3.0); CVE-2024-42219 (2024-08, a local process on macOS could impersonate a trusted 1Password integration such as the command-line tool; fixed in the 1Password app 8.10.36). An independent researcher's 2023 disclosure about `op` on shared machines was not given a CVE or a fix. Goodall runs only `op whoami`, `op vault list` and `op item list`, and never a command that returns a secret value. | **adopt**, conditional. "Or an equivalent secrets manager" remains the intent; `op` is the only one supported. |
-| **GitHub's command-line tool, `gh`** | Always: `goodall doctor` requires it. No goodall code runs it yet. | GitHub; `cli/cli`, ~47,100 stars; MIT. Newest release v2.104.0 (2026-11-12). 17 published advisories, two high (GHSA-8xvp-7hj6-mcj9, 2026-05; GHSA-p2h2-3vg9-4p87, 2024-11), the rest low or medium, each fixed in a release. It holds a GitHub token with whatever access the account granted it. | **adopt** (owner approved 2026-11-17, on the basis that GitHub publishes it) |
 
 The owner approved the git, Claude Code and `op` rows on 2026-11-17 as well.
 
 Versions on the machine goodall is developed on, after the owner upgraded
-them on 2026-11-17: git 2.56.1, `gh` 2.104.0, `op` 2.42.0, each the newest
+them on 2026-11-17: git 2.56.1, `op` 2.42.0, each the newest
 release that day.
 
 ### Approved, not yet used

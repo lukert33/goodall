@@ -54,7 +54,7 @@ The dependency edges:
 - The check that the secrets manager's command is installed needs the env
   file read, because the command is needed only when the env file refers
   to a secret: an eval with no secrets needs no secrets manager (ADR 0006).
-  It is shown under "Tools" beside git and gh.
+  It is shown under "Tools" beside git.
 - The sign-in check needs the secrets manager's command installed and the
   env file read, because it too asks only when the env file refers to a
   secret.
@@ -108,7 +108,7 @@ REFERENCED_FIELDS_EXIST = "secrets.referenced_fields_exist"
 # could do to let goodall check more.
 CHECKS_UNVERIFIABLE_WITHOUT_A_SECRET = [REFERENCED_FIELDS_EXIST]
 
-# Shown under "Tools" with git and gh, and named like them, but run here,
+# Shown under "Tools" with git, and named like it, but run here,
 # after the env file is read; see `check_secrets_manager_installed`.
 SECRETS_MANAGER_INSTALLED = "tools.secrets_manager_installed"
 

@@ -81,7 +81,7 @@ class EvalAccount:
         return git(self.record_repo, "log", "--format=%s").splitlines()
 
     def add_remote(self) -> Path:
-        """Give the record repo a shared copy to push to: a bare repository beside the home folder."""
+        """Give the record repo a remote set by hand: a bare repository beside the home folder."""
         remote = self.home_folder.parent / "remote.git"
         git(self.home_folder.parent, "clone", "--quiet", "--bare", str(self.record_repo), str(remote))
         git(self.record_repo, "remote", "add", "origin", str(remote))
@@ -251,7 +251,7 @@ def test_journal_refuses_an_email_address_or_secret_without_repeating_it(
     assert eval_account.journal_files() == []
 
 
-def test_journal_json_prints_one_document_with_the_id_the_path_and_whether_it_was_pushed(
+def test_journal_json_prints_one_document_with_the_id_the_path_and_whether_it_was_committed(
     eval_account: EvalAccount,
 ) -> None:
     run = run_goodall(["journal", "--json", "Chose Postgres."])
@@ -266,9 +266,6 @@ def test_journal_json_prints_one_document_with_the_id_the_path_and_whether_it_wa
         "id": entry_file.stem,
         "path": str(entry_file),
         "committed": True,
-        "pushed": False,
-        "push_state": "no_remote",
-        "warnings": [],
         "failures": [],
     }
 
@@ -282,48 +279,24 @@ def test_journal_json_reports_a_usage_failure_in_the_same_shape(eval_account: Ev
     assert document["id"] is None
     assert document["path"] is None
     assert document["committed"] is False
-    assert document["pushed"] is False
     assert [failure["kind"] for failure in document["failures"]] == ["entry_text_missing"]
 
 
-def test_journal_sent_to_a_reachable_shared_record_repo_says_so(eval_account: EvalAccount) -> None:
+def test_journal_in_a_record_repo_with_a_remote_set_by_hand_is_committed_here_and_not_pushed(
+    eval_account: EvalAccount,
+) -> None:
     remote = eval_account.add_remote()
 
     run = run_goodall(["journal", "Chose Postgres."])
 
     assert run.exit_code == exit_codes.SUCCESS
     assert run.standard_error == ""
-    assert run.standard_output.startswith("Recorded your journal entry and sent it to the shared record repo.\n")
-    [entry_file] = eval_account.journal_files()
-    assert git(remote, "log", "-1", "--format=%s", "main") == f"Add journal entry {entry_file.stem}\n"
-
-
-def test_journal_with_a_pending_push_is_saved_on_this_mac_with_a_warning_and_exits_0(
-    eval_account: EvalAccount,
-) -> None:
-    remote = eval_account.add_remote()
-    # The shared copy cannot be reached, as when this Mac is offline.
-    remote.rename(remote.with_name("remote-away.git"))
-
-    run = run_goodall(["journal", "Chose Postgres."])
-
-    assert run.exit_code == exit_codes.SUCCESS
-    assert "saved on this Mac and will be sent to the shared record repo" in " ".join(run.standard_output.split())
-    assert run.standard_error.startswith("WARN  The record is saved on this Mac")
-    assert "\nNext  " in run.standard_error
-    assert "FAIL" not in run.standard_error
+    assert run.standard_output.startswith(
+        "Recorded your journal entry. It is committed in the record repo on this Mac.\n"
+    )
     [entry_file] = eval_account.journal_files()
     assert eval_account.commit_subjects()[0] == f"Add journal entry {entry_file.stem}"
-
-    json_run = run_goodall(["journal", "--json", "A second note."])
-
-    document = json.loads(json_run.standard_output)
-    assert json_run.exit_code == exit_codes.SUCCESS
-    assert document["committed"] is True
-    assert document["pushed"] is False
-    assert document["push_state"] == "pending"
-    assert [warning["kind"] for warning in document["warnings"]] == ["record_push_failed"]
-    assert document["failures"] == []
+    assert git(remote, "log", "--format=%s", "main").splitlines() == ["Start the record repo"]
 
 
 def test_journal_that_git_will_not_commit_exits_1_and_says_why(eval_account: EvalAccount) -> None:
@@ -664,7 +637,7 @@ def test_every_command_offered_to_try_is_safe_to_paste_into_a_shell(
         assert " --decision " in line
 
 
-def test_intervene_json_prints_one_document_with_the_id_the_path_and_whether_it_was_pushed(
+def test_intervene_json_prints_one_document_with_the_id_the_path_and_whether_it_was_committed(
     eval_account: EvalAccount,
 ) -> None:
     eval_account.add_remote()
@@ -680,9 +653,6 @@ def test_intervene_json_prints_one_document_with_the_id_the_path_and_whether_it_
         "id": intervention_file.stem,
         "path": str(intervention_file),
         "committed": True,
-        "pushed": True,
-        "push_state": "pushed",
-        "warnings": [],
         "failures": [],
     }
 

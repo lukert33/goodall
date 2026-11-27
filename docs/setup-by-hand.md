@@ -24,8 +24,8 @@ first.
 
 - [ ] Create the eval account: System Settings, Users & Groups, Add User,
       with the account type **Standard**.
-- [ ] Install, for every account on the Mac: `git`, GitHub's `gh`,
-      ActivityWatch, and `uv` (0.13.4 or newer).
+- [ ] Install, for every account on the Mac: `git`, ActivityWatch, and
+      `uv` (0.13.4 or newer).
 - [ ] Install the source applications the eval will use: the Claude desktop
       app, Antigravity, and the Codex desktop app (it installs as
       `ChatGPT.app`).
@@ -53,9 +53,6 @@ Sign in to the Mac as the eval account for everything from here on.
       missing. **Not yet confirmed:** that a tool installed this way inside a
       standard account works without an administrator.
 - [ ] Sign in to each source application: Claude, Antigravity, Codex.
-- [ ] Run `gh auth login`. `goodall doctor` fails without a GitHub sign-in,
-      even for an eval that keeps its record repo on the Mac. Whether that
-      should stay so is an open question (goodall-9nf).
 - [ ] If the eval uses secrets, sign in to 1Password.
 
 ## Part 3: ActivityWatch on its own port
@@ -151,8 +148,8 @@ your first `goodall stop`.
 
 ## Part 4: The record repo, the log directory and local settings
 
-- [ ] Create the record repo, a git repository of its own. A remote is
-      optional for now; with none, records stay in local commits.
+- [ ] Create the record repo, a git repository of its own, with no
+      remote. Goodall commits records to it and never pushes them.
 
       ```
       mkdir -p ~/evals/domain-test-records
@@ -230,8 +227,7 @@ sessions yet (issues goodall-fs9.24 and goodall-fs9.25).
 ## Part 6: Check it
 
 - [ ] Run `goodall doctor`. It changes nothing. Fix what it reports and run
-      it again. It will warn that the record repo has no remote if you chose
-      to have none; that warning is expected.
+      it again.
 - [ ] With no work block active, send any prompt in Claude Code in a
       terminal. It should be refused with a message telling you to run
       `goodall start`.

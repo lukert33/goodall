@@ -88,29 +88,6 @@ ITEM_LIST_ANSWER = json.dumps(
 )
 
 
-# The record repo's remote in the healthy account: a private repository on GitHub.
-RECORD_REPO_REMOTE = "https://github.com/your-org/goodall-pilot-records.git"
-
-# The two questions goodall asks gh, and nothing else: whether it is signed
-# in to github.com (without refreshing its token, which would change a
-# credential), and the record repo's visibility (see goodall.remote_checks).
-GH_AUTH_STATUS = ["gh", "auth", "status", "--hostname", "github.com", "--active", "--json", "hosts", "--no-refresh"]
-GH_REPO_VIEW = ["gh", "repo", "view", "github.com/your-org/goodall-pilot-records", "--json", "visibility"]
-
-
-def gh_auth_status_answer(entry: dict[str, object]) -> str:
-    """gh's `auth status --json hosts` answer, with one account on github.com described by `entry`."""
-    account: dict[str, object] = {
-        "active": True,
-        "host": "github.com",
-        "login": "synthetic-login",
-        "tokenSource": "keyring",
-        "gitProtocol": "https",
-    }
-    account.update(entry)
-    return json.dumps({"hosts": {"github.com": [account]}})
-
-
 # The goodall the healthy account's Claude Code hooks run. It exists on no
 # machine: the fake runner answers for it (see goodall.claude_code_checks).
 HOOK_GOODALL = "/nonexistent-goodall-test/bin/goodall"
@@ -133,23 +110,17 @@ def claude_code_settings(goodall_program: str = HOOK_GOODALL) -> dict[str, objec
     return {"env": {"ANTHROPIC_API_KEY": SYNTHETIC_SETTINGS_KEY}, "model": "opus", "hooks": hooks}
 
 
-GH_SIGNED_IN_ANSWER = gh_auth_status_answer({"state": "success", "scopes": "gist, read:org, repo, workflow"})
-GH_PRIVATE_ANSWER = json.dumps({"visibility": "PRIVATE"})
-
-
 def healthy_runner() -> FakeRunner:
     """A fake runner for a Mac where every program is installed and the account is a standard one.
 
     git is real (FakeRunner's default), so the record repo check asks real
     git about a real folder.
     """
-    runner = FakeRunner(installed_programs=["git", "gh", "op"])
+    runner = FakeRunner(installed_programs=["git", "op"])
     runner.answer(ACCOUNT_GROUPS_COMMAND, standard_output=STANDARD_ACCOUNT_GROUPS)
     runner.answer(OP_WHOAMI)
     runner.answer(OP_VAULT_LIST, standard_output=VAULT_LIST_ANSWER)
     runner.answer(OP_ITEM_LIST_EVAL, standard_output=ITEM_LIST_ANSWER)
-    runner.answer(GH_AUTH_STATUS, standard_output=GH_SIGNED_IN_ANSWER)
-    runner.answer(GH_REPO_VIEW, standard_output=GH_PRIVATE_ANSWER)
     runner.answer(GOODALL_VERSION)
     # For a test whose hooks name goodall without its full path.
     runner.answer(["goodall", "--version"])
@@ -274,14 +245,9 @@ def healthy_account(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> EvalAcco
     # Readable by this account alone, as an env file should be.
     account.env_file.chmod(0o600)
     account.shared_env_file.write_text(VALID_SHARED_ENV_FILE_TEXT)
-    # The record repo is a real git repository, because real git checks it,
-    # cloned from a private repository on GitHub. Nothing ever fetches.
+    # The record repo is a real git repository, because real git checks it.
+    # It has no remote: goodall keeps it on this Mac (ADR 0023).
     subprocess.run(["git", "init", "--quiet", str(account.record_repo)], check=True, capture_output=True)
-    subprocess.run(
-        ["git", "-C", str(account.record_repo), "remote", "add", "origin", RECORD_REPO_REMOTE],
-        check=True,
-        capture_output=True,
-    )
     monkeypatch.setenv("HOME", str(home_folder))
     monkeypatch.setenv("GOODALL_CONFIG_DIR", str(account.config_directory))
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(account.claude_config_directory))
@@ -304,8 +270,6 @@ Settings
 
 Tools
   pass        git is installed
-  pass        gh is installed
-  pass        gh is signed in to GitHub
   pass        The secrets manager's command is installed
 
 Eval account
@@ -314,8 +278,7 @@ Eval account
 
 Record repo
   pass        The record repo folder is a git repository
-  pass        The record repo is shared through a remote
-  pass        The shared record repo is not public
+  pass        The record repo stays on this Mac
 
 Secrets
   pass        The env file holds only secret references
@@ -357,7 +320,7 @@ ActivityWatch
   pass        No ActivityWatch browser watcher is installed
 
 All checks passed. One thing goodall cannot check without reading a secret.
-29 passed, 0 warned, 0 failed, 0 skipped, 1 unverified
+26 passed, 0 warned, 0 failed, 0 skipped, 1 unverified
 """
 
 
@@ -401,9 +364,6 @@ Settings
 
 Tools
   pass        git is installed
-  pass        gh is installed
-  skip        gh is signed in to GitHub
-              Waiting for: Local settings are found
   skip        The secrets manager's command is installed
               Waiting for: Local settings are found
 
@@ -414,9 +374,7 @@ Eval account
 Record repo
   skip        The record repo folder is a git repository
               Waiting for: Local settings are found
-  skip        The record repo is shared through a remote
-              Waiting for: Local settings are found
-  skip        The shared record repo is not public
+  skip        The record repo stays on this Mac
               Waiting for: Local settings are found
 
 Secrets
@@ -455,7 +413,7 @@ ActivityWatch
   skip        No ActivityWatch browser watcher is installed
               Waiting for: Local settings are found
 
-3 passed, 0 warned, 1 failed, 26 skipped, 0 unverified
+2 passed, 0 warned, 1 failed, 24 skipped, 0 unverified
 """
 
 
@@ -505,12 +463,9 @@ ALL_CHECK_IDS = [
     "settings.main_workstream_known",
     "settings.activitywatch_settings_recorded",
     "tools.git_installed",
-    "tools.gh_installed",
     "eval_account.standard_account",
     "record_repo.is_git_repository",
-    "record_repo.has_remote",
-    "tools.gh_signed_in",
-    "record_repo.not_public",
+    "record_repo.stays_on_this_mac",
     "secrets.env_file_holds_only_references",
     # Shown under "Tools", but run once the env file is read, because the
     # secrets manager is needed only when the env file refers to a secret.
@@ -536,7 +491,7 @@ def test_healthy_setup_as_json_gives_the_same_results(healthy_account: EvalAccou
 
     assert exit_code == exit_codes.SUCCESS
     assert document["schema_version"] == 1
-    assert document["summary"] == {"passed": 29, "warned": 0, "failed": 0, "skipped": 0, "unverified": 1}
+    assert document["summary"] == {"passed": 26, "warned": 0, "failed": 0, "skipped": 0, "unverified": 1}
     checks = document["checks"]
     assert isinstance(checks, list)
     assert checks[0] == {
@@ -562,7 +517,7 @@ def test_missing_local_settings_as_json_names_what_each_skip_waited_for(settings
     exit_code, document = doctor_json()
 
     assert exit_code == exit_codes.ERROR
-    assert document["summary"] == {"passed": 3, "warned": 0, "failed": 1, "skipped": 26, "unverified": 0}
+    assert document["summary"] == {"passed": 2, "warned": 0, "failed": 1, "skipped": 24, "unverified": 0}
     checks = document["checks"]
     assert isinstance(checks, list)
     failed_check = checks[0]
@@ -571,9 +526,9 @@ def test_missing_local_settings_as_json_names_what_each_skip_waited_for(settings
     assert "goodall onboard" in failed_check["next_step"]
     assert MISSING_CONFIG_DIRECTORY in failed_check["detail"]
     # Every check that needs to know this account's eval waits for local
-    # settings; the checks that do not (git, gh, the account) still run.
+    # settings; the checks that do not (git, the account) still run.
     for check in checks[1:]:
-        if check["id"] in ["tools.git_installed", "tools.gh_installed", "eval_account.standard_account"]:
+        if check["id"] in ["tools.git_installed", "eval_account.standard_account"]:
             assert check["status"] == "pass"
             continue
         assert check["status"] == "skip"
@@ -596,7 +551,7 @@ def test_invalid_local_settings_fail_once_and_name_every_problem(healthy_account
     assert "favorite_color" in standard_output
     assert standard_output.count("        Next: ") == 2
     assert "Waiting for: Local settings are valid" in standard_output
-    assert standard_output.endswith("4 passed, 0 warned, 1 failed, 25 skipped, 0 unverified\n")
+    assert standard_output.endswith("3 passed, 0 warned, 1 failed, 23 skipped, 0 unverified\n")
 
 
 def test_relative_settings_folder_override_fails_the_found_check(
@@ -648,13 +603,10 @@ def test_missing_record_repo_skips_the_eval_config_but_still_checks_the_log_dire
         "settings.main_workstream_known": "skip",
         "settings.activitywatch_settings_recorded": "skip",
         "tools.git_installed": "pass",
-        "tools.gh_installed": "pass",
         "tools.secrets_manager_installed": "pass",
         "eval_account.standard_account": "pass",
         "record_repo.is_git_repository": "skip",
-        "record_repo.has_remote": "skip",
-        "tools.gh_signed_in": "skip",
-        "record_repo.not_public": "skip",
+        "record_repo.stays_on_this_mac": "skip",
         "secrets.env_file_holds_only_references": "pass",
         "secrets.env_file_private": "pass",
         "secrets.shared_env_file_holds_no_secrets": "skip",
@@ -691,7 +643,7 @@ def test_unreachable_log_directory_is_a_warning_with_a_next_step_and_exits_0(hea
     assert exit_code == exit_codes.SUCCESS
     assert "  warn        The log directory can be written to\n              Not recording:" in standard_output
     assert "        Next: If the log directory is on an external drive, connect it." in standard_output
-    assert standard_output.endswith("28 passed, 1 warned, 0 failed, 0 skipped, 1 unverified\n")
+    assert standard_output.endswith("25 passed, 1 warned, 0 failed, 0 skipped, 1 unverified\n")
 
     json_exit_code, document = doctor_json()
     assert json_exit_code == exit_code
@@ -718,7 +670,7 @@ def test_contributor_and_main_workstream_are_reported_as_separate_checks(healthy
     exit_code, document = doctor_json()
 
     assert exit_code == exit_codes.ERROR
-    assert document["summary"] == {"passed": 27, "warned": 0, "failed": 2, "skipped": 0, "unverified": 1}
+    assert document["summary"] == {"passed": 24, "warned": 0, "failed": 2, "skipped": 0, "unverified": 1}
     checks = document["checks"]
     assert isinstance(checks, list)
     assert [failure["kind"] for failure in checks[5]["failures"]] == ["contributor_not_in_roster"]
@@ -740,7 +692,6 @@ def test_contributor_and_main_workstream_are_reported_as_separate_checks(healthy
         "remove the shared env file",
         "set a variable in both env files",
         "refer to an item that does not exist",
-        "remove the record repo's remote",
         "remove Claude Code's settings",
         "leave a hook out",
         "name goodall without its path in the hooks",
@@ -775,8 +726,6 @@ def test_every_failure_and_warning_has_a_next_step_and_exit_codes_agree(
         healthy_account.env_file.write_text("DEFAULT_MODEL=op://Eval/item/field\n")
     elif break_setup == "refer to an item that does not exist":
         healthy_account.env_file.write_text("ANTHROPIC_API_KEY=op://Eval/nothing-here/credential\n")
-    elif break_setup == "remove the record repo's remote":
-        subprocess.run(["git", "-C", str(healthy_account.record_repo), "remote", "remove", "origin"], check=True)
     elif break_setup == "remove Claude Code's settings":
         healthy_account.claude_settings_file.unlink()
     elif break_setup == "leave a hook out":
@@ -883,28 +832,6 @@ def check_document(document: dict[str, object], check_id: str) -> dict[str, obje
     raise AssertionError(f"No check {check_id} in the document.")
 
 
-def test_missing_gh_is_one_failure_naming_it_and_saying_an_administrator_account_installs_it(
-    healthy_account: EvalAccount,
-) -> None:
-    runner = healthy_runner()
-    runner.installed_programs.remove("gh")
-
-    exit_code, standard_output, _ = run_goodall(["doctor", "--json"], runner)
-
-    assert exit_code == exit_codes.ERROR
-    document = json.loads(standard_output)
-    assert document["summary"] == {"passed": 26, "warned": 0, "failed": 1, "skipped": 2, "unverified": 1}
-    gh_check = check_document(document, "tools.gh_installed")
-    assert gh_check["status"] == "fail"
-    assert isinstance(gh_check["detail"], str)
-    assert "gh" in gh_check["detail"]
-    assert isinstance(gh_check["next_step"], str)
-    # On an eval account the contributor cannot install software, so the
-    # next step goes to whoever administers the Mac.
-    assert "administrator macOS user account" in gh_check["next_step"]
-    assert "https://cli.github.com" in gh_check["next_step"]
-
-
 def test_missing_git_is_one_failure_and_the_record_repo_check_waits_for_it(healthy_account: EvalAccount) -> None:
     runner = healthy_runner()
     runner.installed_programs.remove("git")
@@ -913,7 +840,7 @@ def test_missing_git_is_one_failure_and_the_record_repo_check_waits_for_it(healt
 
     assert exit_code == exit_codes.ERROR
     document = json.loads(standard_output)
-    assert document["summary"] == {"passed": 24, "warned": 0, "failed": 1, "skipped": 4, "unverified": 1}
+    assert document["summary"] == {"passed": 23, "warned": 0, "failed": 1, "skipped": 2, "unverified": 1}
     git_check = check_document(document, "tools.git_installed")
     assert git_check["status"] == "fail"
     assert isinstance(git_check["next_step"], str)
@@ -929,7 +856,7 @@ def test_missing_op_fails_the_secrets_manager_check_naming_1password(healthy_acc
 
     assert exit_code == exit_codes.ERROR
     document = json.loads(standard_output)
-    assert document["summary"] == {"passed": 26, "warned": 0, "failed": 1, "skipped": 3, "unverified": 0}
+    assert document["summary"] == {"passed": 23, "warned": 0, "failed": 1, "skipped": 3, "unverified": 0}
     secrets_manager_check = check_document(document, "tools.secrets_manager_installed")
     assert secrets_manager_check["status"] == "fail"
     assert isinstance(secrets_manager_check["detail"], str)
@@ -940,7 +867,7 @@ def test_missing_op_fails_the_secrets_manager_check_naming_1password(healthy_acc
 
 @pytest.mark.parametrize(
     ("program", "check_id"),
-    [("git", "tools.git_installed"), ("gh", "tools.gh_installed"), ("op", "tools.secrets_manager_installed")],
+    [("git", "tools.git_installed"), ("op", "tools.secrets_manager_installed")],
 )
 def test_every_missing_program_says_in_the_same_words_that_an_administrator_account_installs_it(
     healthy_account: EvalAccount, program: str, check_id: str
@@ -961,7 +888,7 @@ def test_every_missing_program_says_in_the_same_words_that_an_administrator_acco
 
 def test_every_program_goodall_requires_gets_the_administrator_sentence() -> None:
     # A program added to program_checks later must not slip past the test above.
-    required_programs = [program_checks.GIT, program_checks.GH, *secrets_manager.SECRETS_MANAGER_PROGRAMS.values()]
+    required_programs = [program_checks.GIT, *secrets_manager.SECRETS_MANAGER_PROGRAMS.values()]
     for program in required_programs:
         failure = program_checks.program_missing_failure(program)
         assert program_checks.install_by_administrator(program.name) in failure.what_to_do_next
@@ -1006,7 +933,7 @@ def test_an_administrator_account_fails_with_why_a_standard_account_is_required(
     # The reason, so a researcher does not wave it away as fussiness.
     assert "cannot reach other accounts' files or install software" in report_text
     assert "safe to hand to an agent" in report_text
-    assert standard_output.endswith("28 passed, 0 warned, 1 failed, 0 skipped, 1 unverified\n")
+    assert standard_output.endswith("25 passed, 0 warned, 1 failed, 0 skipped, 1 unverified\n")
 
 
 @pytest.mark.parametrize(
@@ -1040,7 +967,7 @@ def test_a_record_repo_folder_that_is_not_a_git_repository_fails(healthy_account
 
     assert exit_code == exit_codes.ERROR
     document = json.loads(standard_output)
-    assert document["summary"] == {"passed": 25, "warned": 0, "failed": 1, "skipped": 3, "unverified": 1}
+    assert document["summary"] == {"passed": 24, "warned": 0, "failed": 1, "skipped": 1, "unverified": 1}
     git_repository_check = check_document(document, "record_repo.is_git_repository")
     assert git_repository_check["status"] == "fail"
     assert isinstance(git_repository_check["detail"], str)
@@ -1089,7 +1016,7 @@ def test_a_command_the_fake_runner_was_not_told_about_fails_the_test_and_names_i
 ) -> None:
     # Every program is installed, but the account check's command was
     # never scripted: the test must fail loudly rather than run it.
-    runner = FakeRunner(installed_programs=["git", "gh", "op"])
+    runner = FakeRunner(installed_programs=["git", "op"])
 
     with pytest.raises(AssertionError, match="`/usr/bin/id -Gn`"):
         run_goodall(["doctor"], runner)
@@ -1112,7 +1039,7 @@ def test_an_account_check_that_never_finishes_is_reported_as_timed_out_and_docto
     assert isinstance(account_check["detail"], str)
     assert "`/usr/bin/id -Gn` timed out after 10 s" in account_check["detail"]
     # Every other check still ran.
-    assert document["summary"] == {"passed": 28, "warned": 0, "failed": 1, "skipped": 0, "unverified": 1}
+    assert document["summary"] == {"passed": 25, "warned": 0, "failed": 1, "skipped": 0, "unverified": 1}
 
 
 # A recognisable fake key. If any part of it shows up in goodall's output,
@@ -1704,7 +1631,7 @@ def test_a_report_whose_only_unverified_check_needs_a_secret_reads_as_healthy(he
     last_lines = standard_output.splitlines()[-2:]
     assert last_lines == [
         "All checks passed. One thing goodall cannot check without reading a secret.",
-        "29 passed, 0 warned, 0 failed, 0 skipped, 1 unverified",
+        "26 passed, 0 warned, 0 failed, 0 skipped, 1 unverified",
     ]
     # The check itself keeps its status and says when a wrong field shows up.
     assert "  unverified  Each secret reference names a field that exists\n" in standard_output
@@ -1713,7 +1640,7 @@ def test_a_report_whose_only_unverified_check_needs_a_secret_reads_as_healthy(he
         report_text
     )
     # --json is unchanged: the count is still there, and nothing calls it a pass.
-    assert document["summary"] == {"passed": 29, "warned": 0, "failed": 0, "skipped": 0, "unverified": 1}
+    assert document["summary"] == {"passed": 26, "warned": 0, "failed": 0, "skipped": 0, "unverified": 1}
     assert check_document(document, "secrets.referenced_fields_exist")["status"] == "unverified"
 
 
@@ -1738,7 +1665,7 @@ def test_a_report_with_a_warning_has_no_all_passed_line(healthy_account: EvalAcc
 
     assert exit_code == exit_codes.SUCCESS
     assert "All checks passed" not in standard_output
-    assert standard_output.splitlines()[-1] == "28 passed, 1 warned, 0 failed, 0 skipped, 1 unverified"
+    assert standard_output.splitlines()[-1] == "25 passed, 1 warned, 0 failed, 0 skipped, 1 unverified"
 
 
 def test_an_env_file_with_no_references_has_no_field_to_leave_unverified(healthy_account: EvalAccount) -> None:
@@ -2178,8 +2105,8 @@ PASSED = result_with_status("tools.git_installed", CheckStatus.PASS)
         ),
         # Every check passed, or something needs attention: the counts say it all.
         ([PASSED], None),
-        ([PASSED, FIELDS_UNVERIFIED, result_with_status("tools.gh_installed", CheckStatus.WARN)], None),
-        ([FIELDS_UNVERIFIED, result_with_status("tools.gh_installed", CheckStatus.FAIL)], None),
+        ([PASSED, FIELDS_UNVERIFIED, result_with_status("tools.git_installed", CheckStatus.WARN)], None),
+        ([FIELDS_UNVERIFIED, result_with_status("tools.git_installed", CheckStatus.FAIL)], None),
     ],
 )
 def test_the_closing_line_reads_as_healthy_only_when_nothing_but_unverified_checks_remain(
@@ -2188,8 +2115,8 @@ def test_the_closing_line_reads_as_healthy_only_when_nothing_but_unverified_chec
     assert closing_line(results) == expected_line
 
 
-# Where the record repo is shared: its remote, gh's sign-in to GitHub, and
-# whether the repository on GitHub is public (goodall.remote_checks).
+# The record repo stays on this Mac: goodall never pushes it, and doctor
+# says so when someone has added a remote by hand (ADR 0023).
 
 
 def git_in_record_repo(account: EvalAccount, arguments: list[str]) -> None:
@@ -2197,319 +2124,71 @@ def git_in_record_repo(account: EvalAccount, arguments: list[str]) -> None:
     subprocess.run(["git", "-C", str(account.record_repo), *arguments], check=True, capture_output=True)
 
 
-def gh_calls(runner: FakeRunner) -> list[list[str]]:
-    """Every gh command doctor asked the fake runner to run, in order."""
-    calls = []
+def test_doctor_passes_on_a_mac_without_gh_and_never_runs_it(healthy_account: EvalAccount) -> None:
+    runner = healthy_runner()
+    assert "gh" not in runner.installed_programs
+
+    exit_code, document = doctor_json(runner)
+
+    assert exit_code == exit_codes.SUCCESS
+    assert document["summary"] == {"passed": 26, "warned": 0, "failed": 0, "skipped": 0, "unverified": 1}
     for command in runner.calls:
-        if command.arguments[0] == "gh":
-            calls.append(command.arguments)
-    return calls
+        assert Path(command.arguments[0]).name != "gh"
 
 
-def test_a_record_repo_with_no_remote_warns_that_records_stay_on_this_mac_and_asks_github_nothing(
+def test_a_record_repo_with_no_remote_passes_without_a_note(healthy_account: EvalAccount) -> None:
+    exit_code, document = doctor_json()
+
+    assert exit_code == exit_codes.SUCCESS
+    stays_check = check_document(document, "record_repo.stays_on_this_mac")
+    assert stays_check["status"] == "pass"
+    assert stays_check["note"] is None
+
+
+def test_a_record_repo_with_a_remote_set_by_hand_says_goodall_never_pushes_to_it_and_nothing_needs_doing(
     healthy_account: EvalAccount,
 ) -> None:
-    git_in_record_repo(healthy_account, ["remote", "remove", "origin"])
-    runner = healthy_runner()
+    git_in_record_repo(healthy_account, ["remote", "add", "origin", "https://example.org/records.git"])
+    git_in_record_repo(healthy_account, ["remote", "add", "backup", "/Volumes/Backup/records.git"])
 
-    exit_code, document = doctor_json(runner)
-
-    assert exit_code == exit_codes.SUCCESS
-    remote_check = check_document(document, "record_repo.has_remote")
-    assert remote_check["status"] == "warn"
-    assert failure_kinds(document, "record_repo.has_remote") == ["record_repo_has_no_remote"]
-    assert isinstance(remote_check["detail"], str)
-    assert "only on this Mac" in remote_check["detail"]
-    assert isinstance(remote_check["next_step"], str)
-    assert "git remote add origin" in remote_check["next_step"]
-    # With nowhere to share records, there is nothing to ask GitHub.
-    assert check_document(document, "tools.gh_signed_in")["status"] == "pass"
-    assert check_document(document, "tools.gh_signed_in")["note"] is not None
-    assert check_document(document, "record_repo.not_public")["status"] == "pass"
-    assert gh_calls(runner) == []
-
-
-def test_a_record_repo_shared_outside_github_asks_gh_nothing_and_says_visibility_is_not_checked(
-    healthy_account: EvalAccount,
-) -> None:
-    git_in_record_repo(healthy_account, ["remote", "set-url", "origin", "git@gitlab.com:your-org/records.git"])
-    runner = healthy_runner()
-
-    exit_code, document = doctor_json(runner)
+    exit_code, standard_output, _ = run_goodall(["doctor"])
 
     assert exit_code == exit_codes.SUCCESS
-    assert check_document(document, "record_repo.has_remote")["status"] == "pass"
-    sign_in_check = check_document(document, "tools.gh_signed_in")
-    assert sign_in_check["status"] == "pass"
-    assert isinstance(sign_in_check["note"], str)
-    assert "not on GitHub" in sign_in_check["note"]
-    visibility_check = check_document(document, "record_repo.not_public")
-    assert visibility_check["status"] == "pass"
-    assert isinstance(visibility_check["note"], str)
-    assert "yourself" in visibility_check["note"]
-    assert gh_calls(runner) == []
-
-
-@pytest.mark.parametrize(
-    "address",
-    [
-        "git@github.com:your-org/goodall-pilot-records.git",
-        "ssh://git@github.com/your-org/goodall-pilot-records",
-        "https://github.com/your-org/goodall-pilot-records/",
-    ],
-)
-def test_every_way_of_writing_a_github_address_asks_gh_about_the_same_repository(
-    healthy_account: EvalAccount, address: str
-) -> None:
-    git_in_record_repo(healthy_account, ["remote", "set-url", "origin", address])
-    runner = healthy_runner()
-
-    exit_code, document = doctor_json(runner)
-
-    assert exit_code == exit_codes.SUCCESS
-    assert check_document(document, "record_repo.not_public")["status"] == "pass"
-    assert gh_calls(runner) == [GH_AUTH_STATUS, GH_REPO_VIEW]
-
-
-def test_a_public_record_repo_on_github_is_a_warning_saying_goodall_never_changes_it(
-    healthy_account: EvalAccount,
-) -> None:
-    runner = healthy_runner()
-    runner.answer(GH_REPO_VIEW, standard_output=json.dumps({"visibility": "PUBLIC"}))
-
-    exit_code, standard_output, _ = run_goodall(["doctor"], runner)
-    _, document = doctor_json(runner)
-
-    assert exit_code == exit_codes.SUCCESS
-    visibility_check = check_document(document, "record_repo.not_public")
-    assert visibility_check["status"] == "warn"
-    assert failure_kinds(document, "record_repo.not_public") == ["record_repo_public"]
-    assert isinstance(visibility_check["detail"], str)
-    assert "anyone" in visibility_check["detail"]
-    assert isinstance(visibility_check["next_step"], str)
-    assert "researcher" in visibility_check["next_step"]
-    assert "warn        The shared record repo is not public" in standard_output
-
-
-@pytest.mark.parametrize("visibility", ["PRIVATE", "INTERNAL"])
-def test_a_private_or_internal_record_repo_passes(healthy_account: EvalAccount, visibility: str) -> None:
-    runner = healthy_runner()
-    runner.answer(GH_REPO_VIEW, standard_output=json.dumps({"visibility": visibility}))
-
-    _, document = doctor_json(runner)
-
-    assert check_document(document, "record_repo.not_public")["status"] == "pass"
-
-
-def test_gh_signed_out_fails_with_the_sign_in_command_and_skips_the_visibility_check(
-    healthy_account: EvalAccount,
-) -> None:
-    runner = healthy_runner()
-    runner.answer(GH_AUTH_STATUS, standard_output=json.dumps({"hosts": {}}))
-
-    exit_code, document = doctor_json(runner)
-
-    assert exit_code == exit_codes.ERROR
-    sign_in_check = check_document(document, "tools.gh_signed_in")
-    assert sign_in_check["status"] == "fail"
-    assert failure_kinds(document, "tools.gh_signed_in") == ["gh_not_signed_in"]
-    assert isinstance(sign_in_check["next_step"], str)
-    assert "gh auth login" in sign_in_check["next_step"]
-    visibility_check = check_document(document, "record_repo.not_public")
-    assert visibility_check["status"] == "skip"
-    assert visibility_check["waiting_for"] == "tools.gh_signed_in"
-    assert gh_calls(runner) == [GH_AUTH_STATUS]
-
-
-def test_a_token_github_refuses_fails_saying_to_sign_in_again(healthy_account: EvalAccount) -> None:
-    runner = healthy_runner()
-    runner.answer(
-        GH_AUTH_STATUS,
-        standard_output=gh_auth_status_answer(
-            {"state": "error", "error": "non-200 OK status code: 401 Unauthorized body: Bad credentials"}
-        ),
-    )
-
-    exit_code, document = doctor_json(runner)
-
-    assert exit_code == exit_codes.ERROR
-    assert failure_kinds(document, "tools.gh_signed_in") == ["gh_token_refused"]
-    next_step = check_document(document, "tools.gh_signed_in")["next_step"]
-    assert isinstance(next_step, str)
-    assert "gh auth login" in next_step
-
-
-def test_github_out_of_reach_leaves_sign_in_and_visibility_unverified_without_asking_twice(
-    healthy_account: EvalAccount,
-) -> None:
-    runner = healthy_runner()
-    runner.answer(
-        GH_AUTH_STATUS,
-        standard_output=gh_auth_status_answer(
-            {"state": "error", "error": 'Post "https://api.github.com/graphql": dial tcp: no such host'}
-        ),
-    )
-
-    exit_code, document = doctor_json(runner)
-
-    # Not knowing is not a failure: the Mac may simply be offline.
-    assert exit_code == exit_codes.SUCCESS
-    assert check_document(document, "tools.gh_signed_in")["status"] == "unverified"
-    assert failure_kinds(document, "tools.gh_signed_in") == ["github_not_reached"]
-    assert check_document(document, "record_repo.not_public")["status"] == "unverified"
-    assert gh_calls(runner) == [GH_AUTH_STATUS]
-
-
-def test_gh_that_never_answers_is_unverified_within_a_short_timeout(healthy_account: EvalAccount) -> None:
-    runner = healthy_runner()
-    runner.answer_timed_out(GH_AUTH_STATUS)
-
-    exit_code, document = doctor_json(runner)
-
-    assert exit_code == exit_codes.SUCCESS
-    assert check_document(document, "tools.gh_signed_in")["status"] == "unverified"
-    assert check_document(document, "record_repo.not_public")["status"] == "unverified"
-    for command in runner.calls:
-        if command.arguments[0] == "gh":
-            assert command.timeout_seconds <= 5
-
-
-def test_a_gh_too_old_to_answer_in_json_is_unverified_and_says_to_check_by_hand(
-    healthy_account: EvalAccount,
-) -> None:
-    runner = healthy_runner()
-    runner.answer(GH_AUTH_STATUS, exit_code=1, standard_error="unknown flag: --json\n")
-
-    exit_code, document = doctor_json(runner)
-
-    assert exit_code == exit_codes.SUCCESS
-    sign_in_check = check_document(document, "tools.gh_signed_in")
-    assert sign_in_check["status"] == "unverified"
-    assert isinstance(sign_in_check["next_step"], str)
-    assert "gh auth status" in sign_in_check["next_step"]
-
-
-def test_a_token_without_the_repo_scope_warns_that_gh_cannot_see_a_private_record_repo(
-    healthy_account: EvalAccount,
-) -> None:
-    runner = healthy_runner()
-    runner.answer(GH_AUTH_STATUS, standard_output=gh_auth_status_answer({"state": "success", "scopes": "read:org"}))
-
-    exit_code, document = doctor_json(runner)
-
-    assert exit_code == exit_codes.SUCCESS
-    sign_in_check = check_document(document, "tools.gh_signed_in")
-    assert sign_in_check["status"] == "warn"
-    assert failure_kinds(document, "tools.gh_signed_in") == ["gh_token_missing_repo_scope"]
-    assert isinstance(sign_in_check["next_step"], str)
-    assert "gh auth refresh --scopes repo" in sign_in_check["next_step"]
-
-
-def test_a_token_that_lists_no_scopes_passes_with_a_note(healthy_account: EvalAccount) -> None:
-    # A fine-grained token, or one from GH_TOKEN, has no scopes to list.
-    runner = healthy_runner()
-    runner.answer(GH_AUTH_STATUS, standard_output=gh_auth_status_answer({"state": "success"}))
-
-    _, document = doctor_json(runner)
-
-    sign_in_check = check_document(document, "tools.gh_signed_in")
-    assert sign_in_check["status"] == "pass"
-    assert isinstance(sign_in_check["note"], str)
-    assert "scopes" in sign_in_check["note"]
-
-
-def test_a_visibility_gh_cannot_tell_is_unverified(healthy_account: EvalAccount) -> None:
-    runner = healthy_runner()
-    runner.answer(GH_REPO_VIEW, exit_code=1, standard_error="GraphQL: Could not resolve to a Repository\n")
-
-    exit_code, document = doctor_json(runner)
-
-    assert exit_code == exit_codes.SUCCESS
-    visibility_check = check_document(document, "record_repo.not_public")
-    assert visibility_check["status"] == "unverified"
-    assert isinstance(visibility_check["next_step"], str)
-
-
-def test_offline_asks_github_nothing_and_reports_both_github_checks_unverified(healthy_account: EvalAccount) -> None:
-    runner = healthy_runner()
-
-    exit_code, standard_output, _ = run_goodall(["doctor", "--offline", "--json"], runner)
-
-    document = json.loads(standard_output)
-    assert exit_code == exit_codes.SUCCESS
-    for check_id in ["tools.gh_signed_in", "record_repo.not_public"]:
-        assert check_document(document, check_id)["status"] == "unverified"
-        assert failure_kinds(document, check_id) == ["offline"]
-    assert gh_calls(runner) == []
-
-
-def test_two_remotes_and_no_upstream_warn_that_goodall_cannot_tell_where_records_go(
-    healthy_account: EvalAccount,
-) -> None:
-    git_in_record_repo(healthy_account, ["remote", "rename", "origin", "github"])
-    git_in_record_repo(healthy_account, ["remote", "add", "backup", "https://example.org/records.git"])
-    runner = healthy_runner()
-
-    exit_code, document = doctor_json(runner)
-
-    assert exit_code == exit_codes.SUCCESS
-    assert check_document(document, "record_repo.has_remote")["status"] == "warn"
-    assert failure_kinds(document, "record_repo.has_remote") == ["record_repo_push_destination_unknown"]
-    # Not knowing which remote is used, goodall cannot say whether it is on GitHub.
-    assert check_document(document, "tools.gh_signed_in")["status"] == "unverified"
-    assert check_document(document, "record_repo.not_public")["status"] == "unverified"
-    assert gh_calls(runner) == []
+    report = " ".join(standard_output.split())
+    assert "pass The record repo stays on this Mac" in report
+    assert (
+        "The record repo has remotes added by hand (backup, origin). Goodall commits records here and never "
+        "pushes them, so nothing reaches a remote unless you push it yourself. Nothing needs doing."
+    ) in report
 
 
 SYNTHETIC_GITHUB_TOKEN = "ghp_SYNTHETICsyntheticSYNTHETIC0123456789"
 
 
-@pytest.mark.parametrize(
-    "where",
-    ["sign-in answer", "sign-in error", "visibility error", "remote address"],
-)
-def test_a_github_token_is_never_shown_wherever_it_turns_up(healthy_account: EvalAccount, where: str) -> None:
-    runner = healthy_runner()
-    if where == "sign-in answer":
-        runner.answer(
-            GH_AUTH_STATUS,
-            standard_output=gh_auth_status_answer(
-                {
-                    "state": "error",
-                    "error": f"401 Unauthorized: {SYNTHETIC_GITHUB_TOKEN}",
-                    "token": SYNTHETIC_GITHUB_TOKEN,
-                }
-            ),
-            standard_error=f"token {SYNTHETIC_GITHUB_TOKEN}\n",
-        )
-    elif where == "sign-in error":
-        runner.answer(GH_AUTH_STATUS, exit_code=1, standard_error=f"bad token {SYNTHETIC_GITHUB_TOKEN}\n")
-    elif where == "visibility error":
-        runner.answer(GH_REPO_VIEW, exit_code=1, standard_error=f"HTTP 401: {SYNTHETIC_GITHUB_TOKEN}\n")
-    else:
-        address = f"https://x-access-token:{SYNTHETIC_GITHUB_TOKEN}@github.com/your-org/goodall-pilot-records.git"
-        git_in_record_repo(healthy_account, ["remote", "set-url", "origin", address])
+def test_a_remote_address_holding_a_token_is_never_shown(healthy_account: EvalAccount) -> None:
+    address = f"https://x-access-token:{SYNTHETIC_GITHUB_TOKEN}@github.com/your-org/goodall-pilot-records.git"
+    git_in_record_repo(healthy_account, ["remote", "add", "origin", address])
 
-    _, standard_output, standard_error = run_goodall(["doctor"], runner)
-    _, json_output, _ = run_goodall(["doctor", "--json"], runner)
+    _, standard_output, standard_error = run_goodall(["doctor"])
+    _, json_output, _ = run_goodall(["doctor", "--json"])
 
     for printed in [standard_output, standard_error, json_output]:
         assert SYNTHETIC_GITHUB_TOKEN not in printed
-        assert "synthetic-login" not in printed
+        assert "github.com/your-org/goodall-pilot-records" not in printed
 
 
-def test_doctor_asks_gh_only_its_two_read_only_questions(healthy_account: EvalAccount) -> None:
+def test_doctor_lists_the_remotes_and_changes_none_of_them(healthy_account: EvalAccount) -> None:
+    git_in_record_repo(healthy_account, ["remote", "add", "origin", "https://example.org/records.git"])
     runner = healthy_runner()
 
     run_goodall(["doctor"], runner)
 
-    assert gh_calls(runner) == [GH_AUTH_STATUS, GH_REPO_VIEW]
+    remote_commands = []
     for command in runner.calls:
-        if command.arguments[0] == "gh":
-            # gh must neither offer to update itself, which writes a state
-            # file, nor wait for an answer nobody can give.
-            assert command.extra_environment.get("GH_NO_UPDATE_NOTIFIER") == "1"
-            assert command.extra_environment.get("GH_PROMPT_DISABLED") == "1"
+        for word in ["remote", "push", "fetch"]:
+            if word in command.arguments:
+                remote_commands.append(command.arguments)
+    assert remote_commands == [["git", "remote"]]
 
 
 def test_with_the_network_down_doctor_waits_at_most_30_seconds_on_programs_that_use_it(
@@ -2518,14 +2197,14 @@ def test_with_the_network_down_doctor_waits_at_most_30_seconds_on_programs_that_
     # Every program that talks to the network never answers, so each one
     # runs until its own timeout: the sum is the longest doctor can wait.
     runner = healthy_runner()
-    for arguments in [GH_AUTH_STATUS, GH_REPO_VIEW, OP_WHOAMI, OP_VAULT_LIST, OP_ITEM_LIST_EVAL]:
+    for arguments in [OP_WHOAMI, OP_VAULT_LIST, OP_ITEM_LIST_EVAL]:
         runner.answer_timed_out(arguments)
 
     run_goodall(["doctor"], runner)
 
     total_seconds = 0.0
     for command in runner.calls:
-        if command.arguments[0] in ["gh", "op"]:
+        if command.arguments[0] == "op":
             total_seconds += command.timeout_seconds
     assert total_seconds <= 30
 
@@ -3234,7 +2913,7 @@ def test_a_healthy_activitywatch_passes_every_check(healthy_account: EvalAccount
 
     assert exit_code == exit_codes.SUCCESS
     assert activitywatch_statuses(document) == ["pass", "pass", "pass", "pass"]
-    assert document["summary"] == {"passed": 29, "warned": 0, "failed": 0, "skipped": 0, "unverified": 1}
+    assert document["summary"] == {"passed": 26, "warned": 0, "failed": 0, "skipped": 0, "unverified": 1}
 
 
 def test_activitywatch_is_asked_only_through_credential_free_local_reads_that_skip_proxies(

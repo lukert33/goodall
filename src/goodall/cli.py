@@ -77,11 +77,6 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Print the results as one JSON document on standard output, for agents and scripts.",
     )
-    doctor.add_argument(
-        "--offline",
-        action="store_true",
-        help="Ask nothing over the network: the checks that would ask GitHub are reported as unverified.",
-    )
     doctor.set_defaults(command_name="doctor")
 
     # The three work-block commands are top-level, not grouped, because a
@@ -414,7 +409,7 @@ def main(
     if command_name == "fixblock":
         return run_fixblock(terminal, runner, clock, arguments.work_block_id, arguments.workstream)
     if command_name == "doctor":
-        return run_doctor(terminal, runner, clock, as_json=arguments.json, offline=arguments.offline)
+        return run_doctor(terminal, runner, clock, as_json=arguments.json)
     if command_name == "journal":
         entry_request = EntryRequest(text=arguments.text, as_json=arguments.json, text_file=arguments.file)
         return run_journal(terminal, runner, entry_request)

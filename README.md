@@ -120,26 +120,17 @@ eval account.
 | Python 3.12 or newer | Required | Comes with the installer | Runs goodall. |
 | uv, pipx or pip | Required, to install | An administrator if installed with Homebrew or for every account. uv can also be installed inside one account. | Puts goodall on the Mac. |
 | goodall | Required | Whoever ran the installer | Records the eval. |
-| git | Required | Administrator | Saves the eval's records and sends them to the record repo. |
+| git | Required | Administrator | Saves the eval's records as commits in the record repo, on this Mac. |
 | Claude Code | Required | Not yet checked | The agent tool whose work goodall records. |
-| GitHub's `gh` | Required: `goodall doctor` fails without it | Administrator | Lets `goodall doctor` check your GitHub sign-in, so that goodall never holds a GitHub token itself. |
 | 1Password's `op` | Required only if the eval uses secrets. An eval with no secrets does not need it. | Administrator | Looks up secrets the eval needs, without goodall storing them. |
 | The export extra | Optional | Whoever installed goodall | Turns records into the form the Inspect analysis tools read. It brings in `inspect-ai` and `inspect-scout`, about 95 packages, so install it only if you export. **Placeholder:** the install command is not decided, and the export is not built. |
 | ActivityWatch | Required in every eval account when the eval config says `activitywatch = true`; otherwise not used | Administrator | Notes which app and window were in use, to back up what the human did. Goodall copies its data into the log directory when a work block ends. It records window titles and page addresses, which can contain private text. |
 
 Signing in is separate from installing, and always happens inside the eval
-account: Claude Code, `gh` and, when the eval uses secrets, 1Password.
+account: Claude Code and, when the eval uses secrets, 1Password.
 
 For the checked facts behind each program, see
 [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md).
-
-### Using your own SSH settings with git
-
-When goodall saves to the record repo, it removes every environment variable
-whose name starts with `GIT_`, so that a stray variable cannot redirect git.
-That means goodall **ignores `GIT_SSH_COMMAND`**. If you rely on it, put the
-same setting in git's own config instead (`git config core.sshCommand ...`),
-or in `~/.ssh/config`. Both are read as usual.
 
 ## Where your data goes
 
@@ -155,8 +146,12 @@ one of three places.
    declared scope, and whether the eval includes ActivityWatch), the construct (`CONSTRUCT.md`, the question the eval
    measures), a shared env file (`.env.shared`, non-secret variables), and
    one file per work block, journal entry, intervention and work block fix.
-   Goodall commits and pushes to it. **You** create the remote repository and
-   decide who can see it: goodall never does either.
+   Goodall commits to it and never pushes it anywhere: it is a git
+   repository on this Mac, and its history shows any later edit to a
+   record. If you add a remote yourself, goodall leaves it alone and
+   `goodall doctor` says so. There is no copy off the Mac unless you make
+   one, so back the record repo up with whatever you already use for your
+   Mac.
 
 3. **The log directory.** A folder on the Mac, outside any repository, that
    holds the raw records: copies of each source application's own session
@@ -206,8 +201,8 @@ Secrets never go in a file. The env file holds references such as
 `op://vault/item/field`, which name a secret in 1Password without containing
 it. Goodall rejects a raw secret value given as input.
 
-Goodall makes no network calls of its own. The only thing that leaves the Mac
-is what git pushes to the record repo you set up.
+Goodall makes no network calls of its own and never pushes the record repo,
+so nothing leaves the Mac unless you send it yourself.
 
 ### What you share
 
@@ -230,6 +225,8 @@ is recorded in
   with a version number. A better rule later means relabeling the same data.
 - **Capture does not depend on analysis.** Recording works with none of the
   Inspect packages installed.
+- **The record repo stays on this Mac.** Goodall commits records to it and
+  never pushes, fetches or adds a remote, so nothing is uploaded.
 
 ### Honest limits
 

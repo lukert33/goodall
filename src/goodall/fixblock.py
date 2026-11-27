@@ -24,8 +24,8 @@ What the command does, in order:
    exit 1 and say what to check; when its record is still waiting in the
    log directory, say to run `goodall status` first, which writes it.
 4. Build the fix, check it, and write it through goodall.record_repo, as
-   journal entries are written: exit 0 once committed, with a warning if
-   the push is still pending, and 1 when it was not committed.
+   journal entries are written: exit 0 once committed, and 1 when it was
+   not committed.
 
 Decisions a reader would otherwise reverse-engineer, all PROVISIONAL and
 flagged for the project owner:
@@ -52,7 +52,7 @@ from pathlib import Path
 from goodall import exit_codes, records, work_blocks
 from goodall.entries import check_record, find_eval_for_this_account
 from goodall.eval_config import EvalForThisAccount
-from goodall.record_repo import PushState, write_record
+from goodall.record_repo import write_record
 from goodall.runner import Runner
 from goodall.terminal import Failure, Terminal
 from goodall.work_block_commands import Clock, describe_moment
@@ -103,7 +103,7 @@ def run_fixblock(
     terminal.show_paragraph(
         f"Recorded that the work block {describe_span(work_block)} counts towards {workstream}; it had been "
         f"recorded as {workstream_before}. Its record is unchanged, and this fix is kept beside it. "
-        + where_the_fix_went(outcome.push_state)
+        + "The fix is committed in the record repo on this Mac."
     )
     contributor = eval_reading.contributor
     terminal.show_facts(
@@ -115,9 +115,6 @@ def run_fixblock(
             ("By", f"{contributor.display_name} ({contributor.id})"),
         ]
     )
-    # Once committed the fix is safe on this Mac, so a pending push is a
-    # warning and the exit code is 0 (AGENTS.md, "Command-line conventions").
-    terminal.show_warnings(outcome.failures)
     return exit_codes.SUCCESS
 
 
@@ -351,18 +348,6 @@ def describe_span(work_block: records.WorkBlockRecord) -> str:
     if work_block.ended_at is None:
         return f"started {describe_moment(work_block.started_at)}"
     return f"from {describe_moment(work_block.started_at)} to {describe_moment(work_block.ended_at)}"
-
-
-def where_the_fix_went(push_state: PushState) -> str:
-    """One sentence saying the fix is kept and whether others can see it yet."""
-    if push_state == PushState.PUSHED:
-        return "The fix is in the record repo and was sent to the shared record repo."
-    if push_state == PushState.PENDING:
-        return (
-            "The fix is saved in the record repo on this Mac and will be sent to the shared record repo the next "
-            "time goodall records something."
-        )
-    return "The fix is in the record repo, which has no shared copy to send it to, so it is kept on this Mac."
 
 
 def work_block_not_found_failure(work_block_id: str, record_repo: Path) -> Failure:
