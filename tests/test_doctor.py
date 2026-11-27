@@ -1334,7 +1334,10 @@ def test_a_missing_shared_env_file_is_a_warning_with_a_next_step(healthy_account
     assert "  warn        The shared env file holds no secrets\n" in standard_output
     report_text = " ".join(standard_output.split())
     assert f"There is no shared env file at {healthy_account.shared_env_file}." in report_text
-    assert "Next: Run git pull in" in report_text
+    # The record repo has no remote (ADR 0023), so pulling cannot bring the
+    # file in: the next step is to add it there.
+    assert "git pull" not in report_text
+    assert f"Next: Add a {healthy_account.shared_env_file.name} file to the record repo" in report_text
 
 
 def test_a_secret_reference_inside_a_shared_env_file_value_fails_like_one_on_its_own(

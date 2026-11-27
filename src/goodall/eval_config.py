@@ -716,8 +716,8 @@ def eval_config_missing_failure(config_file: Path, local_settings_file: Path) ->
         ),
         what_to_do_next=(
             f"If record_repo in {local_settings_file} points at the wrong folder, correct it. If the folder is right, "
-            "bring the record repo up to date (git pull in that folder), or ask whoever runs the eval whether "
-            "eval.toml has been added yet."
+            "write eval.toml there as docs/setup-by-hand.md in goodall's documentation shows, or ask whoever "
+            "runs the eval for it."
         ),
     )
 

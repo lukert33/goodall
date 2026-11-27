@@ -394,8 +394,9 @@ def shared_env_file_missing_failure(local_settings: LocalSettings, shared_env_fi
             "be missing."
         ),
         what_to_do_next=(
-            f"Run git pull in {local_settings.record_repo.path} to get the eval's latest record repo. If there "
-            f"is still no {SHARED_ENV_FILE_NAME}, ask whoever runs the eval to add one to the record repo."
+            f"Add a {SHARED_ENV_FILE_NAME} file to the record repo at {local_settings.record_repo.path} and "
+            "commit it, or ask whoever runs the eval what it should hold. The record repo has no remote "
+            "(ADR 0023), so it does not arrive from anywhere by itself."
         ),
     )
 
