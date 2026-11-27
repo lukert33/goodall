@@ -19,6 +19,47 @@ Two rules while you work:
   page address", not the address.
 - **Every example value below is made up.** Use your own.
 
+## Before you start: removing an earlier install
+
+Skip this on a Mac that has never had goodall or ActivityWatch. To start
+again from nothing, do these in this order. Nothing here touches your
+Claude, Antigravity or Codex sign-ins.
+
+- [ ] **Keep or delete the old records first.** An old eval's record repo
+      and log directory are its records; goodall never deletes them. Move
+      them somewhere safe, or delete them, before anything else.
+- [ ] **In each macOS user account that ran goodall:**
+      - Quit goodall from the menu bar icon, if it is there.
+      - Remove goodall's hooks from `~/.claude/settings.json`: delete each
+        entry whose command runs `goodall hook`. Until they are gone, Claude
+        Code refuses every prompt in that account.
+      - Remove goodall and its local settings:
+
+        ```
+        uv tool uninstall goodall
+        rm -rf ~/.config/goodall
+        ```
+
+- [ ] **In each macOS user account that ran ActivityWatch:** turn off its
+      start-at-login option in its menu-bar menu, then quit it from there.
+      Then remove its settings, its recorded data and its logs. This
+      deletes everything it recorded in that account:
+
+      ```
+      rm -rf ~/Library/Application\ Support/activitywatch ~/Library/Caches/activitywatch ~/Library/Logs/activitywatch
+      rm -f ~/Library/LaunchAgents/net.activitywatch.aw-qt.plist
+      ```
+
+- [ ] **From an administrator account:** move `/Applications/ActivityWatch.app`
+      and `/Applications/goodall.app` (the menu bar icon) to the Trash. In
+      System Settings, Privacy & Security, Accessibility, select
+      ActivityWatch and remove it with the minus button.
+- [ ] **An old eval account** can be deleted in System Settings, Users &
+      Groups, which also deletes its home folder. A fresh account is
+      cleaner than reusing one: ActivityWatch's first copy into a new eval
+      takes everything it holds, so an old account's earlier windows and
+      pages would arrive in the new eval's first work block.
+
 ## Part 1: From an administrator macOS user account
 
 An eval account cannot install software for the whole Mac, so these come
@@ -35,6 +76,19 @@ first.
       Part 2, inside the eval account.
 - [ ] Install 1Password and its `op` command only if the eval will use
       secrets. An eval with no secrets does not need them.
+- [ ] Build goodall's menu bar icon and put it in `/Applications`, where
+      every account can run it and only an administrator can change it.
+      Building needs Apple's Command Line Tools (`xcode-select --install`
+      if `xcode-select -p` prints nothing):
+
+      ```
+      git clone https://github.com/lukert33/goodall.git ~/goodall-source
+      ~/goodall-source/menu-bar-icon/build.sh
+      cp -R ~/goodall-source/menu-bar-icon/build/goodall.app /Applications/
+      ```
+
+      Nothing starts it at sign-in yet: `goodall start` starts it
+      ([menu-bar-icon.md](menu-bar-icon.md)).
 - [ ] If ActivityWatch also runs in another macOS user account on this Mac,
       quit it there until Part 3's step 3 is done, then start it again on
       its usual port, 5600. Part 3 says why, and checks that the eval
@@ -284,9 +338,10 @@ What changes in mixed account mode:
 - Every work block record says which mode it was recorded in
   (`account_mode`), and `goodall status` shows the mode.
 
-The safeguards ADR 0021 plans for mixed account mode are not built yet: the
-menu bar icon, the notifications and the automatic timeout. Until they are,
-nothing reminds you that a work block is active, so run `goodall status`
+Of the safeguards ADR 0021 plans for mixed account mode, the menu bar icon
+is built: it turns orange while a work block is active. The notifications
+and the automatic timeout are not built yet, so nothing tells you a work
+block has been left running; glance at the icon, or run `goodall status`,
 when unsure.
 
 ## Part 5: The Claude Code hooks
@@ -322,6 +377,14 @@ sessions yet (issues goodall-fs9.24 and goodall-fs9.25).
 - [ ] Check that the log directory's `transcripts/` folder holds a copy of
       each session, and that the record repo's `work-blocks/` folder holds
       one new file.
+- [ ] Check the menu bar icon. After your first `goodall start` in the eval
+      account, goodall's binoculars should appear in the menu bar, orange
+      while recording. Open its menu: the first line says what is being
+      recorded. Choose **Pause**, then **Record work block** and a
+      workstream, then **Stop recording**, and check after each that
+      `goodall status` in Terminal agrees. A menu item that did not work
+      shows a `!` beside the icon, and its details are in
+      `~/Library/Logs/goodall/menu-bar-icon.log`.
 - [ ] Try `goodall journal` and `goodall intervene` once each inside a work
       block.
 - [ ] If the eval includes ActivityWatch, check its copy. `goodall stop`
@@ -343,6 +406,27 @@ sessions yet (issues goodall-fs9.24 and goodall-fs9.25).
       and `end` both `null`, because a bucket's first copy holds everything.
       After a second work block, a second folder appears, and its `start` is
       ten minutes before the first copy's moment.
+- [ ] See for yourself what ActivityWatch recorded of your browsing. This
+      prints, for each window that had a page address, the time (in UTC), how many
+      seconds it was in front, the app, the window title and the address.
+      It is the raw record, so it shows what you searched for and which
+      pages you read. **Read it on your own screen only; never paste it
+      anywhere.**
+
+      ```
+      cd ~/evals/domain-test-logs.noindex
+      jq -r '.[] | select(.data.url != null) | [.timestamp[11:19], (.duration | floor), .data.app, .data.title, .data.url] | @tsv' activitywatch/*/events/*window*.json | sort | less -S
+      ```
+
+      What to look for: a search shows up as the search page's address,
+      with the search words in it, and usually in its title too. Only the
+      window in front is recorded, about once a second, so a page that was
+      in front for under a second may be missing, and a background tab
+      never appears. Safari's private windows appear like any other.
+      Without the Automation permission from Part 3, step 5, Safari's
+      windows appear with no title and no address, and this prints nothing
+      for them. `goodall timeline` lists the same moments as
+      `application_focus` lines naming only the app.
 - [ ] To see the warning, quit ActivityWatch from its menu-bar icon, run
       `goodall start` and `goodall stop`: stop should still succeed, with a
       warning that ActivityWatch's data was not copied. Start ActivityWatch
