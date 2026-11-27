@@ -31,6 +31,7 @@ PLANNED_COMMANDS = [
     "fixblock",
     "delete",
     "status",
+    "icon-state",
     "journal",
     "intervene",
     "timeline",
@@ -145,6 +146,7 @@ def test_group_without_subcommand_is_usage_error() -> None:
 # Commands that do something real, so they no longer report "not built yet".
 BUILT_COMMANDS = [
     "status",
+    "icon-state",
     "doctor",
     "journal",
     "intervene",

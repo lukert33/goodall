@@ -5,7 +5,8 @@ Called by the `goodall` console script (see pyproject.toml) and by
 directly with a captured terminal and a fake runner, and check the returned
 exit code, so `main` returns a number instead of calling `sys.exit` itself.
 
-`goodall status` (goodall.status), `goodall doctor` (goodall.doctor),
+`goodall status` (goodall.status), `goodall icon-state` (goodall.icon_state),
+`goodall doctor` (goodall.doctor),
 `goodall journal` and `goodall intervene` (goodall.entries),
 `goodall start`, `goodall pause` and `goodall stop` (goodall.work_block_commands),
 `goodall fixblock` (goodall.fixblock), `goodall timeline`
@@ -45,6 +46,7 @@ from goodall.doctor import run_doctor
 from goodall.entries import DECISION_MEANINGS, EntryRequest, InterventionDetails, run_intervene, run_journal
 from goodall.fixblock import run_fixblock
 from goodall.hook import run_hook
+from goodall.icon_state import run_icon_state
 from goodall.runner import RealRunner, Runner
 from goodall.scout_export import run_export_scout
 from goodall.status import run_status
@@ -163,6 +165,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="Print the result as one JSON document on standard output, for agents and scripts.",
     )
     status.set_defaults(command_name="status")
+
+    # Named for its caller, as `hook` is: the menu bar icon asks this every
+    # minute, so unlike `status` it only reads (goodall.icon_state).
+    icon_state = commands.add_parser(
+        "icon-state",
+        help="Show what the menu bar icon shows, changing nothing (called by the icon, every minute).",
+        description=(
+            "Print whether goodall is recording, paused or not recording, and what the menu bar icon's menu "
+            "offers. Unlike goodall status it only reads: it never ends a work block, commits or copies "
+            "anything. The menu bar icon runs it with --json."
+        ),
+    )
+    icon_state.add_argument(
+        "--json",
+        action="store_true",
+        help="Print the result as one JSON document on standard output, which is what the menu bar icon reads.",
+    )
+    icon_state.set_defaults(command_name="icon-state")
 
     journal = commands.add_parser(
         "journal",
@@ -423,6 +443,8 @@ def main(
 
     if command_name == "status":
         return run_status(terminal, runner, clock, as_json=arguments.json)
+    if command_name == "icon-state":
+        return run_icon_state(terminal, clock, as_json=arguments.json)
     if command_name == "start":
         return run_start(
             terminal, runner, clock, workstream=arguments.workstream, telemetry_port=arguments.telemetry_port
