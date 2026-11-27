@@ -153,11 +153,16 @@ facts are the provenance.
 
 ## Git
 
-- **Commit freely in a git context you own.** An agent working on a branch or
-  in a worktree created for its own task commits there without asking. This
-  repository rule takes precedence over the default in the Beads sections
-  below. Pushing, opening a pull request, and committing to `main` or to a
-  branch someone else is working on still wait for the owner's go-ahead.
+- **Commit, push and open a pull request freely in a git context you own.**
+  An agent working on a branch or in a worktree created for its own task
+  commits there, pushes that branch, and opens its pull request without
+  asking. Open the pull request as a draft (`gh pr create --draft`) while the
+  work is unfinished or a quality gate fails, and mark it ready when it is
+  done; if GitHub refuses a draft, prefix the title with `[DRAFT]` instead.
+  This repository rule takes precedence over the default in the Beads sections
+  below. Merging any pull request, committing to `main`, force-pushing, and
+  pushing to a branch someone else is working on still wait for the owner's
+  go-ahead.
 - **A merged branch is finished.** Once a branch's pull request is merged,
   further work starts on a new branch from `origin/main`. Claude Code hooks
   (`.claude/hooks/branch_merge_status.py`) report a merged branch when a Claude
