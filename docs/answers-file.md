@@ -42,9 +42,9 @@ Goodall onboard does **not** do these; they stay by-hand steps in
 [setup-by-hand.md](setup-by-hand.md):
 
 - Create the eval account, or install anything for the whole Mac (Part 1).
-- Install goodall, git's name and email, and Claude Code (Part 2). Goodall
-  needs git's name and email for the record repo's first commit, and stops
-  before changing anything if git has none.
+- Install goodall, git's name and email, and Claude Code (Part 2). Git's
+  name and email are optional now: see "The record repo's git identity"
+  below.
 - Give ActivityWatch its own port (Part 3). When the eval includes
   ActivityWatch, follow Part 3, then add its port and identifier to the
   answers file (below) and run goodall onboard again. Until then the plan
@@ -236,6 +236,28 @@ Goodall refuses the whole answers file, and changes nothing, when:
 
 Goodall never repeats a refused value in what it prints. If you did paste a
 real key, replace it with whoever issued it.
+
+### The record repo's git identity
+
+Every commit in the record repo names who made it, so git needs a name and
+an email. Goodall never asks for an email address. When git has no
+`user.name` or no `user.email` for the record repo (a new eval account has
+neither), goodall sets the missing ones in **that repository's own
+settings** (`git config --local`), and shows it in the plan as **Record
+repo git identity**:
+
+- `user.name` is your `display_name`;
+- `user.email` is your contributor id at `goodall.invalid`, such as
+  `ada-lovelace@goodall.invalid`. `.invalid` is reserved for names that can
+  never exist, so the address reaches nobody.
+
+The record repo is local and never pushed (ADR 0023), so this only labels
+its local history, and every later goodall commit uses it too. Goodall sets
+only what git lacks: an identity git already has, even only a name, is never
+overridden, and your global git settings are never touched. It does this
+only for a record repo it makes, or one with no commits yet; a repository
+that already has history and no identity is refused, with the
+`git config` commands that give it one.
 
 ### The one-time code
 

@@ -17,6 +17,7 @@ from it.
 import io
 import json
 import os
+import subprocess
 import sys
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -311,8 +312,29 @@ def test_a_sign_out_stop_after_a_sign_in_start_says_so(mac: Mac) -> None:
     assert stop.notifications() == [["Recording stopped", "On research, because you signed out."]]
 
 
-def test_first_sign_in_setup_that_fails_says_what_to_do_and_is_tried_again_at_the_next_sign_in(mac: Mac) -> None:
+def test_first_sign_in_finishes_in_a_new_account_with_no_git_identity(mac: Mac) -> None:
+    # A new eval account has no git settings at all. The record repo goodall
+    # makes gets an identity of its own; the account's global settings stay untouched.
     (mac.home / ".gitconfig").unlink()
+    mac.sign_in_as(EVAL_ACCOUNT_NAME)
+
+    run = run_goodall(mac, ["sign-in"])
+
+    assert run.exit_code == exit_codes.SUCCESS, run.screen
+    assert mac.marker_file().exists()
+    record_repo = mac.home / "evals" / "goodall-pilot-records"
+    author = subprocess.run(
+        ["git", "log", "-1", "--format=%an <%ae>"], cwd=record_repo, capture_output=True, text=True, check=True
+    )
+    assert author.stdout.strip() == "Ada Lovelace <ada-lovelace@goodall.invalid>"
+    assert not (mac.home / ".gitconfig").exists()
+
+
+def test_first_sign_in_setup_that_fails_says_what_to_do_and_is_tried_again_at_the_next_sign_in(mac: Mac) -> None:
+    # A record repo folder that already holds files is refused, so setup stops.
+    in_the_way = mac.home / "evals" / "goodall-pilot-records" / "notes.txt"
+    in_the_way.parent.mkdir(parents=True)
+    in_the_way.write_text("Someone's notes.\n")
     mac.sign_in_as(EVAL_ACCOUNT_NAME)
 
     failed = run_goodall(mac, ["sign-in"])
@@ -320,11 +342,11 @@ def test_first_sign_in_setup_that_fails_says_what_to_do_and_is_tried_again_at_th
     assert failed.exit_code == exit_codes.ERROR
     assert not mac.marker_file().exists()
     log = " ".join(mac.sign_in_log.read_text().split())
-    assert "git" in log
+    assert "already holds files" in log
     assert "next time you sign in" in log
     assert failed.opened() == [["/usr/bin/open", "-t", str(mac.sign_in_log)]]
 
-    mac.give_git_an_identity()
+    in_the_way.unlink()
     retried = run_goodall(mac, ["sign-in"])
 
     assert retried.exit_code == exit_codes.SUCCESS, retried.screen

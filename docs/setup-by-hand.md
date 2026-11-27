@@ -131,9 +131,12 @@ Sign in to the Mac as the eval account for everything from here on.
 
 - [ ] Run `command -v goodall` and keep the full path it prints. Part 5
       needs it.
-- [ ] Tell git who you are in this account. Goodall commits every record to
-      the record repo under this name and email, and refuses to write a
-      record without them. The commits stay on this Mac (ADR 0023).
+- [ ] Optionally, tell git who you are in this account. Goodall commits
+      every record to the record repo under this name and email. If you
+      skip this, `goodall onboard` gives the record repo it makes an
+      identity of its own: your display name and a placeholder address
+      that reaches nobody ([answers-file.md](answers-file.md), "The record
+      repo's git identity"). The commits stay on this Mac (ADR 0023).
 
       ```
       git config --global user.name "Ada Lovelace"

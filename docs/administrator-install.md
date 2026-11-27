@@ -176,11 +176,12 @@ everything `goodall sign-in` prints also goes to
 the first sign-in, and whenever setup fails, goodall opens that log in
 your text editor, so you can read what it did and what to do next.
 
-**A known gap:** setup commits the record repo's first files, so git needs
-a name and email in the eval account. A new account has none, so the first
-sign-in stops with git's next step (Part 2 of
-[setup-by-hand.md](setup-by-hand.md)): run the two `git config --global`
-commands, then sign out and in again.
+Setup commits the record repo's first files, so git needs a name and email,
+and a new account has none. Goodall sets them in the record repo's own
+settings only: your display name, and your contributor id at
+`goodall.invalid`, an address that reaches nobody. The eval account's global
+git settings are left alone ([answers-file.md](answers-file.md), "The record
+repo's git identity").
 
 ### Turning off recording at sign-in
 
@@ -243,7 +244,7 @@ note what really happened. The same list is a comment on that issue.
 - [ ] 8. A LaunchAgent in `/Library/LaunchAgents`, owned by root, runs the root-owned first-run script at sign-in for a standard account, with `HOME` set to that account's home folder.
 - [ ] 9. In every other account, the first-run script runs and changes nothing: no `~/Library/Logs/goodall/sign-in.log` appears there.
 - [ ] 10. `open -t` from the first-run LaunchAgent opens the sign-in log in TextEdit in front of the person, after macOS's setup screens.
-- [ ] 11. The first sign-in stops at git's missing name and email, says so in the log, and the next sign-in, after `git config --global`, finishes setup.
+- [ ] 11. The first sign-in, in an account with no git settings, finishes setup; `git log` in the record repo shows the display name and `<contributor id>@goodall.invalid`, and `~/.gitconfig` was not created.
 - [ ] 12. The menu bar icon's LaunchAgent starts the helper at sign-in in a standard account, the helper finds goodall through `GOODALL_COMMAND`, and Quit goodall (exit 0) is not undone while a crash is.
 - [ ] 13. The notification at a sign-in start appears under goodall's name, and whether the helper's notification permission question appears first (ADR 0024, Q80).
 - [ ] 14. In an administrator account, and any other account where goodall is not set up, the menu bar icon's menu says goodall is not set up there, and nothing else happens.

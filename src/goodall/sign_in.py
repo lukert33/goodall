@@ -50,11 +50,10 @@ and `goodall-fs9.27` leave unknown whether macOS lets anything run
 dependably at sign-out until the hand test (`goodall-ayy.11`, step 5).
 Until then the three-hour idle rule ends a work block nobody stopped.
 
-A known gap: first sign-in setup makes the record repo's first commit, so
-git needs a name and email in the eval account (Part 2 of
-docs/setup-by-hand.md), which a new account does not have. Until the
-answers file can carry them, the first sign-in fails with git's next step,
-and the next sign-in tries again.
+First sign-in setup makes the record repo's first commit, so git needs a
+name and email, which a new account does not have. goodall.onboard gives
+the record repo it makes an identity of its own when git has none
+(`plan_record_repo_identity`), so this needs nothing from the person.
 """
 
 import dataclasses

@@ -21,7 +21,9 @@ What it writes, in this order (each is one `PlannedChange`):
    saves) add the new names to its workstreams line.
 3. The construct file, `CONSTRUCT.md`, when the answers give a construct.
 4. A commit of those two files, and only those; for an existing eval, a
-   commit of eval.toml alone when a workstream was added.
+   commit of eval.toml alone when a workstream was added. When git has no
+   name or email for a new record repo, the record repo's own git settings
+   get the missing ones first (`plan_record_repo_identity`).
 5. The log directory, readable by this account only, whose name should end
    in `.noindex` (ADR 0019).
 6. The env file, `.env` beside local settings, readable by this account
@@ -145,6 +147,11 @@ EVERY_TOOL_MATCHER = "*"
 # The program the hooks run, found on the PATH when the answers do not name one.
 GOODALL_PROGRAM_NAME = "goodall"
 
+# The domain of the placeholder address on record repo commits when git has
+# no email (plan_record_repo_identity). `.invalid` is reserved for names
+# that can never exist (RFC 2606), so the address reaches nobody.
+PLACEHOLDER_EMAIL_DOMAIN = "goodall.invalid"
+
 
 class ChangeAction(StrEnum):
     """What one planned change does. The values are what `--json` shows."""
@@ -199,7 +206,16 @@ class CommitFiles:
     message: str
 
 
-Step = MakeFolder | MakeGitRepository | WriteFile | SetPermissions | CommitFiles
+@dataclass(frozen=True)
+class SetGitSetting:
+    """Set one of the record repo's own git settings (`git config --local`), never a global one."""
+
+    record_repo: Path
+    setting: str
+    value: str
+
+
+Step = MakeFolder | MakeGitRepository | WriteFile | SetPermissions | CommitFiles | SetGitSetting
 
 
 @dataclass(frozen=True)
@@ -751,8 +767,7 @@ def plan_record_repo_commit(planning: Planning, new_eval: NewEval, record_repo_i
             )
         )
         return
-    if not git_identity_is_set(planning.runner, record_repo):
-        planning.failures.append(git_identity_missing_failure(record_repo))
+    if not plan_record_repo_identity(planning, record_repo_is_git_repository):
         return
     message = (
         f"Start the record repo for eval {new_eval.name}\n\n"
@@ -768,6 +783,64 @@ def plan_record_repo_commit(planning: Planning, new_eval: NewEval, record_repo_i
             steps=[CommitFiles(record_repo, to_commit, message)],
         )
     )
+
+
+def plan_record_repo_identity(planning: Planning, record_repo_is_git_repository: bool) -> bool:
+    """Make sure git has a name and email for the record repo's first commit; False when it cannot.
+
+    A new eval account has no git identity, and goodall never asks for an
+    email address. So when git has no `user.name` or `user.email` for the
+    record repo, goodall sets the missing ones in that repository's own
+    settings: the contributor's display name, and a placeholder address
+    built from the contributor id that reaches nobody (PLACEHOLDER_EMAIL_DOMAIN).
+    The record repo is local and never pushed (ADR 0023), so this only labels
+    its local history. Only a missing setting is set, so an identity git
+    already has, even half of one, is never overridden, and global git
+    settings are never touched.
+
+    Only a record repo this run makes, or one with no commits yet (a first
+    setup that stopped part way), gets one: a repository with history is
+    someone's, and its identity is theirs to give.
+    """
+    answers = planning.answers
+    record_repo = answers.record_repo.path
+    missing = missing_identity_settings(planning.runner, record_repo)
+    if not missing:
+        return True
+    if record_repo_is_git_repository and has_commits(planning.runner, record_repo):
+        planning.failures.append(git_identity_missing_failure(record_repo))
+        return False
+    values = {
+        "user.name": answers.display_name or answers.contributor_id,
+        "user.email": placeholder_email(answers.contributor_id),
+    }
+    settings_said = []
+    steps: list[Step] = []
+    for setting in missing:
+        settings_said.append(f'{setting} "{values[setting]}"')
+        steps.append(SetGitSetting(record_repo, setting, values[setting]))
+    planning.changes.append(
+        PlannedChange(
+            id="record_repo_identity",
+            what="Record repo git identity",
+            path=record_repo / ".git" / "config",
+            action=ChangeAction.CREATE,
+            details=[
+                f"git has no {' or '.join(missing)} for the record repo, so goodall sets the repository's own "
+                + " and ".join(settings_said),
+                f"{PLACEHOLDER_EMAIL_DOMAIN} is a name that reaches nobody",
+                "only this repository's settings change, not your global git settings",
+                "the record repo is never pushed, so this only labels its local history",
+            ],
+            steps=steps,
+        )
+    )
+    return True
+
+
+def placeholder_email(contributor_id: str) -> str:
+    """The address on record repo commits when git has none: the contributor id at a domain that reaches nobody."""
+    return f"{contributor_id}@{PLACEHOLDER_EMAIL_DOMAIN}"
 
 
 def plan_log_directory(planning: Planning) -> None:
@@ -1204,15 +1277,26 @@ def is_git_repository_of_its_own(runner: Runner, folder: Path) -> bool:
 
 
 def git_identity_is_set(runner: Runner, record_repo: Path) -> bool:
-    """True when git has a name and an email to commit with, asked from the nearest folder that exists."""
+    """True when git has a name and an email to commit with in the record repo."""
+    return not missing_identity_settings(runner, record_repo)
+
+
+def missing_identity_settings(runner: Runner, record_repo: Path) -> list[str]:
+    """Which of `user.name` and `user.email` git has no value for, asked from the nearest folder that exists."""
     folder = record_repo
     while describe_path(folder) != "folder" and folder != folder.parent:
         folder = folder.parent
+    missing = []
     for setting in IDENTITY_SETTINGS:
         result = run_git(runner, folder, ["config", "--get", setting])
         if not result.standard_output.strip():
-            return False
-    return True
+            missing.append(setting)
+    return missing
+
+
+def has_commits(runner: Runner, record_repo: Path) -> bool:
+    """True when the record repo's current branch has at least one commit."""
+    return run_git(runner, record_repo, ["rev-parse", "--verify", "--quiet", "HEAD"]).succeeded
 
 
 def differing_keys(existing_table: dict[str, object], wanted_table: dict[str, object]) -> list[str]:
@@ -1267,6 +1351,11 @@ def apply_step(step: Step, runner: Runner) -> str | None:
         result = run_git(runner, step.folder, ["init", "--quiet"])
         if not result.succeeded:
             return f"git init did not work: {result.problem}"
+        return None
+    if isinstance(step, SetGitSetting):
+        result = run_git(runner, step.record_repo, ["config", "--local", step.setting, step.value])
+        if not result.succeeded:
+            return f"git config did not work: {result.problem}"
         return None
     add_result = run_git(runner, step.record_repo, ["add", "--", *step.relative_paths])
     if not add_result.succeeded:
@@ -1445,8 +1534,9 @@ def git_identity_missing_failure(record_repo: Path) -> Failure:
         kind="record_repo_identity_missing",
         what_happened=(f"git has no name or email to put on the first commit in {record_repo}. Nothing was changed."),
         why=(
-            "Every commit in the record repo names who made it. Goodall uses the name and email you gave git, and "
-            "never makes one up. The commits stay on this Mac."
+            "Every commit in the record repo names who made it. Goodall gives a record repo it makes an identity of "
+            "its own when git has none, but this one already has history, so its identity is yours to give. The "
+            "commits stay on this Mac."
         ),
         what_to_do_next="Tell git who you are, with your own name and email, then run goodall onboard again.",
         commands_to_try=(
