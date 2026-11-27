@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from goodall import agent_session_copies, cli, hook, records
+from goodall import agent_session_copies, cli, hook, records, scout_export
 from goodall.fake_runner import FakeRunner, PretendProgram
 from goodall.terminal import Terminal
 
@@ -322,7 +322,7 @@ def test_without_the_flag_json_describes_what_would_be_deleted_in_a_stable_shape
     ]
     assert document["deleted"] is False
     assert document["agent_sessions"] == [{"app_family": "Claude", "id": DELETED_SESSION}]
-    assert {"kind": "agent_session_copies", "files": 3} in document["kinds"]
+    assert {"kind": "agent_session_copies", "files": 3, "rebuild_command": None} in document["kinds"]
     assert document["confirm_command"] == f"goodall delete {work_block_id} --delete-captured-data"
 
 
@@ -488,7 +488,7 @@ def test_fixes_go_with_the_record_and_journal_entries_and_activitywatch_copies_s
 
     assert delete.exit_code == 0, delete.everything_printed
     document = json.loads(delete.standard_output)
-    assert {"kind": "work_block_fixes", "files": 1} in document["kinds"]
+    assert {"kind": "work_block_fixes", "files": 1, "rebuild_command": None} in document["kinds"]
     assert list((eval_account.record_repo / "work-block-fixes").glob("*.json")) == []
     assert entry_file.exists()
     assert activitywatch_copy.exists()
@@ -706,13 +706,17 @@ def test_what_a_work_block_captured_is_found_the_same_way_in_both_account_modes(
         )
 
     assert previews["mixed"] == previews["dedicated"]
-    assert {"kind": "agent_session_copies", "files": 3} in previews["mixed"][0]
+    assert {"kind": "agent_session_copies", "files": 3, "rebuild_command": None} in previews["mixed"][0]
     assert previews["mixed"][1] == [{"app_family": "Claude", "id": DELETED_SESSION}]
     assert files_left["mixed"] == files_left["dedicated"] == ([], [], [])
 
 
 # ---------------------------------------------------------------------------
 # The timeline, which is derived from every raw record
+
+
+def timeline_folder(eval_account: EvalAccount) -> Path:
+    return eval_account.log_directory / "timeline"
 
 
 def record_an_afternoon_work_block(eval_account: EvalAccount, monkeypatch: pytest.MonkeyPatch) -> GoodallRun:
@@ -723,6 +727,117 @@ def record_an_afternoon_work_block(eval_account: EvalAccount, monkeypatch: pytes
     stop = run_goodall(eval_account, monkeypatch, ["stop"], AFTERNOON_END)
     assert stop.exit_code == 0, stop.standard_error
     return stop
+
+
+def test_the_timeline_is_deleted_with_the_work_block_named_as_a_kind_and_said_how_to_build_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    eval_account = make_eval_account(tmp_path)
+    work_block_id = record_a_morning_work_block(eval_account, monkeypatch)
+    assert files_under(timeline_folder(eval_account)) == ["timeline.sqlite3"]
+
+    preview = run_goodall(eval_account, monkeypatch, ["delete", work_block_id], AFTERNOON_START)
+    preview_as_json = run_goodall(eval_account, monkeypatch, ["delete", work_block_id, "--json"], AFTERNOON_START)
+
+    assert files_under(timeline_folder(eval_account)) == ["timeline.sqlite3"]
+    assert "Timeline 1 file; build it again with goodall timeline" in preview.everything_printed
+    assert {"kind": "timeline", "files": 1, "rebuild_command": "goodall timeline"} in json.loads(
+        preview_as_json.standard_output
+    )["kinds"]
+
+    delete = run_goodall(
+        eval_account, monkeypatch, ["delete", work_block_id, "--delete-captured-data"], AFTERNOON_START
+    )
+
+    assert delete.exit_code == 0, delete.everything_printed
+    # The timeline held the work block's row, its entries and a pointer naming its transcript.
+    assert not timeline_folder(eval_account).exists()
+    assert "Timeline 1 file; build it again with goodall timeline" in delete.everything_printed
+
+
+def test_each_kind_in_json_says_which_command_builds_it_again_or_null(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    eval_account = make_eval_account(tmp_path)
+    work_block_id = record_a_morning_work_block(eval_account, monkeypatch)
+
+    preview = run_goodall(eval_account, monkeypatch, ["delete", work_block_id, "--json"], AFTERNOON_START)
+
+    kinds = json.loads(preview.standard_output)["kinds"]
+    for kind in kinds:
+        assert sorted(kind) == ["files", "kind", "rebuild_command"]
+    assert {"kind": "agent_session_copies", "files": 3, "rebuild_command": None} in kinds
+
+
+def test_a_scout_export_goodall_made_is_named_with_the_command_that_builds_it_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    eval_account = make_eval_account(tmp_path)
+    work_block_id = record_a_morning_work_block(eval_account, monkeypatch)
+    scout_export_folder = eval_account.log_directory / scout_export.DEFAULT_EXPORT_FOLDER
+    scout_export_folder.mkdir(parents=True)
+    (scout_export_folder / scout_export.EXPORT_MARKER_FILE_NAME).write_text("{}\n")
+
+    preview = run_goodall(eval_account, monkeypatch, ["delete", work_block_id], AFTERNOON_START)
+    preview_as_json = run_goodall(eval_account, monkeypatch, ["delete", work_block_id, "--json"], AFTERNOON_START)
+
+    assert "Scout export 1 file; build it again with goodall export scout" in preview.everything_printed
+    assert {"kind": "scout_export", "files": 1, "rebuild_command": "goodall export scout"} in json.loads(
+        preview_as_json.standard_output
+    )["kinds"]
+
+
+def test_goodall_timeline_says_a_deleted_work_block_was_deleted_and_shows_the_others(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    eval_account = make_eval_account(tmp_path)
+    deleted_id = record_a_morning_work_block(eval_account, monkeypatch)
+    record_an_afternoon_work_block(eval_account, monkeypatch)
+    [_, kept_id] = work_block_ids(eval_account)
+    later = AFTERNOON_END + timedelta(hours=1)
+    run_goodall(eval_account, monkeypatch, ["delete", deleted_id, "--delete-captured-data"], later)
+
+    asked_for_deleted = run_goodall(eval_account, monkeypatch, ["timeline", deleted_id], later)
+    as_json = run_goodall(eval_account, monkeypatch, ["timeline", deleted_id, "--json"], later)
+    last = run_goodall(eval_account, monkeypatch, ["timeline", "--json"], later)
+
+    assert asked_for_deleted.exit_code == 1
+    assert f"What work block {deleted_id} captured was deleted" in asked_for_deleted.everything_printed
+    assert "is not the id of an ended work block" not in asked_for_deleted.everything_printed
+    assert f"goodall timeline {kept_id}" in asked_for_deleted.everything_printed
+    assert as_json.exit_code == 1
+    document = json.loads(as_json.standard_output)
+    assert document["work_block"] is None
+    assert [failure["kind"] for failure in document["failures"]] == ["timeline_work_block_deleted"]
+    # The timeline is built again without the deleted work block, and with no problem to report.
+    assert last.exit_code == 0, last.everything_printed
+    last_document = json.loads(last.standard_output)
+    assert last_document["work_block"]["id"] == kept_id
+    assert last_document["warnings"] == []
+    assert DELETED_SESSION not in timeline_text(eval_account)
+    assert deleted_id not in timeline_text(eval_account)
+
+
+def timeline_text(eval_account: EvalAccount) -> str:
+    """Every byte of the timeline file, read as text, to look for something that must not be in it."""
+    return (timeline_folder(eval_account) / "timeline.sqlite3").read_bytes().decode("utf-8", errors="replace")
+
+
+def test_a_timeline_that_still_holds_a_deleted_work_block_does_not_show_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    eval_account = make_eval_account(tmp_path)
+    work_block_id = record_a_morning_work_block(eval_account, monkeypatch)
+    # A timeline from before the deletion, put back as a build that was running during it would leave one.
+    kept_aside = tmp_path / "timeline-kept-aside"
+    shutil.copytree(timeline_folder(eval_account), kept_aside)
+    run_goodall(eval_account, monkeypatch, ["delete", work_block_id, "--delete-captured-data"], AFTERNOON_START)
+    shutil.copytree(kept_aside, timeline_folder(eval_account))
+
+    timeline = run_goodall(eval_account, monkeypatch, ["timeline", work_block_id], AFTERNOON_START)
+
+    assert timeline.exit_code == 1
+    assert f"What work block {work_block_id} captured was deleted" in timeline.everything_printed
 
 
 def test_after_a_deletion_a_later_goodall_stop_and_a_rebuild_report_no_timeline_problem(

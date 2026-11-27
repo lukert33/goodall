@@ -35,6 +35,11 @@ what belongs to the work block, and how goodall can tell:
 - The Scout export in the log directory, which is derived from every
   transcript, so it is deleted whole (only when goodall made it), to be
   rebuilt with `goodall export scout`.
+- The timeline in the log directory (`timeline/`, goodall.timeline), which
+  is derived from every transcript too: it holds the work block's row, its
+  entries, and a pointer naming each transcript. It is deleted whole, to be
+  built again without the work block by `goodall timeline` or the next
+  `goodall stop`.
 - In the record repo: the work block's record is replaced by a deleted work
   block (goodall.records), and its work block fixes are removed in the
   same commit (goodall.record_repo). Journal entries and interventions that
@@ -64,6 +69,14 @@ Decisions a reader would otherwise reverse-engineer:
   read the times; once the replacement is written there is nothing left.
 - The copying lock is held while agent sessions are deleted, so a `goodall
   status` in another terminal can never copy one back in the middle.
+- The timeline is deleted, not built again here. Deleting is what this
+  module does to every other kind, it cannot fail half-way through reading
+  every transcript, and it needs nothing `goodall delete` does not already
+  have. Goodall builds a missing timeline by itself the next time it is
+  asked for one (goodall.timeline.is_current), so nothing is lost. A
+  timeline built again while the deletion was under way could still hold
+  the work block; the commands that take a work block's id ask
+  `read_deleted_work_block` first, so they never show it.
 """
 
 import dataclasses
@@ -82,6 +95,7 @@ from goodall.runner import Runner
 from goodall.scout_export import DEFAULT_EXPORT_FOLDER, EXPORT_MARKER_FILE_NAME
 from goodall.source_applications import AgentSession, AppFamily
 from goodall.terminal import Failure
+from goodall.timeline import TIMELINE_FOLDER_NAME
 from goodall.verbatim_copies import describe_error, held_lock
 
 # The kinds of thing deleted, each a fixed word for `--json`, with how a
@@ -91,6 +105,7 @@ TELEMETRY = "telemetry"
 HEARTBEATS = "heartbeats"
 BOOKKEEPING = "bookkeeping"
 SCOUT_EXPORT = "scout_export"
+TIMELINE = "timeline"
 WORK_BLOCK_FIXES = "work_block_fixes"
 KIND_LABELS = {
     AGENT_SESSION_COPIES: "Agent sessions",
@@ -98,7 +113,15 @@ KIND_LABELS = {
     HEARTBEATS: "Heartbeats",
     BOOKKEEPING: "Bookkeeping",
     SCOUT_EXPORT: "Scout export",
+    TIMELINE: "Timeline",
     WORK_BLOCK_FIXES: "Work block fixes",
+}
+
+# The kinds that are derived from every raw record, so are deleted whole,
+# each with the command that builds it again from the raw records left.
+REBUILD_COMMANDS = {
+    SCOUT_EXPORT: "goodall export scout",
+    TIMELINE: "goodall timeline",
 }
 
 
@@ -257,6 +280,9 @@ def plan_deletion(record_repo: Path, log_directory: Path, work_block: WorkBlockT
     scout_export = log_directory / DEFAULT_EXPORT_FOLDER
     if (scout_export / EXPORT_MARKER_FILE_NAME).is_file():
         add_kind(plan, SCOUT_EXPORT, [scout_export])
+    # The folder is goodall's own, so it goes whole: the timeline file and
+    # anything a build that was interrupted left beside it.
+    add_kind(plan, TIMELINE, [log_directory / TIMELINE_FOLDER_NAME])
 
     plan.fix_files = fix_files_of(record_repo, work_block.id)
     if plan.fix_files:

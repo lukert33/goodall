@@ -37,6 +37,10 @@ Decisions a reader would otherwise reverse-engineer:
   standard output, as is `--json`, which says `"deleted": false`.
 - Nothing read from a raw record is ever shown: only kinds, counts, ids and
   where things are.
+- The Scout export and the timeline are derived from every raw record, so
+  each is deleted whole and listed as a kind, with the command that builds
+  it again: in words beside its count, and as `rebuild_command` in `--json`
+  (null for a kind that cannot be built again).
 - A replacement written but not committed is a warning and exit 0: the
   data is deleted, which is what was asked, and the warning gives the git
   command to finish. One not written at all is exit 1, and running the
@@ -162,7 +166,13 @@ class Report:
         left_in_place: list[dict[str, object]] = []
         if plan is not None:
             for kind in plan.kinds:
-                kinds.append({"kind": kind.kind, "files": kind.file_count})
+                kinds.append(
+                    {
+                        "kind": kind.kind,
+                        "files": kind.file_count,
+                        "rebuild_command": work_block_deletion.REBUILD_COMMANDS.get(kind.kind),
+                    }
+                )
             for agent_session in plan.agent_sessions:
                 agent_sessions.append({"app_family": agent_session.app_family.name, "id": agent_session.id})
             other_work_blocks = plan.other_work_blocks_lost_transcripts
@@ -263,12 +273,19 @@ class Report:
 
 
 def describe_kind(plan: DeletionPlan, kind: work_block_deletion.KindToDelete) -> str:
-    """How much of one kind there is, for a person: `1 (3 files)`, `4 files`, `1 file`."""
+    """How much of one kind there is, for a person: `1 (3 files)`, `4 files`, `1 file`.
+
+    A kind derived from every raw record (the Scout export, the timeline)
+    is deleted whole, so the command that builds it again is said with it.
+    """
     files = f"{kind.file_count} files"
     if kind.file_count == 1:
         files = "1 file"
     if kind.kind == work_block_deletion.AGENT_SESSION_COPIES:
         return f"{len(plan.agent_sessions)} ({files})"
+    rebuild_command = work_block_deletion.REBUILD_COMMANDS.get(kind.kind)
+    if rebuild_command is not None:
+        return f"{files}; build it again with {rebuild_command}"
     return files
 
 

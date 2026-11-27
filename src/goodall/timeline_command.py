@@ -32,6 +32,13 @@ Exit codes, as `goodall fixblock` uses them: 0 when a work block was shown;
 given is not an ended work block in it; 2 when what was given is not
 shaped like a work block id at all.
 
+The id of a deleted work block (`goodall delete`, ADR 0021) is answered
+from the record repo before the timeline is read: what it captured was
+deleted, exit 1, because the work block asked for was not shown and never
+can be. `goodall delete` deletes the timeline, so a timeline built since
+does not hold the work block; asking the record repo first means that even
+a timeline that somehow still does is never shown for it.
+
 How this sits beside the planned `logs` command (Beads issue goodall-acp.5,
 still a stub here): that command is to say what was recorded and whether
 it is intact, reading only. This one says what happened, in order, and may
@@ -53,6 +60,7 @@ from goodall.work_block_commands import (
     describe_moment,
     find_eval_for_work_blocks,
 )
+from goodall.work_block_deletion import read_deleted_work_block
 
 # The kinds left out unless --all is given.
 BOOKKEEPING_KINDS = (KIND_ENTRY, KIND_UNFAMILIAR_ENTRY)
@@ -83,6 +91,9 @@ def run_timeline(terminal: Terminal, clock: Clock, request: TimelineRequest) -> 
     if isinstance(eval_reading, list):
         return show_failures(terminal, request, eval_reading, exit_codes.ERROR)
     timeline_file = timeline.timeline_file_in(eval_reading.local_settings.log_directory.path)
+    deleted = None
+    if request.work_block_id is not None:
+        deleted = read_deleted_work_block(eval_reading.local_settings.record_repo.path, request.work_block_id)
     warnings = []
     if request.rebuild or not timeline.is_current(timeline_file):
         build = build_timeline(eval_reading, clock())
@@ -92,6 +103,9 @@ def run_timeline(terminal: Terminal, clock: Clock, request: TimelineRequest) -> 
             warnings.append(timeline.build_problems_failure(build))
     try:
         work_blocks = timeline.read_work_blocks(timeline_file)
+        if deleted is not None:
+            failure = work_block_deleted_failure(deleted, work_blocks_not_deleted(work_blocks, deleted.id))
+            return show_failures(terminal, request, [failure], exit_codes.ERROR)
         if not work_blocks:
             return show_failures(terminal, request, [no_work_block_failure()], exit_codes.ERROR)
         work_block = work_blocks[-1]
@@ -325,6 +339,45 @@ def work_block_unknown_failure(work_blocks: list[TimelineWorkBlock]) -> Failure:
             "work block ended a moment ago, run goodall timeline --rebuild first."
         ),
         commands_to_try=(f"goodall timeline {latest_ids[-1]}",),
+    )
+
+
+def work_blocks_not_deleted(work_blocks: list[TimelineWorkBlock], deleted_id: str) -> list[TimelineWorkBlock]:
+    """The timeline's work blocks without the deleted one, which only a timeline from before the deletion holds."""
+    kept = []
+    for work_block in work_blocks:
+        if work_block_id_of(work_block) != deleted_id:
+            kept.append(work_block)
+    return kept
+
+
+def work_block_deleted_failure(deleted: records.DeletedWorkBlock, work_blocks: list[TimelineWorkBlock]) -> Failure:
+    """The failure for the id of a deleted work block. The id is repeated back: it is a file's name in the record repo.
+
+    `work_blocks` are the ended work blocks the timeline does hold; the
+    last one is offered as the command to try, when there is one.
+    """
+    what_to_do_next = "Nothing needs doing. No other work block has ended yet, so there is none to show."
+    commands_to_try: tuple[str, ...] = ()
+    if work_blocks:
+        what_to_do_next = (
+            "Nothing needs doing. To see another work block, give its id, or leave the id out to see the last one "
+            "that ended."
+        )
+        commands_to_try = (f"goodall timeline {work_block_id_of(work_blocks[-1])}",)
+    return Failure(
+        kind="timeline_work_block_deleted",
+        what_happened=(
+            f"What work block {deleted.id} captured was deleted, on {describe_moment(deleted.deleted_at)}, so "
+            "there is nothing of it to show."
+        ),
+        why=(
+            "goodall delete deleted its transcripts and telemetry, and its record in the record repo now says "
+            "only that a work block was deleted, and when. The timeline is built from those, so it no longer "
+            "holds the work block."
+        ),
+        what_to_do_next=what_to_do_next,
+        commands_to_try=commands_to_try,
     )
 
 

@@ -97,15 +97,25 @@ never edited, so what remains is still verbatim. Per kind:
   again, even when used in a later work block.
 - **Telemetry**, **heartbeats** and goodall's bookkeeping about the work
   block, all named after its id, and the pause (`goodall pause`) when it
-  names this work block, so the next `goodall start` continues nothing; and
-  the Scout export in `exports/scout`,
-  which is derived from every transcript and is rebuilt with
-  `goodall export scout`.
+  names this work block, so the next `goodall start` continues nothing.
+- **What is derived from every transcript**, each deleted whole and listed
+  with the command that builds it again from the raw records left: the
+  Scout export in `exports/scout` (`goodall export scout`), and the timeline
+  in `timeline/` (`goodall timeline`; the next `goodall stop` builds it
+  too). In `--json`, each entry of `kinds` carries that command as
+  `rebuild_command`, which is null for a kind that cannot be built again.
 - **The record repo.** The work block's record is replaced by a deleted work
   block (`docs/record-schemas.md`) and its fixes are removed, in one commit.
   Git history is left alone. A later work block that names this one in
   `continues_work_block` keeps its record as it is; the id it names is now
   the deleted work block's.
+
+Afterwards the commands that take a work block's id say that it was
+deleted, and exit 1: `goodall timeline <id>` shows nothing of it, and
+`goodall fixblock <id>` records nothing. `goodall delete <id>` says it was
+already deleted and exits 0, because nothing is left to do. A later
+`goodall stop` or `goodall timeline --rebuild` passes over the deleted work
+block without a warning.
 
 Left in place, and said so in the output with a next step:
 

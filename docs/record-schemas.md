@@ -186,7 +186,10 @@ the fact of the deletion stays honest.
 `contributor` is who asked for the deletion. The work block fixes of a
 deleted work block are removed in the same commit, because each one names
 the workstream the record no longer gives. Code that reads `work-blocks/`
-asks `records.json_record_type` first and passes over a deleted work block.
+asks `records.json_record_type` first and passes over a deleted work block:
+the Scout export and the timeline leave it out without a warning, and
+`goodall timeline` and `goodall fixblock`, given its id, say that the work
+block was deleted.
 
 <!-- example: deleted_work_block -->
 ```json
