@@ -51,7 +51,10 @@ Decisions a reader would otherwise reverse-engineer:
   without a list of them the next work block's end would copy it back,
   whole. The list is `transcript-sync/deleted-agent-sessions.json`. When
   it cannot be read, nothing is copied at all and the note stays, because
-  copying back what a person deleted is worse than copying late.
+  copying back what a person deleted is worse than copying late. A
+  deleted agent session that has a record inside the work block being
+  copied is counted, so `goodall stop` can say that work block's capture
+  is missing one on purpose; nothing about it is a problem.
 """
 
 import json
@@ -103,19 +106,24 @@ class CopyResult:
 
     `agent_sessions_copied` counts the agent sessions that had a record
     inside a work block and whose files are now in the log directory,
-    whether or not they had changed since an earlier copy. `problems`
-    holds a plain sentence for each thing that went wrong; while there is
-    one, the work block's note stays and copying is tried again.
+    whether or not they had changed since an earlier copy.
+    `deleted_agent_sessions_left_out` counts those that had a record
+    inside a work block and were not copied because a person deleted
+    their copies earlier. `problems` holds a plain sentence for each thing
+    that went wrong; while there is one, the work block's note stays and
+    copying is tried again.
     """
 
     agent_sessions_copied: int = 0
     earlier_copies_kept: int = 0
+    deleted_agent_sessions_left_out: int = 0
     problems: list[str] = field(default_factory=list)
 
     def add(self, other: "CopyResult") -> None:
         """Take in what copying for another work block did."""
         self.agent_sessions_copied += other.agent_sessions_copied
         self.earlier_copies_kept += other.earlier_copies_kept
+        self.deleted_agent_sessions_left_out += other.deleted_agent_sessions_left_out
         self.problems.extend(other.problems)
 
 
@@ -333,19 +341,26 @@ def copy_agent_sessions_inside(
     One agent session that cannot be read or copied becomes a problem, and
     the others are still copied. So does one with files that had to be
     skipped, though it counts as copied: the rest of it is. One in
-    `deleted`, which a person deleted, is passed over without a word.
+    `deleted`, which a person deleted, is never copied; it is counted as
+    left out when it has a record inside the work block.
     """
     found = app_family.find_agent_sessions(log_directory)
     result.problems.extend(found.problems)
     for agent_session in found.agent_sessions:
-        if (app_family.name, agent_session.id) in deleted:
-            continue
         described = f"{app_family.name} agent session {agent_session.id}"
+        was_deleted = (app_family.name, agent_session.id) in deleted
         try:
             if not app_family.has_record_inside(agent_session, started_at, ended_at):
                 continue
+            if was_deleted:
+                result.deleted_agent_sessions_left_out += 1
+                continue
             copying = app_family.copy_agent_session(agent_session, log_directory, now)
         except OSError as error:
+            if was_deleted:
+                # It would not have been copied anyway, so not being able
+                # to read it is no problem and leaves nothing to try again.
+                continue
             result.problems.append(f"{described}: {describe_error(error)}.")
             continue
         if copying.skipped:

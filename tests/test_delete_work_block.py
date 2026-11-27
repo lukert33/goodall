@@ -371,6 +371,24 @@ def test_a_deleted_transcript_is_not_copied_again_when_a_later_work_block_ends(
 
     assert stop.exit_code == 0, stop.everything_printed
     assert files_under(eval_account.copied_transcripts) == []
+    # The later work block's capture is incomplete on purpose, and stop says so.
+    assert "Agent sessions left out" in stop.standard_output
+    assert "1, because you deleted its copies with goodall delete" in stop.standard_output
+
+
+def test_a_later_work_block_the_deleted_agent_session_was_not_used_in_says_nothing_of_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    eval_account = make_eval_account(tmp_path)
+    morning_id = record_a_morning_work_block(eval_account, monkeypatch)
+    run_goodall(eval_account, monkeypatch, ["delete", morning_id, "--delete-captured-data"], AFTERNOON_START)
+
+    # The deleted Claude session is still in Claude Code's own folder, untouched since the morning.
+    run_goodall(eval_account, monkeypatch, ["start"], AFTERNOON_START)
+    stop = run_goodall(eval_account, monkeypatch, ["stop"], AFTERNOON_END)
+
+    assert stop.exit_code == 0, stop.everything_printed
+    assert "left out" not in stop.everything_printed
 
 
 def test_the_active_work_block_cannot_be_deleted_and_the_next_step_is_to_stop_it(

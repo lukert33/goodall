@@ -227,11 +227,24 @@ def test_an_agent_session_whose_copies_a_person_deleted_is_never_copied_again(
     result = agent_session_copies.copy_ended_work_blocks(log_directory, NOW)
 
     assert (result.agent_sessions_copied, result.problems) == (1, [])
+    assert result.deleted_agent_sessions_left_out == 1
     assert sorted(path.name for path in (log_directory / "notebook" / "conversations").iterdir()) == ["c-kept"]
     assert agent_session_copies.read_deleted_agent_sessions(log_directory) == {
         ("Notebook", "c-deleted"),
         ("Other", "c-kept"),
     }
+
+
+def test_a_deleted_agent_session_with_no_record_inside_the_work_block_is_not_counted_as_left_out(
+    log_directory: Path, notebook_folder: Path
+) -> None:
+    write_conversation(notebook_folder, "c-deleted", [STARTED_AT - timedelta(hours=2)])
+    agent_session_copies.note_agent_sessions_deleted(log_directory, [("Notebook", "c-deleted")])
+    agent_session_copies.note_work_block_to_copy(log_directory, WORK_BLOCK, STARTED_AT, ENDED_AT)
+
+    result = agent_session_copies.copy_ended_work_blocks(log_directory, NOW)
+
+    assert (result.deleted_agent_sessions_left_out, result.problems) == (0, [])
 
 
 def test_a_list_of_deleted_agent_sessions_goodall_cannot_read_stops_every_copy_and_keeps_the_note(

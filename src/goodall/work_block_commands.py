@@ -510,6 +510,8 @@ def end_active_work_block(
         ("Claude sessions", str(len(ended_record.claude_sessions))),
         ("Agent sessions copied", str(copies.agent_sessions_copied)),
     ]
+    if copies.deleted_agent_sessions_left_out > 0:
+        facts.append(("Agent sessions left out", describe_left_out(copies.deleted_agent_sessions_left_out)))
     if timeline_build.built:
         facts.append(("Timeline", "built; run goodall timeline to read this work block in time order"))
     telemetry_description = describe_telemetry(log_directory, ended_record)
@@ -947,9 +949,23 @@ def describe_agent_session_copies(copies: agent_session_copies.CopyResult) -> st
             f"{copies.earlier_copies_kept} earlier copies no longer matched the start of their files, so they "
             f"were kept, unchanged, in {claude_family.SUPERSEDED_FOLDER_NAME} in the log directory."
         )
+    if copies.deleted_agent_sessions_left_out > 0:
+        sentences.append(f"Agent sessions left out: {describe_left_out(copies.deleted_agent_sessions_left_out)}.")
     if not sentences:
         return None
     return " ".join(sentences)
+
+
+def describe_left_out(count: int) -> str:
+    """How many agent sessions were used in a work block and not copied, because the person deleted their copies.
+
+    Said at the end of the work block so its capture is not quietly
+    incomplete: `goodall delete` never copies a deleted agent session
+    again, even when it is resumed later (goodall.agent_session_copies).
+    """
+    if count == 1:
+        return "1, because you deleted its copies with goodall delete"
+    return f"{count}, because you deleted their copies with goodall delete"
 
 
 def copy_activitywatch(
