@@ -406,6 +406,16 @@ def record_time(line: bytes) -> datetime | None:
         record = json.loads(line)
     except ValueError:
         return None
+    return time_in_record(record)
+
+
+def time_in_record(record: object) -> datetime | None:
+    """The time a transcript record, already read from its line, carries; None when it carries none.
+
+    Shared with the timeline (goodall.timeline_claude), so that the time
+    that decides whether an agent session is copied and the time an entry
+    is listed at are read by one rule.
+    """
     if not isinstance(record, dict):
         return None
     timestamp = record.get("timestamp")

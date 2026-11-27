@@ -8,9 +8,10 @@ this page in the same commit, and raise `RULES_VERSION` (ADR 0004).
 ActivityWatch is decided per eval, in the eval config (ADR 0016); goodall does
 not depend on it. When a work block ends, goodall copies ActivityWatch's data
 into the log directory; "Copies in the log directory" below says where and in
-what shape. The rules on this page read an ActivityWatch export. They do not
-yet read those copies, whose events are a bare list for each bucket and carry
-an `id`.
+what shape. `parse_activitywatch_export` reads an ActivityWatch export, and
+does not yet read those copies (Beads issue `goodall-fs9.32`). The timeline
+does: `src/goodall/timeline_activitywatch.py` applies rules 2 to 6 below to
+each copied event, and keeps none of the private text (`docs/timeline.md`).
 
 ## Private text: read this first
 

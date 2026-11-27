@@ -33,6 +33,7 @@ PLANNED_COMMANDS = [
     "status",
     "journal",
     "intervene",
+    "timeline",
     "hook",
     "sync",
     "logs",
@@ -152,6 +153,7 @@ BUILT_COMMANDS = [
     "pause",
     "fixblock",
     "delete",
+    "timeline",
     "hook",
     "export scout",
 ]

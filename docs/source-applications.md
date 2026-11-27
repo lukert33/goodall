@@ -14,7 +14,8 @@ page says what that is, one family at a time.
 
 The Antigravity family (`goodall-fs9.24`) and the Codex family
 (`goodall-fs9.25`) are not built yet. Each adds a row here and a section
-below.
+below, and a module that turns its copies into timeline entries
+(`docs/timeline.md`).
 
 ## The Claude family
 
