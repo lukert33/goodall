@@ -275,10 +275,18 @@ your first `goodall stop`.
       measure, in a sentence or two.
 - [ ] Commit both files.
 - [ ] Create the log directory, outside any repository, with a name ending
-      in `.noindex` so Spotlight leaves it alone (ADR 0019). **Not yet
-      confirmed:** that the `.noindex` name works on the current macOS. To
-      check, put a file with an unusual name inside it, wait a minute, and
-      search for that name in Spotlight; it should not be found.
+      in `.noindex` so Spotlight leaves it alone (ADR 0019). **Still
+      unconfirmed on a real Mac:** that the `.noindex` name works on the
+      current macOS (the one attempt, on macOS 26.6, could not run: see
+      goodall-ayy.8). `goodall doctor` now asks Spotlight, with `mdfind`,
+      whether it can find anything inside the log directory, and warns if it
+      can. If it warns about a folder that already ends in `.noindex`, add the
+      folder to Spotlight's Search Privacy list (System Settings, then
+      Spotlight) instead. To check by hand, put a file with an unusual name
+      inside it, wait a minute, and search for that name in Spotlight; it
+      should not be found. Test in a folder Spotlight indexes: it skips
+      folders whose path has a hidden part, such as `.claude`, and the system
+      temporary folder.
 
       ```
       mkdir -p ~/evals/domain-test-logs.noindex
