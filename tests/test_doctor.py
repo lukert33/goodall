@@ -319,8 +319,27 @@ ActivityWatch
   pass        ActivityWatch's AFK bucket was updated in the last 10 minutes
   pass        No ActivityWatch browser watcher is installed
 
+First sign-in
+  pass        goodall is installed for every account, and only root can change
+              it
+              No first sign-in setup is installed on this Mac, so there is
+              nothing to check: this account was set up by hand, or the
+              administrator install has not been run.
+
+  pass        The first-run script and the staged answers file are owned by
+              root, and no other account can change them
+              No first sign-in setup is installed on this Mac, so there is
+              nothing to check: this account was set up by hand, or the
+              administrator install has not been run.
+
+  pass        The LaunchAgents are in place and run the first-run script and the
+              menu bar icon
+              No first sign-in setup is installed on this Mac, so there is
+              nothing to check: this account was set up by hand, or the
+              administrator install has not been run.
+
 All checks passed. One thing goodall cannot check without reading a secret.
-26 passed, 0 warned, 0 failed, 0 skipped, 1 unverified
+29 passed, 0 warned, 0 failed, 0 skipped, 1 unverified
 """
 
 
@@ -413,7 +432,26 @@ ActivityWatch
   skip        No ActivityWatch browser watcher is installed
               Waiting for: Local settings are found
 
-2 passed, 0 warned, 1 failed, 24 skipped, 0 unverified
+First sign-in
+  pass        goodall is installed for every account, and only root can change
+              it
+              No first sign-in setup is installed on this Mac, so there is
+              nothing to check: this account was set up by hand, or the
+              administrator install has not been run.
+
+  pass        The first-run script and the staged answers file are owned by
+              root, and no other account can change them
+              No first sign-in setup is installed on this Mac, so there is
+              nothing to check: this account was set up by hand, or the
+              administrator install has not been run.
+
+  pass        The LaunchAgents are in place and run the first-run script and the
+              menu bar icon
+              No first sign-in setup is installed on this Mac, so there is
+              nothing to check: this account was set up by hand, or the
+              administrator install has not been run.
+
+5 passed, 0 warned, 1 failed, 24 skipped, 0 unverified
 """
 
 
@@ -483,6 +521,9 @@ ALL_CHECK_IDS = [
     "activitywatch.window_and_afk_buckets_exist",
     "activitywatch.afk_bucket_is_recent",
     "activitywatch.no_browser_watcher",
+    "first_sign_in.goodall_for_every_account",
+    "first_sign_in.staged_files_protected",
+    "first_sign_in.launch_agents_in_place",
 ]
 
 
@@ -491,7 +532,7 @@ def test_healthy_setup_as_json_gives_the_same_results(healthy_account: EvalAccou
 
     assert exit_code == exit_codes.SUCCESS
     assert document["schema_version"] == 1
-    assert document["summary"] == {"passed": 26, "warned": 0, "failed": 0, "skipped": 0, "unverified": 1}
+    assert document["summary"] == {"passed": 29, "warned": 0, "failed": 0, "skipped": 0, "unverified": 1}
     checks = document["checks"]
     assert isinstance(checks, list)
     assert checks[0] == {
@@ -517,7 +558,7 @@ def test_missing_local_settings_as_json_names_what_each_skip_waited_for(settings
     exit_code, document = doctor_json()
 
     assert exit_code == exit_codes.ERROR
-    assert document["summary"] == {"passed": 2, "warned": 0, "failed": 1, "skipped": 24, "unverified": 0}
+    assert document["summary"] == {"passed": 5, "warned": 0, "failed": 1, "skipped": 24, "unverified": 0}
     checks = document["checks"]
     assert isinstance(checks, list)
     failed_check = checks[0]
@@ -528,7 +569,9 @@ def test_missing_local_settings_as_json_names_what_each_skip_waited_for(settings
     # Every check that needs to know this account's eval waits for local
     # settings; the checks that do not (git, the account) still run.
     for check in checks[1:]:
-        if check["id"] in ["tools.git_installed", "eval_account.standard_account"]:
+        if check["id"] in ["tools.git_installed", "eval_account.standard_account"] or check["id"].startswith(
+            "first_sign_in."
+        ):
             assert check["status"] == "pass"
             continue
         assert check["status"] == "skip"
@@ -551,7 +594,7 @@ def test_invalid_local_settings_fail_once_and_name_every_problem(healthy_account
     assert "favorite_color" in standard_output
     assert standard_output.count("        Next: ") == 2
     assert "Waiting for: Local settings are valid" in standard_output
-    assert standard_output.endswith("3 passed, 0 warned, 1 failed, 23 skipped, 0 unverified\n")
+    assert standard_output.endswith("6 passed, 0 warned, 1 failed, 23 skipped, 0 unverified\n")
 
 
 def test_relative_settings_folder_override_fails_the_found_check(
@@ -622,6 +665,10 @@ def test_missing_record_repo_skips_the_eval_config_but_still_checks_the_log_dire
         "activitywatch.window_and_afk_buckets_exist": "skip",
         "activitywatch.afk_bucket_is_recent": "skip",
         "activitywatch.no_browser_watcher": "skip",
+        # Shared by the whole Mac, so they wait for nothing in this account.
+        "first_sign_in.goodall_for_every_account": "pass",
+        "first_sign_in.staged_files_protected": "pass",
+        "first_sign_in.launch_agents_in_place": "pass",
     }
     checks = document["checks"]
     assert isinstance(checks, list)
@@ -643,7 +690,7 @@ def test_unreachable_log_directory_is_a_warning_with_a_next_step_and_exits_0(hea
     assert exit_code == exit_codes.SUCCESS
     assert "  warn        The log directory can be written to\n              Not recording:" in standard_output
     assert "        Next: If the log directory is on an external drive, connect it." in standard_output
-    assert standard_output.endswith("25 passed, 1 warned, 0 failed, 0 skipped, 1 unverified\n")
+    assert standard_output.endswith("28 passed, 1 warned, 0 failed, 0 skipped, 1 unverified\n")
 
     json_exit_code, document = doctor_json()
     assert json_exit_code == exit_code
@@ -670,7 +717,7 @@ def test_contributor_and_main_workstream_are_reported_as_separate_checks(healthy
     exit_code, document = doctor_json()
 
     assert exit_code == exit_codes.ERROR
-    assert document["summary"] == {"passed": 24, "warned": 0, "failed": 2, "skipped": 0, "unverified": 1}
+    assert document["summary"] == {"passed": 27, "warned": 0, "failed": 2, "skipped": 0, "unverified": 1}
     checks = document["checks"]
     assert isinstance(checks, list)
     assert [failure["kind"] for failure in checks[5]["failures"]] == ["contributor_not_in_roster"]
@@ -840,7 +887,7 @@ def test_missing_git_is_one_failure_and_the_record_repo_check_waits_for_it(healt
 
     assert exit_code == exit_codes.ERROR
     document = json.loads(standard_output)
-    assert document["summary"] == {"passed": 23, "warned": 0, "failed": 1, "skipped": 2, "unverified": 1}
+    assert document["summary"] == {"passed": 26, "warned": 0, "failed": 1, "skipped": 2, "unverified": 1}
     git_check = check_document(document, "tools.git_installed")
     assert git_check["status"] == "fail"
     assert isinstance(git_check["next_step"], str)
@@ -856,7 +903,7 @@ def test_missing_op_fails_the_secrets_manager_check_naming_1password(healthy_acc
 
     assert exit_code == exit_codes.ERROR
     document = json.loads(standard_output)
-    assert document["summary"] == {"passed": 23, "warned": 0, "failed": 1, "skipped": 3, "unverified": 0}
+    assert document["summary"] == {"passed": 26, "warned": 0, "failed": 1, "skipped": 3, "unverified": 0}
     secrets_manager_check = check_document(document, "tools.secrets_manager_installed")
     assert secrets_manager_check["status"] == "fail"
     assert isinstance(secrets_manager_check["detail"], str)
@@ -933,7 +980,7 @@ def test_an_administrator_account_fails_with_why_a_standard_account_is_required(
     # The reason, so a researcher does not wave it away as fussiness.
     assert "cannot reach other accounts' files or install software" in report_text
     assert "safe to hand to an agent" in report_text
-    assert standard_output.endswith("25 passed, 0 warned, 1 failed, 0 skipped, 1 unverified\n")
+    assert standard_output.endswith("28 passed, 0 warned, 1 failed, 0 skipped, 1 unverified\n")
 
 
 @pytest.mark.parametrize(
@@ -978,7 +1025,7 @@ def test_in_mixed_account_mode_an_administrator_account_is_a_warning_that_recomm
     assert "is an administrator (it is in the admin group)" in report_text
     assert "mixed account mode" in report_text
     assert "An eval account is the recommended setup" in report_text
-    assert standard_output.endswith("25 passed, 1 warned, 0 failed, 0 skipped, 1 unverified\n")
+    assert standard_output.endswith("28 passed, 1 warned, 0 failed, 0 skipped, 1 unverified\n")
 
 
 def test_in_mixed_account_mode_a_standard_account_passes(healthy_account: EvalAccount) -> None:
@@ -1025,7 +1072,7 @@ def test_a_record_repo_folder_that_is_not_a_git_repository_fails(healthy_account
 
     assert exit_code == exit_codes.ERROR
     document = json.loads(standard_output)
-    assert document["summary"] == {"passed": 24, "warned": 0, "failed": 1, "skipped": 1, "unverified": 1}
+    assert document["summary"] == {"passed": 27, "warned": 0, "failed": 1, "skipped": 1, "unverified": 1}
     git_repository_check = check_document(document, "record_repo.is_git_repository")
     assert git_repository_check["status"] == "fail"
     assert isinstance(git_repository_check["detail"], str)
@@ -1097,7 +1144,7 @@ def test_an_account_check_that_never_finishes_is_reported_as_timed_out_and_docto
     assert isinstance(account_check["detail"], str)
     assert "`/usr/bin/id -Gn` timed out after 10 s" in account_check["detail"]
     # Every other check still ran.
-    assert document["summary"] == {"passed": 25, "warned": 0, "failed": 1, "skipped": 0, "unverified": 1}
+    assert document["summary"] == {"passed": 28, "warned": 0, "failed": 1, "skipped": 0, "unverified": 1}
 
 
 # A recognisable fake key. If any part of it shows up in goodall's output,
@@ -1692,7 +1739,7 @@ def test_a_report_whose_only_unverified_check_needs_a_secret_reads_as_healthy(he
     last_lines = standard_output.splitlines()[-2:]
     assert last_lines == [
         "All checks passed. One thing goodall cannot check without reading a secret.",
-        "26 passed, 0 warned, 0 failed, 0 skipped, 1 unverified",
+        "29 passed, 0 warned, 0 failed, 0 skipped, 1 unverified",
     ]
     # The check itself keeps its status and says when a wrong field shows up.
     assert "  unverified  Each secret reference names a field that exists\n" in standard_output
@@ -1701,7 +1748,7 @@ def test_a_report_whose_only_unverified_check_needs_a_secret_reads_as_healthy(he
         report_text
     )
     # --json is unchanged: the count is still there, and nothing calls it a pass.
-    assert document["summary"] == {"passed": 26, "warned": 0, "failed": 0, "skipped": 0, "unverified": 1}
+    assert document["summary"] == {"passed": 29, "warned": 0, "failed": 0, "skipped": 0, "unverified": 1}
     assert check_document(document, "secrets.referenced_fields_exist")["status"] == "unverified"
 
 
@@ -1726,7 +1773,7 @@ def test_a_report_with_a_warning_has_no_all_passed_line(healthy_account: EvalAcc
 
     assert exit_code == exit_codes.SUCCESS
     assert "All checks passed" not in standard_output
-    assert standard_output.splitlines()[-1] == "25 passed, 1 warned, 0 failed, 0 skipped, 1 unverified"
+    assert standard_output.splitlines()[-1] == "28 passed, 1 warned, 0 failed, 0 skipped, 1 unverified"
 
 
 def test_an_env_file_with_no_references_has_no_field_to_leave_unverified(healthy_account: EvalAccount) -> None:
@@ -2192,7 +2239,7 @@ def test_doctor_passes_on_a_mac_without_gh_and_never_runs_it(healthy_account: Ev
     exit_code, document = doctor_json(runner)
 
     assert exit_code == exit_codes.SUCCESS
-    assert document["summary"] == {"passed": 26, "warned": 0, "failed": 0, "skipped": 0, "unverified": 1}
+    assert document["summary"] == {"passed": 29, "warned": 0, "failed": 0, "skipped": 0, "unverified": 1}
     for command in runner.calls:
         assert Path(command.arguments[0]).name != "gh"
 
@@ -2998,7 +3045,7 @@ def test_a_healthy_activitywatch_passes_every_check(healthy_account: EvalAccount
 
     assert exit_code == exit_codes.SUCCESS
     assert activitywatch_statuses(document) == ["pass", "pass", "pass", "pass"]
-    assert document["summary"] == {"passed": 26, "warned": 0, "failed": 0, "skipped": 0, "unverified": 1}
+    assert document["summary"] == {"passed": 29, "warned": 0, "failed": 0, "skipped": 0, "unverified": 1}
 
 
 def test_activitywatch_is_asked_only_through_credential_free_local_reads_that_skip_proxies(
