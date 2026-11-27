@@ -195,6 +195,28 @@ def find_work_block(record_repo: Path, log_directory: Path, work_block_id: str) 
     return FoundWorkBlock()
 
 
+def read_deleted_work_block(record_repo: Path, work_block_id: str) -> records.DeletedWorkBlock | None:
+    """The deleted work block with this id in the record repo, or None when the id names no deleted work block.
+
+    For the commands that take a work block's id (`goodall timeline`,
+    `goodall fixblock`), so that they can say the work block was deleted
+    instead of saying they cannot find it. `work_block_id` has already
+    matched records.RECORD_ID_PATTERN, so it cannot name a file outside the
+    work-blocks folder.
+    """
+    record_file = record_repo / records.WORK_BLOCKS_FOLDER / f"{work_block_id}.json"
+    try:
+        text = record_file.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+    if records.json_record_type(text) != records.DELETED_WORK_BLOCK_RECORD_TYPE:
+        return None
+    deleted = records.parse_deleted_work_block(text).record
+    if deleted is None or deleted.id != work_block_id:
+        return None
+    return deleted
+
+
 def is_active(log_directory: Path, work_block_id: str) -> bool:
     """True while the marker names this work block, even one nobody has stopped: it may still be recording."""
     marker = work_blocks.read_marker(log_directory)

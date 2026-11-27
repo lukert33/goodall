@@ -739,3 +739,21 @@ def test_after_a_deletion_a_later_goodall_stop_and_a_rebuild_report_no_timeline_
     assert "timeline" not in stop.standard_error
     assert rebuild.exit_code == 0, rebuild.everything_printed
     assert json.loads(rebuild.standard_output)["warnings"] == []
+
+
+def test_goodall_fixblock_says_a_deleted_work_block_was_deleted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    eval_account = make_eval_account(tmp_path)
+    work_block_id = record_a_morning_work_block(eval_account, monkeypatch)
+    run_goodall(eval_account, monkeypatch, ["delete", work_block_id, "--delete-captured-data"], AFTERNOON_START)
+    commits_before = git(eval_account.record_repo, "rev-list", "--count", "HEAD")
+
+    fixblock = run_goodall(
+        eval_account, monkeypatch, ["fixblock", work_block_id, "--workstream", "research"], AFTERNOON_END
+    )
+
+    assert fixblock.exit_code == 1
+    assert f"What work block {work_block_id} captured was deleted" in fixblock.everything_printed
+    assert "No work block record with the id" not in fixblock.everything_printed
+    assert git(eval_account.record_repo, "rev-list", "--count", "HEAD") == commits_before

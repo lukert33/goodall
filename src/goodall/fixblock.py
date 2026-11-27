@@ -22,7 +22,8 @@ What the command does, in order:
    in case something private was pasted.
 3. Find that work block's record in the record repo. When there is none,
    exit 1 and say what to check; when its record is still waiting in the
-   log directory, say to run `goodall status` first, which writes it.
+   log directory, say to run `goodall status` first, which writes it; when
+   it is a deleted work block (`goodall delete`), say that it was deleted.
 4. Build the fix, check it, and write it through goodall.record_repo, as
    journal entries are written: exit 0 once committed, and 1 when it was
    not committed.
@@ -56,6 +57,7 @@ from goodall.record_repo import write_record
 from goodall.runner import Runner
 from goodall.terminal import Failure, Terminal
 from goodall.work_block_commands import Clock, describe_moment
+from goodall.work_block_deletion import read_deleted_work_block
 
 
 def run_fixblock(
@@ -78,7 +80,10 @@ def run_fixblock(
     work_block = read_work_block_record(record_repo, work_block_id)
     if work_block is None:
         log_directory = eval_reading.local_settings.log_directory.path
-        if work_blocks.WorkBlockFiles(log_directory).unrecorded_file(work_block_id).exists():
+        deleted = read_deleted_work_block(record_repo, work_block_id)
+        if deleted is not None:
+            terminal.show_failure(work_block_deleted_failure(deleted))
+        elif work_blocks.WorkBlockFiles(log_directory).unrecorded_file(work_block_id).exists():
             terminal.show_failure(work_block_still_waiting_failure(work_block_id))
         else:
             terminal.show_failure(work_block_not_found_failure(work_block_id, record_repo))
@@ -368,6 +373,26 @@ def work_block_not_found_failure(work_block_id: str, record_repo: Path) -> Failu
             "workstream. If the work block was recorded on another Mac, bring this Mac's copy of the record repo "
             "up to date first."
         ),
+    )
+
+
+def work_block_deleted_failure(deleted: records.DeletedWorkBlock) -> Failure:
+    """The failure for the id of a deleted work block (`goodall delete`): there is no workstream left to correct."""
+    return Failure(
+        kind="fixblock_work_block_deleted",
+        what_happened=(
+            f"What work block {deleted.id} captured was deleted, on {describe_moment(deleted.deleted_at)}. "
+            "Nothing was recorded."
+        ),
+        why=(
+            "Its record in the record repo now says only that a work block was deleted, and no longer counts "
+            "towards any workstream, so there is nothing for a fix to correct."
+        ),
+        what_to_do_next=(
+            "Nothing needs doing for this work block. To fix another, run goodall status, which lists each of "
+            "your work blocks still waiting for its workstream, with the command to run."
+        ),
+        commands_to_try=("goodall status",),
     )
 
 
