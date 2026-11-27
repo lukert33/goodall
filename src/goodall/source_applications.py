@@ -77,6 +77,21 @@ class AppFamily:
     - `copy_agent_session(agent_session, log_directory, now)` copies the
       session's files into the log directory, byte for byte, and returns
       what it did. It may raise OSError.
+
+    For `goodall delete` (goodall.work_block_deletion), which deletes what
+    one work block captured:
+
+    - `find_copied_agent_sessions(log_directory)` returns the agent sessions
+      whose copies are in the log directory, each with its `folder` in the
+      copies, laid out as the application's own, so `has_record_inside`
+      reads a copy exactly as it reads the original.
+    - `copied_places(log_directory, agent_session_id)` lists every file and
+      folder in the log directory that holds a copy of that one agent
+      session and of nothing else, earlier copies kept aside included.
+      Deleting them deletes the agent session's copies whole.
+    - `shared_copies_left` names, for a person and in the middle of a
+      sentence, the copies several agent sessions share, which `goodall
+      delete` therefore leaves in place; empty when the family has none.
     """
 
     name: str
@@ -84,6 +99,9 @@ class AppFamily:
     find_agent_sessions: Callable[[Path], FoundAgentSessions]
     has_record_inside: Callable[[AgentSession, datetime, datetime], bool]
     copy_agent_session: Callable[[AgentSession, Path, datetime], Copying]
+    find_copied_agent_sessions: Callable[[Path], FoundAgentSessions]
+    copied_places: Callable[[Path, str], list[Path]]
+    shared_copies_left: str
 
 
 def is_inside_work_block(moment: datetime, started_at: datetime, ended_at: datetime) -> bool:

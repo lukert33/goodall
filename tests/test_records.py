@@ -16,6 +16,7 @@ helper is outside the code the runner rule (AGENTS.md invariant 9) governs.
 """
 
 import dataclasses
+import json
 import re
 import subprocess
 import sys
@@ -738,6 +739,55 @@ def test_the_latest_fix_of_a_work_block_wins_and_fixes_of_other_blocks_are_ignor
 
 
 # ---------------------------------------------------------------------------
+# Deleted work blocks
+# ---------------------------------------------------------------------------
+
+DELETED_BLOCK_ID = "20261116T090000Z-ada-lovelace-0a1b2c3d"
+OTHER_BLOCK_ID = "20261116T140000Z-ada-lovelace-9e8d7c6b"
+
+
+def test_a_deleted_work_block_keeps_its_id_and_its_file_name_and_says_only_when_it_was_deleted() -> None:
+    deleted = records.build_deleted_work_block(
+        work_block=DELETED_BLOCK_ID,
+        contributor=ADA,
+        deleted_at=LATER,
+        other_work_blocks_lost_transcripts=[OTHER_BLOCK_ID],
+    )
+
+    assert str(records.relative_path_for(deleted)) == f"work-blocks/{DELETED_BLOCK_ID}.json"
+    parsed = records.parse_deleted_work_block(records.render_record(deleted))
+    assert parsed.problems == []
+    assert parsed.record == deleted
+    assert sorted(json.loads(records.render_record(deleted))) == [
+        "contributor",
+        "deleted_at",
+        "id",
+        "other_work_blocks_lost_transcripts",
+        "record_type",
+        "schema_version",
+    ]
+
+
+def test_a_deleted_work_block_naming_something_that_is_not_a_work_block_id_is_invalid() -> None:
+    deleted = records.build_deleted_work_block(
+        work_block=DELETED_BLOCK_ID, contributor=ADA, deleted_at=LATER, other_work_blocks_lost_transcripts=["oops"]
+    )
+
+    [problem] = records.validate_record(deleted)
+    assert problem.field == "other_work_blocks_lost_transcripts"
+
+
+def test_the_record_type_of_a_file_is_read_without_parsing_the_rest() -> None:
+    deleted = records.build_deleted_work_block(
+        work_block=DELETED_BLOCK_ID, contributor=ADA, deleted_at=LATER, other_work_blocks_lost_transcripts=[]
+    )
+
+    assert records.json_record_type(records.render_record(deleted)) == "deleted_work_block"
+    assert records.json_record_type("not json") is None
+    assert records.json_record_type("[1, 2]") is None
+
+
+# ---------------------------------------------------------------------------
 # The examples in docs/record-schemas.md are real, valid files
 # ---------------------------------------------------------------------------
 
@@ -756,7 +806,23 @@ def examples_in_schema_document() -> dict[str, str]:
 
 
 def test_the_schema_document_has_one_example_of_each_record_type() -> None:
-    assert sorted(examples_in_schema_document()) == ["intervention", "journal_entry", "work_block", "work_block_fix"]
+    assert sorted(examples_in_schema_document()) == [
+        "deleted_work_block",
+        "intervention",
+        "journal_entry",
+        "work_block",
+        "work_block_fix",
+    ]
+
+
+def test_the_documented_deleted_work_block_example_parses_validates_and_is_what_goodall_would_write() -> None:
+    example = examples_in_schema_document()["deleted_work_block"]
+    parsed = records.parse_deleted_work_block(example)
+
+    assert parsed.problems == []
+    assert parsed.record is not None
+    assert records.validate_record(parsed.record, contributor_ids=ROSTER) == []
+    assert records.render_record(parsed.record) == example
 
 
 def test_the_documented_work_block_fix_example_parses_and_validates() -> None:

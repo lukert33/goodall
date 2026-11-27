@@ -28,7 +28,9 @@ session that has a record inside the work block:
     <log directory>/superseded-transcripts/<moment>/...
     <log directory>/superseded-claude-config/<moment>/...
 
-Who else calls it: `goodall hook` (goodall.hook) calls
+Who else calls it: `goodall delete` (goodall.work_block_deletion) asks
+find_copied_agent_sessions and copied_places which copies are one Claude
+session's alone. `goodall hook` (goodall.hook) calls
 remember_claude_config_folder, so this module is on the hook path: it
 imports only the standard library (ADR 0005) and starts no program.
 
@@ -453,6 +455,85 @@ def copy_agent_session(agent_session: AgentSession, log_directory: Path, now: da
     return copying
 
 
+# ---------------------------------------------------------------------------
+# The copies, for `goodall delete` (goodall.work_block_deletion)
+
+
+def find_copied_agent_sessions(log_directory: Path) -> FoundAgentSessions:
+    """Every Claude session with a copy in `transcripts/`, with its folder there, and problems found on the way.
+
+    The copies keep the projects folder's layout and each file's
+    modification time, so has_record_inside reads a copy as it reads the
+    original. Earlier copies kept aside are not listed: a Claude session's
+    current copy is always there beside them.
+    """
+    agent_sessions = []
+    problems = []
+    transcripts_folder = log_directory / TRANSCRIPTS_FOLDER_NAME
+    try:
+        project_folder_names = list_folders(transcripts_folder)
+    except OSError as error:
+        return FoundAgentSessions([], [f"The copied transcripts, {transcripts_folder}: {describe_error(error)}."])
+    for project_folder_name in project_folder_names:
+        project_folder = transcripts_folder / project_folder_name
+        try:
+            claude_sessions = list_claude_sessions(project_folder)
+        except OSError as error:
+            problems.append(f"The copied project folder {project_folder_name}: {describe_error(error)}.")
+            continue
+        for claude_session in claude_sessions:
+            agent_sessions.append(AgentSession(id=claude_session, folder=project_folder))
+    return FoundAgentSessions(agent_sessions, problems)
+
+
+def copied_places(log_directory: Path, claude_session: str) -> list[Path]:
+    """Every file and folder in the log directory that holds a copy of this one Claude session, and nothing shared.
+
+    That is its transcript and its folder in each project folder of
+    `transcripts/`, its file-edit backups in each config folder's copies in
+    `claude-config/`, and the same places inside every `<moment>/` of the
+    two superseded folders. The prompt history and a project's memory are
+    shared by every Claude session, so they are never among them
+    (SHARED_COPIES_LEFT). An id that is not a Claude session id has none,
+    so it can never name a path outside these folders. Raises OSError when
+    a folder cannot be listed.
+    """
+    if not records.CLAUDE_SESSION_ID_PATTERN.fullmatch(claude_session):
+        return []
+    project_folders = folders_inside(log_directory / TRANSCRIPTS_FOLDER_NAME)
+    config_copies_folders = folders_inside(log_directory / CLAUDE_CONFIG_COPIES_FOLDER_NAME)
+    for moment_folder in folders_inside(log_directory / SUPERSEDED_FOLDER_NAME):
+        project_folders.extend(folders_inside(moment_folder))
+    for moment_folder in folders_inside(log_directory / SUPERSEDED_CLAUDE_CONFIG_FOLDER_NAME):
+        config_copies_folders.extend(folders_inside(moment_folder))
+    candidates = []
+    for project_folder in project_folders:
+        candidates.append(project_folder / f"{claude_session}.jsonl")
+        candidates.append(project_folder / claude_session)
+    for config_copies_folder in config_copies_folders:
+        candidates.append(config_copies_folder / "file-history" / claude_session)
+    places = []
+    for candidate in candidates:
+        if status_or_none(candidate) is not None:
+            places.append(candidate)
+    return places
+
+
+def folders_inside(folder: Path) -> list[Path]:
+    """The real folders directly inside `folder`, as full paths; none when it is missing."""
+    found = []
+    for folder_name in list_folders(folder):
+        found.append(folder / folder_name)
+    return found
+
+
+# The copies every Claude session shares, which `goodall delete` leaves in
+# place, named for a person.
+SHARED_COPIES_LEFT = (
+    "the copies of Claude Code's prompt history (history.jsonl, in claude-config/ in the log directory) and of "
+    "each project's memory (MEMORY.md and memory/, in transcripts/)"
+)
+
 # What the baseline needs to know about the Claude family (goodall.agent_session_copies).
 APP_FAMILY = AppFamily(
     name="Claude",
@@ -460,4 +541,7 @@ APP_FAMILY = AppFamily(
     find_agent_sessions=find_agent_sessions,
     has_record_inside=has_record_inside,
     copy_agent_session=copy_agent_session,
+    find_copied_agent_sessions=find_copied_agent_sessions,
+    copied_places=copied_places,
+    shared_copies_left=SHARED_COPIES_LEFT,
 )

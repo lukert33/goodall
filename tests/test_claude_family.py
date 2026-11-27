@@ -311,6 +311,62 @@ def test_everything_the_family_keeps_for_a_claude_session_is_copied_in_its_own_l
     }
 
 
+def test_copied_claude_sessions_are_found_in_the_log_directory_and_read_as_the_originals_are(
+    folders: Folders,
+) -> None:
+    write_changed_at(folders.transcript, record(STARTED_AT + timedelta(minutes=5)), STARTED_AT + timedelta(minutes=5))
+    claude_family.copy_agent_session(folders.agent_session, folders.log_directory, NOW)
+
+    found = claude_family.find_copied_agent_sessions(folders.log_directory)
+
+    copies_project_folder = folders.log_directory / "transcripts" / PROJECT_FOLDER_NAME
+    assert found.agent_sessions == [AgentSession(id=CLAUDE_SESSION, folder=copies_project_folder)]
+    assert found.problems == []
+    assert claude_family.has_record_inside(found.agent_sessions[0], STARTED_AT, ENDED_AT)
+
+
+def test_with_nothing_copied_no_copied_claude_session_is_found(folders: Folders) -> None:
+    assert claude_family.find_copied_agent_sessions(folders.log_directory).agent_sessions == []
+
+
+def test_the_copied_places_of_a_claude_session_are_its_own_copies_and_never_a_shared_one(folders: Folders) -> None:
+    log_directory = folders.log_directory
+    config_copies_name = claude_family.mirror_folder_name(folders.config_folder)
+    owned = [
+        f"transcripts/{PROJECT_FOLDER_NAME}/{CLAUDE_SESSION}.jsonl",
+        f"transcripts/{PROJECT_FOLDER_NAME}/{CLAUDE_SESSION}/tool-results/a.txt",
+        f"superseded-transcripts/20261116T120000.000000Z/{PROJECT_FOLDER_NAME}/{CLAUDE_SESSION}.jsonl",
+        f"claude-config/{config_copies_name}/file-history/{CLAUDE_SESSION}/a@v1",
+        f"superseded-claude-config/20261116T120000.000000Z/{config_copies_name}/file-history/{CLAUDE_SESSION}/a@v1",
+    ]
+    shared_or_another_sessions = [
+        f"transcripts/{PROJECT_FOLDER_NAME}/{OTHER_SESSION}.jsonl",
+        f"transcripts/{PROJECT_FOLDER_NAME}/MEMORY.md",
+        f"claude-config/{config_copies_name}/history.jsonl",
+        f"claude-config/{config_copies_name}/file-history/{OTHER_SESSION}/b@v1",
+    ]
+    for relative_path in owned + shared_or_another_sessions:
+        path = log_directory / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"synthetic\n")
+
+    places = claude_family.copied_places(log_directory, CLAUDE_SESSION)
+
+    assert sorted(str(place.relative_to(log_directory)) for place in places) == [
+        f"claude-config/{config_copies_name}/file-history/{CLAUDE_SESSION}",
+        f"superseded-claude-config/20261116T120000.000000Z/{config_copies_name}/file-history/{CLAUDE_SESSION}",
+        f"superseded-transcripts/20261116T120000.000000Z/{PROJECT_FOLDER_NAME}/{CLAUDE_SESSION}.jsonl",
+        f"transcripts/{PROJECT_FOLDER_NAME}/{CLAUDE_SESSION}",
+        f"transcripts/{PROJECT_FOLDER_NAME}/{CLAUDE_SESSION}.jsonl",
+    ]
+
+
+def test_an_id_that_is_not_a_claude_session_id_has_no_copied_places(folders: Folders) -> None:
+    (folders.log_directory / "transcripts" / PROJECT_FOLDER_NAME).mkdir(parents=True)
+
+    assert claude_family.copied_places(folders.log_directory, "..") == []
+
+
 def test_the_allow_list_for_the_claude_config_folder_names_only_the_prompt_history_and_file_edit_backups() -> None:
     # Widening this list means reading more of a folder that holds credentials:
     # it takes a decision, and this test changing with it.

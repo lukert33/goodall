@@ -43,7 +43,7 @@ at its time of day, with who did it, what it was and where it came from.
 
 | Option | What it does |
 |---|---|
-| `<work block id>` | Given first, by itself, as for `goodall fixblock`: shows that work block instead of the last. The id is the one `goodall stop` shows. |
+| `<work block id>` | Given first, by itself, as for `goodall fixblock`: shows that work block instead of the last. The id is the one `goodall stop` shows. For a deleted work block (`goodall delete`) it says that what the work block captured was deleted, and exits 1. |
 | `--pointers` | Adds where each entry is in a raw record: the folder, the path inside it, and the line or the event. |
 | `--all` | Shows the bookkeeping lines of a transcript too (kind `entry`). |
 | `--rebuild` | Builds the timeline again from the raw records first. |
@@ -70,6 +70,12 @@ sqlite3 timeline/timeline.sqlite3 "SELECT actor, kind, count(*) FROM entries GRO
 - `goodall timeline` builds it when there is none, when `--rebuild` is given,
   and when the file was built by another version of the schema or of any set
   of rules below. So a change of shape or of rules needs no migration.
+
+`goodall delete <work block id> --delete-captured-data` deletes the timeline
+whole, because it holds the deleted work block's row, its entries and
+pointers naming its transcripts. Nothing is lost: `goodall timeline` or the
+next `goodall stop` builds it again from the raw records left, without that
+work block.
 
 A build writes a new file and then puts it in place of the old one, so a
 build that fails or is interrupted leaves the last good timeline. A problem
@@ -196,7 +202,9 @@ Read from `activitywatch/` in the log directory (`docs/activitywatch-rules.md`,
    its category and the person's decision.
 3. A work block is not an entry. Each ended one is a row of `work_blocks`,
    including one whose record is still waiting in the log directory. A work
-   block still running is not in the timeline.
+   block still running is not in the timeline. Neither is a deleted work
+   block (`goodall delete`): its record no longer says when it ran, so it is
+   passed over, and that is not a problem to report.
 
 ## Not in this version
 

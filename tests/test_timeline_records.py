@@ -119,3 +119,32 @@ def test_with_an_empty_record_repo_there_is_nothing_and_no_problem(record_repo: 
     assert timeline_records.entries_from_records(record_repo, ()).entries == []
     assert timeline_records.ended_work_blocks(record_repo, log_directory, problems) == []
     assert problems == []
+
+
+def test_a_deleted_work_block_is_passed_over_without_a_problem(record_repo: Path, log_directory: Path) -> None:
+    kept = ended_work_block(NINE, 30)
+    write_record(record_repo, kept)
+    write_record(
+        record_repo,
+        records.build_deleted_work_block(
+            "20261116T100000Z-ada-lovelace-00000000", "ada-lovelace", NINE + timedelta(hours=5), []
+        ),
+    )
+    problems: list[str] = []
+
+    found = timeline_records.ended_work_blocks(record_repo, log_directory, problems)
+
+    assert [work_block.raw_record.path.stem for work_block in found] == [kept.id]
+    assert problems == []
+
+
+def test_a_work_block_file_that_is_no_record_at_all_is_still_a_problem(record_repo: Path, log_directory: Path) -> None:
+    (record_repo / "work-blocks").mkdir()
+    (record_repo / "work-blocks" / "20261116T100000Z-ada-lovelace-00000000.json").write_text("{}")
+    problems: list[str] = []
+
+    timeline_records.ended_work_blocks(record_repo, log_directory, problems)
+
+    assert problems == [
+        "The record work-blocks/20261116T100000Z-ada-lovelace-00000000.json in the record repo could not be read."
+    ]

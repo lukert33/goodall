@@ -37,6 +37,7 @@ These commands work today:
 | `goodall stop` | Ends the current work block, copies every agent session that has a record inside it into the log directory, and builds the timeline. This closes the prompt gate. |
 | `goodall pause` | Ends the current work block, meaning to continue it, and does everything `goodall stop` does. The next `goodall start` begins a new work block whose record names the paused one. |
 | `goodall fixblock` | Corrects which workstream a work block was for, by recording a fix beside it. |
+| `goodall delete` | Shows what one work block captured; with `--delete-captured-data`, deletes it and leaves a record saying only that it was deleted. |
 | `goodall journal` | Adds a **journal entry**: your written note about what was decided or done. |
 | `goodall intervene` | Records an **intervention**: a moment you overrode, corrected or rescued an agent. |
 | `goodall timeline` | Shows one ended work block in time order: who did what and when, with no private text ([docs/timeline.md](docs/timeline.md)). |
