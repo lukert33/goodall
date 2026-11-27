@@ -9,7 +9,7 @@ exit code, so `main` returns a number instead of calling `sys.exit` itself.
 `goodall doctor` (goodall.doctor),
 `goodall journal` and `goodall intervene` (goodall.entries),
 `goodall start`, `goodall pause` and `goodall stop` (goodall.work_block_commands),
-`goodall fixblock` (goodall.fixblock), `goodall timeline`
+`goodall fixblock` (goodall.fixblock), `goodall sign-in` (goodall.sign_in), `goodall timeline`
 (goodall.timeline_command), `goodall export scout`
 (goodall.scout_export), and `goodall hook` (goodall.hook) are built. The `goodall` command itself starts
 in goodall.entry_point, which sends `goodall hook` to goodall.hook without
@@ -50,6 +50,7 @@ from goodall.icon_state import run_icon_state
 from goodall.onboard import ONBOARD_BY_HAND, run_onboard
 from goodall.runner import RealRunner, Runner
 from goodall.scout_export import run_export_scout
+from goodall.sign_in import run_sign_in
 from goodall.status import run_status
 from goodall.terminal import Failure, Terminal
 from goodall.timeline_command import TimelineRequest, run_timeline
@@ -323,6 +324,21 @@ def build_parser() -> argparse.ArgumentParser:
     hook.add_argument("event_name", nargs="?", help="The Claude Code hook event, for example UserPromptSubmit.")
     hook.set_defaults(command_name="hook")
 
+    # Named for its caller, as `hook` is: the first-run script runs it at
+    # every sign-in to every account (goodall.sign_in, ADR 0022).
+    sign_in = commands.add_parser(
+        "sign-in",
+        help="Set up the eval account at its first sign-in, then start recording (run at sign-in, not by people).",
+        description=(
+            "Run by the first-run script that the administrator install puts in place, at every sign-in to every "
+            "account on this Mac. In any account but the eval account it does nothing. In the eval account it "
+            "finishes setting the account up the first time, from the answers file the administrator install "
+            "staged, and at every sign-in starts a work block on your main workstream, with a notification, unless "
+            "one is active or local settings say start_at_sign_in = false."
+        ),
+    )
+    sign_in.set_defaults(command_name="sign-in")
+
     sync = commands.add_parser(
         "sync", help="Copy what ended work blocks left in each application that is not yet in the log directory."
     )
@@ -553,6 +569,9 @@ def main(
 
     if command_name == "hook":
         return run_hook(arguments.event_name, terminal, clock)
+
+    if command_name == "sign-in":
+        return run_sign_in(terminal, runner, clock)
 
     return run_stub(command_name, terminal)
 

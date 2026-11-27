@@ -288,8 +288,17 @@ def staged_answers_name() -> str | None:
     staged_file = system_places.staged_answers_file()
     if describe_protection(staged_file) is not None:
         return None
+    return eval_account_name_in(staged_file)
+
+
+def eval_account_name_in(answers_file: Path) -> str | None:
+    """The `[eval_account] name` an answers file gives, or None when it gives none or cannot be read.
+
+    Reads only that one answer, so `goodall sign-in` in any other account
+    can tell it has nothing to do without checking the rest of the file.
+    """
     try:
-        table = tomllib.loads(staged_file.read_text(encoding="utf-8"))
+        table = tomllib.loads(answers_file.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
         return None
     eval_account = table.get("eval_account")

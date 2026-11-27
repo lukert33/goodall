@@ -37,6 +37,7 @@ PLANNED_COMMANDS = [
     "intervene",
     "timeline",
     "hook",
+    "sign-in",
     "sync",
     "logs",
     "export scout",
@@ -162,6 +163,7 @@ BUILT_COMMANDS = [
     "delete",
     "timeline",
     "hook",
+    "sign-in",
     "export scout",
 ]
 
