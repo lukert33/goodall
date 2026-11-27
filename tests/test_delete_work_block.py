@@ -287,7 +287,7 @@ def test_without_the_confirming_flag_nothing_is_deleted_and_the_command_to_run_i
 
     preview = run_goodall(eval_account, monkeypatch, ["delete", work_block_id], AFTERNOON_START)
 
-    assert preview.exit_code == 2
+    assert preview.exit_code == 0
     assert files_under(eval_account.log_directory) == log_files_before
     assert (eval_account.record_repo / "work-blocks" / f"{work_block_id}.json").read_text() == record_before
     assert "Nothing has been deleted" in preview.everything_printed
@@ -305,7 +305,7 @@ def test_without_the_flag_json_describes_what_would_be_deleted_in_a_stable_shape
 
     preview = run_goodall(eval_account, monkeypatch, ["delete", work_block_id, "--json"], AFTERNOON_START)
 
-    assert preview.exit_code == 2
+    assert preview.exit_code == 0
     document = json.loads(preview.standard_output)
     assert sorted(document) == [
         "agent_sessions",
@@ -547,7 +547,7 @@ def test_deleting_the_paused_work_block_removes_the_pause_so_the_next_work_block
     preview = run_goodall(eval_account, monkeypatch, ["delete", work_block_id], AFTERNOON_START)
 
     # The preview changes nothing, the pause included.
-    assert preview.exit_code == 2
+    assert preview.exit_code == 0
     assert pause_file(eval_account).exists()
 
     delete = run_goodall(

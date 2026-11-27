@@ -18,7 +18,7 @@ What the command does, in order:
    deletion, exit 1: it never guesses.
 5. Without `--delete-captured-data`, say what would be deleted, in kinds
    and counts, what would be left and why, and the exact command that
-   deletes it, and exit 2.
+   deletes it, and exit 0.
 6. With it, check the record repo can take a commit, delete, replace the
    work block's record, and say what was done: exit 0, with warnings for
    what was left in place.
@@ -29,12 +29,12 @@ Decisions a reader would otherwise reverse-engineer:
   confirmation is a flag typed on purpose, with a name that says what it
   does. It is spelled out rather than `--yes` or `--force`, so nobody types
   it from habit.
-- The preview exits 2 (a usage error), not 0. The command line was missing
-  the one argument that makes it act, and nothing was attempted, which is
-  what 2 means here. A script or agent that looks only at the exit code
-  then never mistakes a preview for a deletion; with 0, `goodall delete X
-  && echo deleted` would say deleted when nothing was. The preview is on
-  standard output, as is `--json`, which says `"deleted": false`.
+- The preview exits 0, not 2 (the owner's decision, 2026-11-27). A preview
+  is what was asked for and it was shown, and 2 means a usage error
+  everywhere else in goodall. The trap this leaves: `goodall delete X &&
+  echo deleted` says deleted when nothing was. A script or agent tells a
+  preview from a deletion by `--json`, which says `"deleted": false`; the
+  preview is on standard output, as is `--json`.
 - Nothing read from a raw record is ever shown: only kinds, counts, ids and
   where things are.
 - The Scout export and the timeline are derived from every raw record, so
@@ -218,10 +218,10 @@ class Report:
         return exit_codes.SUCCESS
 
     def preview(self, plan: DeletionPlan) -> int:
-        """Say what would be deleted and left, and the command that deletes it; exit 2 (see the module docstring)."""
+        """Say what would be deleted and left, and the command that deletes it; exit 0 (see the module docstring)."""
         if self.as_json:
             self.terminal.write_json(self.document(plan))
-            return exit_codes.USAGE_ERROR
+            return exit_codes.SUCCESS
         record = plan.work_block.record
         assert record.ended_at is not None
         self.terminal.show_paragraph(
@@ -233,7 +233,7 @@ class Report:
         self.show_kinds(plan)
         self.terminal.show_warnings(plan.left_in_place)
         self.terminal.show_commands((confirm_command(record.id),))
-        return exit_codes.USAGE_ERROR
+        return exit_codes.SUCCESS
 
     def deleted(self, plan: DeletionPlan, record_path: Path, committed: bool, commit_failures: list[Failure]) -> int:
         """Say what was deleted and what was left in place; exit 0."""
