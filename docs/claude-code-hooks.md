@@ -1,9 +1,10 @@
 # Claude Code hooks for goodall
 
 Claude Code runs `goodall hook <event>` when each of its hooks fires. This
-page shows the settings that make it do so, for a person setting up an eval
-account by hand. `goodall onboard` will install them itself once it is
-built; until then, nothing installs them.
+page shows the settings that make it do so. `goodall onboard --answers`
+installs them for you, beside anything already in the file
+([answers-file.md](answers-file.md)); this page is also for a person
+setting up an eval account by hand.
 
 ## What each hook does
 
