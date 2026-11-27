@@ -47,9 +47,10 @@ from goodall.entries import DECISION_MEANINGS, EntryRequest, InterventionDetails
 from goodall.fixblock import run_fixblock
 from goodall.hook import run_hook
 from goodall.icon_state import run_icon_state
-from goodall.onboard import ONBOARD_BY_HAND, run_onboard
+from goodall.onboard import run_onboard
 from goodall.runner import RealRunner, Runner
 from goodall.scout_export import run_export_scout
+from goodall.setup_page import run_setup_page_onboarding
 from goodall.status import run_status
 from goodall.terminal import Failure, Terminal
 from goodall.timeline_command import TimelineRequest, run_timeline
@@ -74,11 +75,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     onboard = commands.add_parser(
         "onboard",
-        help="Set up this macOS user account for an eval, from an answers file.",
+        help="Set up this macOS user account for an eval, on a setup page in your browser.",
         description=(
             "Set up this macOS user account for an eval: the record repo, the log directory, local settings, the "
-            "env file and the Claude Code hooks. The setup page that asks the questions is not built yet; meanwhile "
-            "write an answers file (docs/answers-file.md) and pass it with --answers. Goodall shows every change "
+            "env file and the Claude Code hooks. Goodall opens a setup page in your browser with the questions and "
+            "waits here for the answers file its Finish setup button saves (docs/setup-page.md); with --answers it "
+            "sets up from an answers file you wrote instead (docs/answers-file.md). Goodall shows every change "
             "before it makes any, and running it again with the same answers changes nothing."
         ),
     )
@@ -86,7 +88,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--answers",
         metavar="<file>",
         type=Path,
-        help="The answers file to set up from. Supplying it is the go-ahead: goodall asks nothing.",
+        help=(
+            "Set up from this answers file instead of the setup page. "
+            "Supplying it is the go-ahead: goodall asks nothing."
+        ),
     )
     onboard.add_argument(
         "--plan", action="store_true", help="Show every change the answers call for, and make none of them."
@@ -394,7 +399,6 @@ def add_entry_text_arguments(parser: argparse.ArgumentParser, text_help: str) ->
 # hand. So a command that a message points at needs a real entry here, and
 # tests/test_cli.py fails when it has none.
 BY_HAND_STEPS = {
-    "onboard": ONBOARD_BY_HAND,
     "settings": (
         "open local-settings.toml in a text editor to change this macOS user account's own settings, such as "
         "your main workstream; it is in the folder ~/.config/goodall/ in the account's home folder. To add a "
@@ -413,9 +417,7 @@ def run_stub(command_name: str, terminal: Terminal) -> int:
     command; it is goodall that cannot do it yet.
 
     The reader is a researcher, so the next step never mentions goodall's
-    own development tools. `goodall onboard` gets a way to set up by hand,
-    because "Run goodall onboard" is the next step when local settings are
-    missing, and that must not lead to a dead end.
+    own development tools.
     """
     by_hand = BY_HAND_STEPS.get(command_name)
     if by_hand is None:
@@ -474,6 +476,8 @@ def main(
         group_parser.print_help(terminal.standard_error)
         return exit_codes.USAGE_ERROR
 
+    if command_name == "onboard" and arguments.answers is None:
+        return run_setup_page_onboarding(terminal, runner, clock, arguments.plan, arguments.json)
     if command_name == "onboard":
         return run_onboard(terminal, runner, clock, arguments.answers, arguments.plan, arguments.json)
     if command_name == "status":

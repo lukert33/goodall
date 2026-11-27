@@ -86,6 +86,8 @@ jobs:
         run: uv run mypy
 
   menu-bar-icon:
+    # Also runs the setup page's script tests, which need macOS's own
+    # JavaScript (osascript) for the same reason.
     # The menu bar icon's helper is Swift (ADR 0024), which the Linux job above
     # cannot compile: there its tests are skipped. This job builds it on a Mac,
     # so a change that breaks the Swift fails the pull request, and runs the
@@ -121,3 +123,8 @@ jobs:
 
       - name: Menu bar icon tests
         run: uv run pytest tests/test_menu_bar_icon_model.py tests/test_menu_bar_icon_helper.py tests/test_menu_bar_icon.py
+
+      - name: Setup page script tests
+        # The setup page's script is run with osascript, which only macOS
+        # has, so the Linux job skips these (goodall.setup_page).
+        run: uv run pytest tests/test_setup_page_script.py

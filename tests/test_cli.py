@@ -145,9 +145,6 @@ def test_group_without_subcommand_is_usage_error() -> None:
 
 
 # Commands that do something real, so they no longer report "not built yet".
-# Plain `goodall onboard` still reports that its setup page is not built, and
-# still gives a by-hand way (the onboard tests below, and tests/test_onboard.py),
-# but `goodall onboard --answers` is built.
 BUILT_COMMANDS = [
     "onboard",
     "status",
@@ -191,24 +188,6 @@ def test_no_stub_points_a_researcher_at_goodall_s_own_tooling() -> None:
         _, output = run_goodall(arguments_for(command_name))
         assert "bd " not in output, f"goodall {command_name} mentions bd"
         assert "goodall repo" not in output, f"goodall {command_name} mentions the goodall repo"
-
-
-def test_onboard_stub_names_the_two_by_hand_steps() -> None:
-    _, output = run_goodall(["onboard"])
-    assert "local-settings.toml" in output
-    assert "docs/claude-code-hooks.md" in output
-
-
-def test_onboard_stub_says_how_to_set_up_an_eval_account_by_hand() -> None:
-    # "Run goodall onboard" is the first next step a new contributor sees,
-    # so the stub must not be a dead end.
-    exit_code, output = run_goodall(["onboard"])
-
-    assert exit_code == exit_codes.ERROR
-    one_line = " ".join(output.split())
-    assert "ask whoever runs the eval" in one_line.lower()
-    assert "local-settings.toml" in one_line
-    assert "~/.config/goodall/" in one_line
 
 
 def test_settings_stub_says_how_to_change_the_settings_by_hand() -> None:
