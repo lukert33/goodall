@@ -216,6 +216,14 @@ upstream in their style from the start.
 Pass non-interactive flags (`cp -f`, `mv -f`, `rm -f`, `ssh -o BatchMode=yes`)
 so a command never waits on a prompt.
 
+## The Beads sections below are generated
+
+Everything from here down is written by `bd` and replaced when it updates.
+Where it disagrees with a section above, the section above wins. In
+particular, its "do not commit or push unless explicitly asked" is replaced by
+the Git section, and its "close finished work" by the rule that an issue stays
+in progress until its pull request merges into `main`.
+
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:46cd31e7 -->
 ## Beads Issue Tracker
 
