@@ -184,6 +184,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     icon_state.set_defaults(command_name="icon-state")
 
+    # A stub until the setup page is built (ADR 0012). The menu bar icon's
+    # "Settings…" item runs it (ADR 0024), so it has a by-hand way below.
+    settings = commands.add_parser(
+        "settings", help="Open the setup page with your current answers, to change them or add a workstream."
+    )
+    settings.set_defaults(command_name="settings")
+
     journal = commands.add_parser(
         "journal",
         help="Add an entry to the eval journal in the record repo.",
@@ -368,6 +375,13 @@ BY_HAND_STEPS = {
         "it yourself, and put it in the folder ~/.config/goodall/ in this macOS user account's home folder "
         "(goodall status names each setting it needs and shows an example line). Then add the Claude Code "
         "hooks as docs/claude-code-hooks.md in goodall's documentation shows, and run goodall status."
+    ),
+    "settings": (
+        "open local-settings.toml in a text editor to change this macOS user account's own settings, such as "
+        "your main workstream; it is in the folder ~/.config/goodall/ in the account's home folder. To add a "
+        "workstream, add its name to the workstreams line of eval.toml in the record repo, which "
+        "local-settings.toml names as record_repo, and commit that change there with git. Then run goodall "
+        "status, which checks both files and says what to correct."
     ),
 }
 NOTHING_BY_HAND = "Nothing for now: this command will come in a later version of goodall."

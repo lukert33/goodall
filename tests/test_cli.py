@@ -32,6 +32,7 @@ PLANNED_COMMANDS = [
     "delete",
     "status",
     "icon-state",
+    "settings",
     "journal",
     "intervene",
     "timeline",
@@ -204,6 +205,19 @@ def test_onboard_stub_says_how_to_set_up_an_eval_account_by_hand() -> None:
     assert "ask whoever runs the eval" in one_line.lower()
     assert "local-settings.toml" in one_line
     assert "~/.config/goodall/" in one_line
+
+
+def test_settings_stub_says_how_to_change_the_settings_by_hand() -> None:
+    # The menu bar icon's "Settings…" item runs goodall settings, so until
+    # the setup page is built its stub is what a person is left with.
+    exit_code, output = run_goodall(["settings"])
+
+    assert exit_code == exit_codes.ERROR
+    one_line = " ".join(output.split())
+    assert "By hand:" in one_line
+    assert "local-settings.toml" in one_line
+    assert "eval.toml" in one_line
+    assert "Nothing for now" not in one_line
 
 
 def test_a_stub_that_a_goodall_message_points_at_has_a_real_by_hand_way() -> None:
