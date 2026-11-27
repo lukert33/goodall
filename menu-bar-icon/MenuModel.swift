@@ -10,10 +10,11 @@
 // `goodall icon-state --json`: the status line, which items are enabled, the workstreams
 // and which is the main one. This file turns that answer, and what the person has just
 // done, into rows of a menu: which line comes first while a command runs, when a failure
-// is shown and when its mark clears, and what Quit goodall has to do first.
+// is shown and when its mark clears, what Quit goodall has to do first, and when to ask
+// macOS for permission to show notifications.
 //
 // The model changes only through four events, each a function below:
-//   stateAnswered     goodall answered `icon-state --json`
+//   stateAnswered     goodall answered `icon-state --json`; says whether to ask for permission
 //   commandStarted    the person chose an item that runs a goodall command
 //   commandFinished   that command ended, with this exit code
 //   menuOpened        the person opened the menu
@@ -70,6 +71,7 @@ struct IconState: Decodable {
     let enabled: EnabledItems
     let setup: Setup
     let watchFolder: String?
+    let askNotificationPermission: Bool
 }
 
 struct WorkBlock: Decodable {
@@ -166,6 +168,9 @@ struct MenuModel {
     // True from a failed command until the person next opens the menu: draws the "!".
     var failureNotSeenYet = false
 
+    // Whether this run of the helper has asked macOS for permission to show notifications.
+    var notificationPermissionAsked = false
+
     init(goodallIsKnown: Bool, logPathForPeople: String) {
         self.goodallIsKnown = goodallIsKnown
         self.logPathForPeople = logPathForPeople
@@ -175,12 +180,22 @@ struct MenuModel {
     // The four events
     // -----------------------------------------------------------------------------------
 
-    mutating func stateAnswered(output: String) {
+    // Returns true when main.swift should ask macOS, now, for permission to show
+    // notifications. goodall says when that may be (`ask_notification_permission`, true
+    // once goodall is set up); the model asks only the first time it hears so in this run.
+    // macOS itself shows its question only once ever, and a question dismissed counts as
+    // "no", which is why goodall waits until setup has told the person it is coming.
+    mutating func stateAnswered(output: String) -> Bool {
         iconState = readIconState(output)
         if runningCommandHasFinished {
             runningCommand = nil
             runningCommandHasFinished = false
         }
+        if iconState?.askNotificationPermission == true && !notificationPermissionAsked {
+            notificationPermissionAsked = true
+            return true
+        }
+        return false
     }
 
     mutating func commandStarted(_ command: MenuCommand) {

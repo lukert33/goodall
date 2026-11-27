@@ -40,7 +40,7 @@ import argparse
 from datetime import UTC, datetime
 from pathlib import Path
 
-from goodall import __version__, exit_codes, records
+from goodall import __version__, exit_codes, notifications, records
 from goodall.delete_command import run_delete
 from goodall.doctor import run_doctor
 from goodall.entries import DECISION_MEANINGS, EntryRequest, InterventionDetails, run_intervene, run_journal
@@ -99,9 +99,11 @@ def build_parser() -> argparse.ArgumentParser:
             "must name. Defaults to a free port, which goodall shows."
         ),
     )
+    add_background_argument(start, notifications.BACKGROUND_STARTS, "started")
     start.set_defaults(command_name="start")
 
     stop = commands.add_parser("stop", help="End the current work block, which closes the prompt gate.")
+    add_background_argument(stop, notifications.BACKGROUND_STOPS, "stopped")
     stop.set_defaults(command_name="stop")
 
     pause = commands.add_parser(
@@ -114,6 +116,7 @@ def build_parser() -> argparse.ArgumentParser:
             "names another. goodall stop clears the pause instead."
         ),
     )
+    add_background_argument(pause, notifications.BACKGROUND_PAUSES, "paused")
     pause.set_defaults(command_name="pause")
 
     fixblock = commands.add_parser(
@@ -343,6 +346,26 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def add_background_argument(parser: argparse.ArgumentParser, reasons: dict[str, str], done_word: str) -> None:
+    """Add --background, which a LaunchAgent, script or schedule passes so that goodall shows a notification.
+
+    A person never needs it: a command they type, or choose from the menu
+    bar icon, shows no notification, because they already know what they
+    did (ADR 0021, goodall.notifications).
+    """
+    reason_names = sorted(reasons)
+    parser.add_argument(
+        "--background",
+        choices=reason_names,
+        metavar="<reason>",
+        help=(
+            f"Say that this work block is being {done_word} by something other than you, one of "
+            f"{', '.join(reason_names)}, so goodall shows a notification saying so. Leave it out when you run the "
+            "command yourself."
+        ),
+    )
+
+
 def add_entry_text_arguments(parser: argparse.ArgumentParser, text_help: str) -> None:
     """Add the ways of giving an entry's text, and --json, which journal and intervene share.
 
@@ -461,12 +484,17 @@ def main(
         return run_icon_state(terminal, clock, as_json=arguments.json)
     if command_name == "start":
         return run_start(
-            terminal, runner, clock, workstream=arguments.workstream, telemetry_port=arguments.telemetry_port
+            terminal,
+            runner,
+            clock,
+            workstream=arguments.workstream,
+            telemetry_port=arguments.telemetry_port,
+            background=arguments.background,
         )
     if command_name == "stop":
-        return run_stop(terminal, runner, clock)
+        return run_stop(terminal, runner, clock, background=arguments.background)
     if command_name == "pause":
-        return run_pause(terminal, runner, clock)
+        return run_pause(terminal, runner, clock, background=arguments.background)
     if command_name == "fixblock":
         return run_fixblock(terminal, runner, clock, arguments.work_block_id, arguments.workstream)
     if command_name == "delete":
