@@ -35,6 +35,7 @@ These commands work today:
 | `goodall status` | Shows whether a work block is active, and what is wrong with the setup if anything. |
 | `goodall start` | Begins a **work block**: a logged stretch of your work on one workstream. This opens the prompt gate. |
 | `goodall stop` | Ends the current work block, copies every agent session that has a record inside it into the log directory, and builds the timeline. This closes the prompt gate. |
+| `goodall pause` | Ends the current work block, meaning to continue it, and does everything `goodall stop` does. The next `goodall start` begins a new work block whose record names the paused one. |
 | `goodall fixblock` | Corrects which workstream a work block was for, by recording a fix beside it. |
 | `goodall journal` | Adds a **journal entry**: your written note about what was decided or done. |
 | `goodall intervene` | Records an **intervention**: a moment you overrode, corrected or rescued an agent. |
