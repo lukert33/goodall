@@ -61,6 +61,14 @@ and stops a work block from its menu. Its first version can be built and
 tried by hand, and nothing installs it yet:
 [docs/menu-bar-icon.md](docs/menu-bar-icon.md).
 
+Goodall never ends a work block without telling you. When recording starts
+or stops without your own command (a script or schedule, which passes
+`--background script`, or goodall closing a work block left idle), the menu
+bar icon's helper shows a notification saying so, with the reason and the
+workstream. A start or stop you type or click shows none. Every way a work
+block ends, and every notification, is in
+[docs/work-block-endings.md](docs/work-block-endings.md).
+
 For an eval that includes ActivityWatch, goodall copies what apps and windows
 were in use into the log directory when a work block ends
 (`docs/activitywatch-rules.md`), and the timeline lists them. The

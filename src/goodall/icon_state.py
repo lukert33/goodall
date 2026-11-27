@@ -34,6 +34,7 @@ The document, which is a stable contract with the helper
     enabled             {record_work_block, pause, stop_recording}: which menu items make sense now
     setup               {usable, reason}: reason is null when usable, else a sentence for a person
     watch_folder        the folder whose changes mean "ask again", or null
+    ask_notification_permission   true once goodall is set up here: the icon may ask macOS
 
 Decisions a reader would otherwise reverse-engineer:
 
@@ -54,6 +55,13 @@ Decisions a reader would otherwise reverse-engineer:
   `pause.json`. Before the first work block that folder does not exist,
   and this command may not create it, so it names the log directory,
   where the folder will appear. The helper watches whichever it is told.
+- `ask_notification_permission` is when the icon asks macOS whether
+  goodall may show notifications (goodall.notifications): true exactly
+  when setup is usable. macOS asks the person once, and a question
+  dismissed or left unanswered counts as no until they change it in
+  System Settings, so it must not come before setup has told them it is
+  coming. The icon asks the first time it reads true, once per run; macOS
+  shows nothing when it has its answer already.
 - The exit code is 0 when setup is usable and 1 when it is not. The
   document is printed either way, and the helper reads the document.
 """
@@ -172,6 +180,7 @@ def icon_state_document(eval_for_this_account: EvalForThisAccount, now: datetime
         },
         "setup": {"usable": True, "reason": None},
         "watch_folder": str(watch_folder),
+        "ask_notification_permission": True,
     }
 
 
@@ -197,6 +206,7 @@ def unusable_document(failures: list[Failure]) -> dict[str, object]:
         "enabled": {"record_work_block": False, "pause": False, "stop_recording": False},
         "setup": {"usable": False, "reason": reason},
         "watch_folder": None,
+        "ask_notification_permission": False,
     }
 
 

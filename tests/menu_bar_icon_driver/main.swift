@@ -15,7 +15,8 @@
 //     {"event": "menu_opened"}
 //
 // It hands each event to the model exactly as main.swift does, and prints a JSON list with
-// one entry per event: the menu and icon as they would be drawn right after it. Choosing
+// one entry per event: the menu and icon as they would be drawn right after it, and
+// whether main.swift would ask macOS for notification permission at that moment. Choosing
 // an item that is missing or gray is a mistake in the test, so the driver stops with exit
 // code 2 and says which.
 
@@ -73,10 +74,12 @@ var renderings: [[String: Any]] = []
 for event in events {
     // What Quit goodall did, when this event chose it.
     var quit: Any = NSNull()
+    // Whether this event made the model say to ask for notification permission.
+    var askNotificationPermission = false
 
     switch event["event"] as? String {
     case "state_answered":
-        model.stateAnswered(output: event["output"] as? String ?? "")
+        askNotificationPermission = model.stateAnswered(output: event["output"] as? String ?? "")
     case "item_chosen":
         let titles = event["titles"] as? [String] ?? []
         guard let row = findRow(titles: titles, in: model.rows) else {
@@ -115,6 +118,7 @@ for event in events {
         "rows": rows,
         "running_arguments": model.runningCommand?.arguments ?? NSNull(),
         "quit": quit,
+        "ask_notification_permission": askNotificationPermission,
     ])
 }
 

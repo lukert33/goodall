@@ -5,10 +5,18 @@ It begins when you run `goodall start`. This page says every way it can end,
 including the ways goodall ends it for you, so that nothing about your record
 is a surprise.
 
-The short version: **goodall never ends a work block while you are working in
-it, and it never ends one in the background.** It only ever closes a work
-block that has been left idle, and only at the moment you next run
-`goodall start`, `goodall stop` or `goodall status`.
+The short version: **goodall never ends a work block without telling you.**
+It never ends one while you are working in it. When something other than
+your own command starts or stops recording (signing in or out, a script or
+schedule, or goodall closing a work block by itself), goodall shows a
+notification saying so, with the reason and the workstream. A start or stop
+you type, or choose from the menu bar icon, shows none, because you already
+know.
+
+Goodall closes a work block by itself only when it has been left idle, or
+when it cannot read the block's marker, and only at the moment a goodall
+command next runs: `goodall start`, `goodall stop`, `goodall pause` or
+`goodall status`.
 
 ## The three ways
 
@@ -30,20 +38,33 @@ Goodall closes a work block on your behalf in one situation only.
    means a heartbeat: goodall records one each time you send a prompt in
    Claude Code, each time Claude uses a tool, and each time Claude finishes a
    reply. Three hours is the idle limit.
-3. **You then run `goodall start`, `goodall stop` or `goodall status`.** Before
-   doing its own job, that command notices the idle block and closes it.
+3. **A goodall command then runs: `goodall start`, `goodall stop`,
+   `goodall pause` or `goodall status`**, typed by you, chosen from the menu
+   bar icon, or run by a script. Before doing its own job, that command
+   notices the idle block and closes it.
 
 The block is recorded as ending at its **last heartbeat**, not at the moment
 you ran the command. A block you forgot at 5 pm and found the next morning is
 recorded as ending at 5 pm, so the night is not counted as work. Its end state
 is `inferred`.
 
-Goodall tells you when it does this, in words like these:
+Goodall tells you when it does this, in two places. The command that
+noticed says, in words like these:
 
 > Your work block on research, started Mon 16 Nov 2026, 14:05 GMT, was left
 > running: nobody ran goodall stop, and nothing happened in it for more than
 > 3 h. Goodall closed it at its last heartbeat, Mon 16 Nov 2026, 17:02 GMT,
 > so the time after that is not counted as work.
+
+And a notification appears, because the command may have been run by the
+menu bar icon or a script, where nobody reads what it prints:
+
+> **Recording stopped**
+> On research. Nothing happened for more than 3 h, so goodall stopped
+> recording at the last activity, Mon 16 Nov 2026, 17:02 GMT.
+
+A work block closed because its marker could not be read (the `abnormal`
+end state) shows a notification too.
 
 ## What this means for each command
 
@@ -57,6 +78,56 @@ Goodall tells you when it does this, in words like these:
   block as `inferred`, at its last heartbeat, and exits successfully. It does
   not record the block as ending when you typed the command.
 - **`goodall start`** closes an idle block first, then starts a new one.
+
+## Notifications
+
+Goodall shows a notification whenever recording starts or stops without
+your own command. Each says "Recording started" or "Recording stopped",
+the workstream, and why:
+
+| What happened | The notification says |
+| --- | --- |
+| You signed in, and recording started | Recording started. On research, because you signed in. |
+| A script or schedule ran `goodall start --background script` | Recording started. On research, started by a script or schedule. |
+| You signed out, and recording stopped | Recording stopped. On research, because you signed out. |
+| A script or schedule ran `goodall stop --background script` (or `goodall pause --background script`) | Recording stopped. On research, stopped (or paused) by a script or schedule. |
+| Goodall closed a work block left idle | Recording stopped. On research. Nothing happened for more than 3 h, so goodall stopped recording at the last activity, … |
+| Goodall closed a work block whose marker it could not read | Recording stopped. On research. goodall could not read what it was recording, so it stopped. … |
+
+Nothing starts a work block at sign-in or stops one at sign-out yet; the
+words are ready for when something does.
+
+A notification never asks a question and has no buttons. It comes from the
+menu bar icon's helper, under goodall's own name (ADR 0024,
+[menu-bar-icon.md](menu-bar-icon.md)). macOS asks you once whether goodall
+may show notifications, the first time the icon starts after goodall is set
+up; that question and its words are macOS's own. If you dismiss it or do
+not answer, macOS treats that as no, and only System Settings >
+Notifications > goodall changes it.
+
+A notification that could not be shown (notifications turned off, or the
+menu bar icon not installed) is a warning printed by the command. It never
+stops a work block from starting or ending: by the time goodall asks for
+it, the work block has already started or ended.
+
+### For scripts and schedules: `--background`
+
+`goodall start`, `goodall stop` and `goodall pause` take
+`--background <reason>`, which says that something other than you is
+running the command:
+
+| Command | Reasons it takes |
+| --- | --- |
+| `goodall start` | `sign-in`, `script` |
+| `goodall stop` | `sign-out`, `script` |
+| `goodall pause` | `script` |
+
+A script or schedule that starts or stops recording must pass
+`--background script`; otherwise you would not be told. The LaunchAgent
+that will start a work block when you sign in will pass `sign-in`. A
+`--background` start that finds a work block already running, or a
+`--background` stop with nothing to stop, changes nothing and shows
+nothing.
 
 ## What goodall does not do
 

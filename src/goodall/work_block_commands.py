@@ -81,6 +81,7 @@ from goodall import (
     exit_codes,
     hook_problems,
     menu_bar_icon,
+    notifications,
     records,
     telemetry_capture,
     telemetry_receivers,
@@ -110,9 +111,20 @@ VERSION_PATTERN = re.compile(r"\d+(\.\d+)+[0-9A-Za-z.+-]*")
 
 
 def run_start(
-    terminal: Terminal, runner: Runner, clock: Clock, workstream: str | None, telemetry_port: int | None = None
+    terminal: Terminal,
+    runner: Runner,
+    clock: Clock,
+    workstream: str | None,
+    telemetry_port: int | None = None,
+    background: str | None = None,
 ) -> int:
     """Begin a work block and its telemetry receiver, say what happened, and return the exit code.
+
+    `background` is the reason given with --background when something other
+    than the person started it (goodall.notifications.BACKGROUND_STARTS),
+    or None when they ran the command themselves. A background start that
+    begins a work block shows one notification; one that finds a work block
+    already active shows none, because nothing started.
 
     `telemetry_port` is the port the person asked the receiver to listen
     on, or None for any free port (owner decision Q24). A receiver that
@@ -199,7 +211,20 @@ def run_start(
     terminal.show_paragraph(started + "Goodall is recording until you run goodall stop.")
     show_receiver_start(terminal, receiver_start, telemetry_port)
     show_icon_brought_back(terminal, runner)
+    if background is not None:
+        show_notification(terminal, runner, notifications.background_start(workstream, background))
     return exit_codes.SUCCESS
+
+
+def show_notification(terminal: Terminal, runner: Runner, notification: notifications.Notification) -> None:
+    """Show a notification for a background start or stop, and warn if it could not be shown.
+
+    Called once the work block has started or ended, so a notification
+    that fails can never undo either.
+    """
+    warning = notifications.show(runner, notification)
+    if warning is not None:
+        terminal.show_warnings([warning])
 
 
 def show_icon_brought_back(terminal: Terminal, runner: Runner) -> None:
@@ -325,8 +350,15 @@ def workstream_unknown_failure(eval_for_this_account: EvalForThisAccount) -> Fai
     )
 
 
-def run_stop(terminal: Terminal, runner: Runner, clock: Clock) -> int:
+def run_stop(terminal: Terminal, runner: Runner, clock: Clock, background: str | None = None) -> int:
     """End the active work block cleanly, write its record, say what happened, and return the exit code.
+
+    `background` is the reason given with --background when something other
+    than the person stopped it (goodall.notifications.BACKGROUND_STOPS), or
+    None when they ran the command themselves. Ending the active work block
+    then shows one notification. When there was none to end, nothing is
+    shown for the stop; a forgotten work block that settling closed has
+    already shown its own.
 
     Exit 0 once the work block has ended, whether its record is already in
     the record repo or is safely waiting in the log directory (a warning then
@@ -389,11 +421,16 @@ def run_stop(terminal: Terminal, runner: Runner, clock: Clock) -> int:
         terminal.show_failure(nothing_to_stop_failure())
         return exit_codes.ERROR
     end_active_work_block(terminal, runner, eval_reading, active, now, "Stopped")
+    if background is not None:
+        show_notification(terminal, runner, notifications.background_stop(active.record.workstream, background))
     return exit_codes.SUCCESS
 
 
-def run_pause(terminal: Terminal, runner: Runner, clock: Clock) -> int:
+def run_pause(terminal: Terminal, runner: Runner, clock: Clock, background: str | None = None) -> int:
     """End the active work block cleanly and remember that recording is paused; return the exit code.
+
+    `background` is as for `run_stop`: a script that pauses ends the work
+    block, which shows one notification.
 
     Pausing ends the work block just as goodall stop does (end state
     `clean`, agent sessions copied, record written), because a paused
@@ -430,6 +467,8 @@ def run_pause(terminal: Terminal, runner: Runner, clock: Clock) -> int:
         end_active_work_block(terminal, runner, eval_reading, active, now, "Paused")
         work_blocks.write_pause(log_directory, active.id, active.record.workstream, now)
         terminal.show_paragraph(recording_is_paused(eval_reading) + HOW_TO_RECORD_AGAIN)
+        if background is not None:
+            show_notification(terminal, runner, notifications.background_pause(active.record.workstream, background))
         return exit_codes.SUCCESS
 
     # Nothing to end, but a work block that settling has just closed, or an
@@ -665,6 +704,19 @@ def write_one_unrecorded_record(
 
 
 @dataclass(frozen=True)
+class Closing:
+    """A work block goodall closed by itself while settling: what the terminal says, and the notification.
+
+    Goodall ending a work block by itself is a background stop (ADR 0021),
+    so each closing also shows a notification, even when the command that
+    settled was typed (goodall.notifications says why).
+    """
+
+    paragraph: str
+    notification: notifications.Notification
+
+
+@dataclass(frozen=True)
 class Settling:
     """What settling did before a command's own work: work blocks closed, records written, agent sessions copied.
 
@@ -678,13 +730,15 @@ class Settling:
     it, or None.
     """
 
-    closings: list[str] = field(default_factory=list)
+    closings: list["Closing"] = field(default_factory=list)
     writes: list[UnrecordedWrite] = field(default_factory=list)
     copies: agent_session_copies.CopyResult = field(default_factory=agent_session_copies.CopyResult)
     activitywatch: activitywatch_copies.CopyResult = field(default_factory=activitywatch_copies.CopyResult)
     noted_hook_problems: hook_problems.HookProblems | None = None
     # Warnings from building the timeline again, which settling does when it closed a work block.
     timeline_warnings: list[Failure] = field(default_factory=list)
+    # A warning for each closing whose notification could not be shown (goodall.notifications).
+    notification_warnings: list[Failure] = field(default_factory=list)
 
     @property
     def warnings(self) -> list[Failure]:
@@ -702,6 +756,7 @@ class Settling:
         if self.activitywatch.problem is not None:
             warnings.append(activitywatch_not_copied_failure(self.activitywatch.problem))
         warnings.extend(self.timeline_warnings)
+        warnings.extend(self.notification_warnings)
         if self.noted_hook_problems is not None and self.noted_hook_problems.unreadable_inputs > 0:
             warnings.append(hook_input_unreadable_failure(self.noted_hook_problems))
         if self.noted_hook_problems is not None and self.noted_hook_problems.unknown_events > 0:
@@ -711,7 +766,9 @@ class Settling:
     @property
     def paragraphs(self) -> list[str]:
         """What a person reads about settling: each closing, then each record written."""
-        paragraphs = list(self.closings)
+        paragraphs = []
+        for closing in self.closings:
+            paragraphs.append(closing.paragraph)
         for write in self.writes:
             if write.committed and write.record is not None:
                 paragraphs.append(
@@ -750,6 +807,11 @@ def settle(
        after ending the work block.
     5. What hooks noted they could not do is taken, to be reported once.
 
+    Each work block closed in step 1, and each closed because its marker
+    could not be read, shows a notification: goodall ending a work block by
+    itself is a background stop (goodall.notifications). One that cannot be
+    shown is a warning in `notification_warnings`.
+
     The telemetry receiver of each work block closed in step 1 is stopped
     before its record is written, and any other receiver whose work block
     is not the active one is stopped too (goodall.telemetry_receivers).
@@ -775,12 +837,22 @@ def settle(
             telemetry,
             activitywatch_is_used_by(eval_reading),
         )
-        closings.append(
+        idle_limit = describe_duration(work_blocks.IDLE_LIMIT)
+        last_heartbeat = describe_moment(marker.last_heartbeat_at)
+        paragraph = (
             f"Your work block on {marker.record.workstream}, started {describe_moment(marker.record.started_at)}, "
             f"was left running: nobody ran goodall stop, and nothing happened in it for more than "
-            f"{describe_duration(work_blocks.IDLE_LIMIT)}. Goodall closed it at its last heartbeat, "
-            f"{describe_moment(marker.last_heartbeat_at)}, so the time after that is not counted as work."
+            f"{idle_limit}. Goodall closed it at its last heartbeat, "
+            f"{last_heartbeat}, so the time after that is not counted as work."
         )
+        notification = notifications.closed_when_idle(marker.record.workstream, idle_limit, last_heartbeat)
+        closings.append(Closing(paragraph, notification))
+    # Shown as soon as the work blocks are closed, before the slower copies.
+    notification_warnings = []
+    for closing in closings:
+        warning = notifications.show(runner, closing.notification)
+        if warning is not None:
+            notification_warnings.append(warning)
     active = work_blocks.active_work_block(log_directory, now)
     active_work_block_id = None
     if active is not None:
@@ -795,6 +867,7 @@ def settle(
         copies=agent_session_copies.copy_ended_work_blocks(log_directory, now),
         activitywatch=activitywatch,
         noted_hook_problems=hook_problems.take_hook_problems(log_directory, now),
+        notification_warnings=notification_warnings,
     )
     if closings and copy_activitywatch_now:
         # A work block has just ended and its copies are made, so the
@@ -833,11 +906,13 @@ def timeline_warnings(build: timeline.BuildResult) -> list[Failure]:
 
 def close_damaged_work_block(
     runner: Runner, eval_reading: EvalForThisAccount, damaged: work_blocks.DamagedMarker, now: datetime
-) -> str | None:
+) -> Closing | None:
     """Move a damaged marker aside, keep it, and record what can be recovered with the end state `abnormal`.
 
     Returns what to tell the person, or None when another goodall moved
-    the marker first (and so tells them itself).
+    the marker first (and so tells them itself). The notification is
+    given even when nothing could be recorded: goodall has still stopped
+    recording by itself.
     """
     log_directory = eval_reading.local_settings.log_directory.path
     recovered = recover_work_block(runner, eval_reading, damaged)
@@ -849,10 +924,11 @@ def close_damaged_work_block(
         f"still running. The marker is kept, unchanged, at {kept_marker}."
     )
     if recovered is None:
-        return message + (
+        message += (
             " Not even when that work block started could be recovered, so no record of it was written. Please tell "
             "the researcher who runs the eval, with the path above."
         )
+        return Closing(message, notifications.closed_when_unreadable(records.UNKNOWN_WORKSTREAM))
     telemetry = telemetry_receivers.finish_telemetry(runner, log_directory, recovered.id, now)
     recovered = dataclasses.replace(recovered, telemetry=telemetry)
     assert recovered.ended_at is not None
@@ -861,17 +937,19 @@ def close_damaged_work_block(
         activitywatch_copies.note_copy_wanted(log_directory, recovered.ended_at)
     work_blocks.save_unrecorded(log_directory, recovered)
     if recovered.workstream == records.UNKNOWN_WORKSTREAM:
-        return message + (
+        message += (
             f" The marker did not say which workstream that work block was for, so it is recorded with the "
             f"workstream unknown, from {describe_moment(recovered.started_at)} to {describe_ended_at(recovered)}, "
             "with the end state abnormal. Nothing is lost: once it is in the record repo, goodall status shows the "
             "goodall fixblock command that says which workstream it was."
         )
-    return message + (
-        f" What could be recovered is recorded as a work block on {recovered.workstream} from "
-        f"{describe_moment(recovered.started_at)} to {describe_ended_at(recovered)}, its last heartbeat, with the "
-        "end state abnormal."
-    )
+    else:
+        message += (
+            f" What could be recovered is recorded as a work block on {recovered.workstream} from "
+            f"{describe_moment(recovered.started_at)} to {describe_ended_at(recovered)}, its last heartbeat, with the "
+            "end state abnormal."
+        )
+    return Closing(message, notifications.closed_when_unreadable(recovered.workstream))
 
 
 def recover_work_block(
