@@ -374,6 +374,21 @@ def test_goodall_stop_builds_the_timeline_as_one_file_only_this_macos_user_accou
     assert stat.S_IMODE(eval_account.timeline_file.stat().st_mode) == 0o600
 
 
+def test_goodall_pause_builds_the_timeline_as_goodall_stop_does(eval_account: EvalAccount) -> None:
+    start = run_goodall(["start"], BLOCK_START)
+    assert start.exit_code == 0, start.standard_error
+    write_claude_session(eval_account, BLOCK_START + timedelta(minutes=5))
+
+    pause = run_goodall(["pause"], BLOCK_END)
+
+    assert pause.exit_code == 0, pause.standard_error
+    assert "Timeline" in pause.standard_output
+    assert eval_account.timeline_file.is_file()
+    timeline = run_goodall(["timeline"], BLOCK_END + timedelta(minutes=1))
+    assert timeline.exit_code == 0, timeline.standard_error
+    assert "human typed_prompt claude_desktop_code_tab" in rows_shown(timeline)
+
+
 def test_no_text_a_person_or_a_website_could_have_written_is_anywhere_in_the_timeline_file(
     eval_account: EvalAccount,
 ) -> None:
