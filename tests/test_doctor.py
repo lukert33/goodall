@@ -31,13 +31,24 @@ from goodall.fake_runner import (
     FakeRunner,
     InProcessTelemetryReceiver,
     PretendProgram,
+    ScriptedAnswer,
     SimulatedProgram,
 )
-from goodall.runner import BackgroundProgram, OutputMode, environment_for
+from goodall.runner import BackgroundProgram, CommandOutcome, OutputMode, environment_for
 from goodall.terminal import CheckResult, CheckStatus, Terminal
 
 # The command the account check runs, by its full path (see goodall.program_checks).
 ACCOUNT_GROUPS_COMMAND = ["/usr/bin/id", "-Gn"]
+
+# The command that asks Spotlight for every file it knows inside a folder,
+# by its full path (see goodall.settings_checks). The folder differs in
+# every test, so tests build the command with this function.
+SPOTLIGHT_QUERY = "kMDItemFSName == '*'"
+
+
+def spotlight_command(folder: Path) -> list[str]:
+    return ["/usr/bin/mdfind", "-onlyin", str(folder), SPOTLIGHT_QUERY]
+
 
 # The groups a standard macOS user account belongs to.
 STANDARD_ACCOUNT_GROUPS = "staff everyone localaccounts _appserverusr com.apple.sharepoint.group.1\n"
@@ -121,6 +132,8 @@ def healthy_runner() -> FakeRunner:
     runner.answer(OP_WHOAMI)
     runner.answer(OP_VAULT_LIST, standard_output=VAULT_LIST_ANSWER)
     runner.answer(OP_ITEM_LIST_EVAL, standard_output=ITEM_LIST_ANSWER)
+    # Spotlight lists nothing inside any folder, unless a test says otherwise.
+    runner.answer_with("/usr/bin/mdfind", lambda command: ScriptedAnswer(CommandOutcome.COMPLETED, exit_code=0))
     runner.answer(GOODALL_VERSION)
     # For a test whose hooks name goodall without its full path.
     runner.answer(["goodall", "--version"])
@@ -262,6 +275,7 @@ Settings
   pass        Local settings are valid
   pass        The record repo folder exists
   pass        The log directory can be written to
+  pass        Spotlight does not list files in the log directory
   pass        The eval config is found and valid
   pass        This eval account's contributor is in the roster
   pass        The main workstream is one of the eval's workstreams
@@ -320,7 +334,7 @@ ActivityWatch
   pass        No ActivityWatch browser watcher is installed
 
 All checks passed. One thing goodall cannot check without reading a secret.
-26 passed, 0 warned, 0 failed, 0 skipped, 1 unverified
+27 passed, 0 warned, 0 failed, 0 skipped, 1 unverified
 """
 
 
@@ -351,6 +365,8 @@ Settings
   skip        The record repo folder exists
               Waiting for: Local settings are found
   skip        The log directory can be written to
+              Waiting for: Local settings are found
+  skip        Spotlight does not list files in the log directory
               Waiting for: Local settings are found
   skip        The eval config is found and valid
               Waiting for: Local settings are found
@@ -413,7 +429,7 @@ ActivityWatch
   skip        No ActivityWatch browser watcher is installed
               Waiting for: Local settings are found
 
-2 passed, 0 warned, 1 failed, 24 skipped, 0 unverified
+2 passed, 0 warned, 1 failed, 25 skipped, 0 unverified
 """
 
 
@@ -458,6 +474,7 @@ ALL_CHECK_IDS = [
     "settings.local_settings_valid",
     "settings.record_repo_found",
     "settings.log_directory_reachable",
+    "settings.log_directory_not_in_spotlight",
     "settings.eval_config_valid",
     "settings.contributor_in_roster",
     "settings.main_workstream_known",
@@ -491,7 +508,7 @@ def test_healthy_setup_as_json_gives_the_same_results(healthy_account: EvalAccou
 
     assert exit_code == exit_codes.SUCCESS
     assert document["schema_version"] == 1
-    assert document["summary"] == {"passed": 26, "warned": 0, "failed": 0, "skipped": 0, "unverified": 1}
+    assert document["summary"] == {"passed": 27, "warned": 0, "failed": 0, "skipped": 0, "unverified": 1}
     checks = document["checks"]
     assert isinstance(checks, list)
     assert checks[0] == {
@@ -517,7 +534,7 @@ def test_missing_local_settings_as_json_names_what_each_skip_waited_for(settings
     exit_code, document = doctor_json()
 
     assert exit_code == exit_codes.ERROR
-    assert document["summary"] == {"passed": 2, "warned": 0, "failed": 1, "skipped": 24, "unverified": 0}
+    assert document["summary"] == {"passed": 2, "warned": 0, "failed": 1, "skipped": 25, "unverified": 0}
     checks = document["checks"]
     assert isinstance(checks, list)
     failed_check = checks[0]
@@ -551,7 +568,7 @@ def test_invalid_local_settings_fail_once_and_name_every_problem(healthy_account
     assert "favorite_color" in standard_output
     assert standard_output.count("        Next: ") == 2
     assert "Waiting for: Local settings are valid" in standard_output
-    assert standard_output.endswith("3 passed, 0 warned, 1 failed, 23 skipped, 0 unverified\n")
+    assert standard_output.endswith("3 passed, 0 warned, 1 failed, 24 skipped, 0 unverified\n")
 
 
 def test_relative_settings_folder_override_fails_the_found_check(
@@ -598,6 +615,7 @@ def test_missing_record_repo_skips_the_eval_config_but_still_checks_the_log_dire
         "settings.local_settings_valid": "pass",
         "settings.record_repo_found": "fail",
         "settings.log_directory_reachable": "pass",
+        "settings.log_directory_not_in_spotlight": "pass",
         "settings.eval_config_valid": "skip",
         "settings.contributor_in_roster": "skip",
         "settings.main_workstream_known": "skip",
@@ -632,6 +650,106 @@ def test_missing_record_repo_skips_the_eval_config_but_still_checks_the_log_dire
             assert check["waiting_for"] == "settings.record_repo_found"
 
 
+def test_a_log_directory_whose_files_spotlight_can_find_warns_to_rename_it_and_changes_nothing(
+    healthy_account: EvalAccount, tmp_path: Path
+) -> None:
+    runner = healthy_runner()
+    found_file = healthy_account.log_directory / "activitywatch" / "events.json"
+    runner.answer(spotlight_command(healthy_account.log_directory), standard_output=f"{found_file}\n")
+    files_before = sorted(tmp_path.rglob("*"))
+
+    exit_code, standard_output, _ = run_goodall(["doctor"], runner)
+
+    assert exit_code == exit_codes.SUCCESS
+    assert "  warn        Spotlight does not list files in the log directory\n" in standard_output
+    # The file Spotlight named is somewhere in the log directory; its path is never shown.
+    assert str(found_file) not in standard_output
+    assert sorted(tmp_path.rglob("*")) == files_before
+
+    json_exit_code, document = doctor_json(runner)
+    assert json_exit_code == exit_code
+    assert statuses(document)["settings.log_directory_not_in_spotlight"] == "warn"
+    next_step = check_next_step(document, "settings.log_directory_not_in_spotlight")
+    assert f"{healthy_account.log_directory}.noindex" in next_step
+    assert str(healthy_account.settings_file) in next_step
+
+
+def check_next_step(document: dict[str, object], check_id: str) -> str:
+    """The next step one check gives in a `goodall doctor --json` document."""
+    next_step = check_document(document, check_id)["next_step"]
+    assert isinstance(next_step, str)
+    return next_step
+
+
+def test_a_log_directory_that_already_ends_in_noindex_but_is_listed_points_to_spotlights_privacy_list(
+    healthy_account: EvalAccount,
+) -> None:
+    noindex_directory = healthy_account.log_directory.with_name("goodall-pilot.noindex")
+    healthy_account.log_directory.rename(noindex_directory)
+    healthy_account.settings_file.write_text(
+        healthy_account.settings_text().replace(str(healthy_account.log_directory), str(noindex_directory))
+    )
+    runner = healthy_runner()
+    runner.answer(spotlight_command(noindex_directory), standard_output=f"{noindex_directory}/events.json\n")
+
+    exit_code, document = doctor_json(runner)
+
+    assert exit_code == exit_codes.SUCCESS
+    next_step = " ".join(check_next_step(document, "settings.log_directory_not_in_spotlight").split())
+    assert "Search Privacy" in next_step
+    assert "Rename" not in next_step
+
+
+def test_a_log_directory_spotlight_lists_nothing_in_passes(healthy_account: EvalAccount) -> None:
+    exit_code, document = doctor_json()
+
+    assert exit_code == exit_codes.SUCCESS
+    assert statuses(document)["settings.log_directory_not_in_spotlight"] == "pass"
+
+
+@pytest.mark.parametrize("how_it_failed", ["missing", "timed_out", "failed"])
+def test_a_spotlight_that_cannot_be_asked_is_unverified_with_a_way_to_look_by_hand(
+    healthy_account: EvalAccount, how_it_failed: str
+) -> None:
+    runner = healthy_runner()
+    command = spotlight_command(healthy_account.log_directory)
+    if how_it_failed == "missing":
+        runner.answer_not_found(command)
+    elif how_it_failed == "timed_out":
+        runner.answer_timed_out(command)
+    else:
+        runner.answer(command, exit_code=1, standard_error="mdfind: query failed")
+
+    exit_code, document = doctor_json(runner)
+
+    # Not knowing is neither a pass nor a failure.
+    assert exit_code == exit_codes.SUCCESS
+    assert statuses(document)["settings.log_directory_not_in_spotlight"] == "unverified"
+    assert "search for a word" in " ".join(check_next_step(document, "settings.log_directory_not_in_spotlight").split())
+
+
+def test_a_log_directory_that_does_not_exist_is_not_asked_about_in_spotlight(healthy_account: EvalAccount) -> None:
+    healthy_account.log_directory.rmdir()
+    runner = healthy_runner()
+
+    exit_code, document = doctor_json(runner)
+
+    assert statuses(document)["settings.log_directory_not_in_spotlight"] == "pass"
+    for command in runner.calls:
+        assert command.arguments[0] != "/usr/bin/mdfind"
+
+
+def test_the_spotlight_question_is_a_read_only_query_of_the_log_directory_alone(
+    healthy_account: EvalAccount,
+) -> None:
+    runner = healthy_runner()
+
+    run_goodall(["doctor"], runner)
+
+    spotlight_commands = [command for command in runner.calls if command.arguments[0] == "/usr/bin/mdfind"]
+    assert [command.arguments for command in spotlight_commands] == [spotlight_command(healthy_account.log_directory)]
+
+
 def test_unreachable_log_directory_is_a_warning_with_a_next_step_and_exits_0(healthy_account: EvalAccount) -> None:
     # An unplugged drive: goodall is not recording, but nothing is broken.
     healthy_account.settings_file.write_text(
@@ -643,7 +761,7 @@ def test_unreachable_log_directory_is_a_warning_with_a_next_step_and_exits_0(hea
     assert exit_code == exit_codes.SUCCESS
     assert "  warn        The log directory can be written to\n              Not recording:" in standard_output
     assert "        Next: If the log directory is on an external drive, connect it." in standard_output
-    assert standard_output.endswith("25 passed, 1 warned, 0 failed, 0 skipped, 1 unverified\n")
+    assert standard_output.endswith("26 passed, 1 warned, 0 failed, 0 skipped, 1 unverified\n")
 
     json_exit_code, document = doctor_json()
     assert json_exit_code == exit_code
@@ -670,11 +788,11 @@ def test_contributor_and_main_workstream_are_reported_as_separate_checks(healthy
     exit_code, document = doctor_json()
 
     assert exit_code == exit_codes.ERROR
-    assert document["summary"] == {"passed": 24, "warned": 0, "failed": 2, "skipped": 0, "unverified": 1}
+    assert document["summary"] == {"passed": 25, "warned": 0, "failed": 2, "skipped": 0, "unverified": 1}
     checks = document["checks"]
     assert isinstance(checks, list)
-    assert [failure["kind"] for failure in checks[5]["failures"]] == ["contributor_not_in_roster"]
-    assert [failure["kind"] for failure in checks[6]["failures"]] == ["main_workstream_unknown"]
+    assert [failure["kind"] for failure in checks[6]["failures"]] == ["contributor_not_in_roster"]
+    assert [failure["kind"] for failure in checks[7]["failures"]] == ["main_workstream_unknown"]
 
 
 @pytest.mark.parametrize(
@@ -840,7 +958,7 @@ def test_missing_git_is_one_failure_and_the_record_repo_check_waits_for_it(healt
 
     assert exit_code == exit_codes.ERROR
     document = json.loads(standard_output)
-    assert document["summary"] == {"passed": 23, "warned": 0, "failed": 1, "skipped": 2, "unverified": 1}
+    assert document["summary"] == {"passed": 24, "warned": 0, "failed": 1, "skipped": 2, "unverified": 1}
     git_check = check_document(document, "tools.git_installed")
     assert git_check["status"] == "fail"
     assert isinstance(git_check["next_step"], str)
@@ -856,7 +974,7 @@ def test_missing_op_fails_the_secrets_manager_check_naming_1password(healthy_acc
 
     assert exit_code == exit_codes.ERROR
     document = json.loads(standard_output)
-    assert document["summary"] == {"passed": 23, "warned": 0, "failed": 1, "skipped": 3, "unverified": 0}
+    assert document["summary"] == {"passed": 24, "warned": 0, "failed": 1, "skipped": 3, "unverified": 0}
     secrets_manager_check = check_document(document, "tools.secrets_manager_installed")
     assert secrets_manager_check["status"] == "fail"
     assert isinstance(secrets_manager_check["detail"], str)
@@ -933,7 +1051,7 @@ def test_an_administrator_account_fails_with_why_a_standard_account_is_required(
     # The reason, so a researcher does not wave it away as fussiness.
     assert "cannot reach other accounts' files or install software" in report_text
     assert "safe to hand to an agent" in report_text
-    assert standard_output.endswith("25 passed, 0 warned, 1 failed, 0 skipped, 1 unverified\n")
+    assert standard_output.endswith("26 passed, 0 warned, 1 failed, 0 skipped, 1 unverified\n")
 
 
 @pytest.mark.parametrize(
@@ -978,7 +1096,7 @@ def test_in_mixed_account_mode_an_administrator_account_is_a_warning_that_recomm
     assert "is an administrator (it is in the admin group)" in report_text
     assert "mixed account mode" in report_text
     assert "An eval account is the recommended setup" in report_text
-    assert standard_output.endswith("25 passed, 1 warned, 0 failed, 0 skipped, 1 unverified\n")
+    assert standard_output.endswith("26 passed, 1 warned, 0 failed, 0 skipped, 1 unverified\n")
 
 
 def test_in_mixed_account_mode_a_standard_account_passes(healthy_account: EvalAccount) -> None:
@@ -1025,7 +1143,7 @@ def test_a_record_repo_folder_that_is_not_a_git_repository_fails(healthy_account
 
     assert exit_code == exit_codes.ERROR
     document = json.loads(standard_output)
-    assert document["summary"] == {"passed": 24, "warned": 0, "failed": 1, "skipped": 1, "unverified": 1}
+    assert document["summary"] == {"passed": 25, "warned": 0, "failed": 1, "skipped": 1, "unverified": 1}
     git_repository_check = check_document(document, "record_repo.is_git_repository")
     assert git_repository_check["status"] == "fail"
     assert isinstance(git_repository_check["detail"], str)
@@ -1075,6 +1193,7 @@ def test_a_command_the_fake_runner_was_not_told_about_fails_the_test_and_names_i
     # Every program is installed, but the account check's command was
     # never scripted: the test must fail loudly rather than run it.
     runner = FakeRunner(installed_programs=["git", "op"])
+    runner.answer_with("/usr/bin/mdfind", lambda command: ScriptedAnswer(CommandOutcome.COMPLETED, exit_code=0))
 
     with pytest.raises(AssertionError, match="`/usr/bin/id -Gn`"):
         run_goodall(["doctor"], runner)
@@ -1097,7 +1216,7 @@ def test_an_account_check_that_never_finishes_is_reported_as_timed_out_and_docto
     assert isinstance(account_check["detail"], str)
     assert "`/usr/bin/id -Gn` timed out after 10 s" in account_check["detail"]
     # Every other check still ran.
-    assert document["summary"] == {"passed": 25, "warned": 0, "failed": 1, "skipped": 0, "unverified": 1}
+    assert document["summary"] == {"passed": 26, "warned": 0, "failed": 1, "skipped": 0, "unverified": 1}
 
 
 # A recognisable fake key. If any part of it shows up in goodall's output,
@@ -1692,7 +1811,7 @@ def test_a_report_whose_only_unverified_check_needs_a_secret_reads_as_healthy(he
     last_lines = standard_output.splitlines()[-2:]
     assert last_lines == [
         "All checks passed. One thing goodall cannot check without reading a secret.",
-        "26 passed, 0 warned, 0 failed, 0 skipped, 1 unverified",
+        "27 passed, 0 warned, 0 failed, 0 skipped, 1 unverified",
     ]
     # The check itself keeps its status and says when a wrong field shows up.
     assert "  unverified  Each secret reference names a field that exists\n" in standard_output
@@ -1701,7 +1820,7 @@ def test_a_report_whose_only_unverified_check_needs_a_secret_reads_as_healthy(he
         report_text
     )
     # --json is unchanged: the count is still there, and nothing calls it a pass.
-    assert document["summary"] == {"passed": 26, "warned": 0, "failed": 0, "skipped": 0, "unverified": 1}
+    assert document["summary"] == {"passed": 27, "warned": 0, "failed": 0, "skipped": 0, "unverified": 1}
     assert check_document(document, "secrets.referenced_fields_exist")["status"] == "unverified"
 
 
@@ -1726,7 +1845,7 @@ def test_a_report_with_a_warning_has_no_all_passed_line(healthy_account: EvalAcc
 
     assert exit_code == exit_codes.SUCCESS
     assert "All checks passed" not in standard_output
-    assert standard_output.splitlines()[-1] == "25 passed, 1 warned, 0 failed, 0 skipped, 1 unverified"
+    assert standard_output.splitlines()[-1] == "26 passed, 1 warned, 0 failed, 0 skipped, 1 unverified"
 
 
 def test_an_env_file_with_no_references_has_no_field_to_leave_unverified(healthy_account: EvalAccount) -> None:
@@ -2192,7 +2311,7 @@ def test_doctor_passes_on_a_mac_without_gh_and_never_runs_it(healthy_account: Ev
     exit_code, document = doctor_json(runner)
 
     assert exit_code == exit_codes.SUCCESS
-    assert document["summary"] == {"passed": 26, "warned": 0, "failed": 0, "skipped": 0, "unverified": 1}
+    assert document["summary"] == {"passed": 27, "warned": 0, "failed": 0, "skipped": 0, "unverified": 1}
     for command in runner.calls:
         assert Path(command.arguments[0]).name != "gh"
 
@@ -2998,7 +3117,7 @@ def test_a_healthy_activitywatch_passes_every_check(healthy_account: EvalAccount
 
     assert exit_code == exit_codes.SUCCESS
     assert activitywatch_statuses(document) == ["pass", "pass", "pass", "pass"]
-    assert document["summary"] == {"passed": 26, "warned": 0, "failed": 0, "skipped": 0, "unverified": 1}
+    assert document["summary"] == {"passed": 27, "warned": 0, "failed": 0, "skipped": 0, "unverified": 1}
 
 
 def test_activitywatch_is_asked_only_through_credential_free_local_reads_that_skip_proxies(
