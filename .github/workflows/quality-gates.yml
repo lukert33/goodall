@@ -50,7 +50,8 @@ jobs:
       - name: Install uv
         # Ubuntu's system Python refuses `pip install` outside a virtual
         # environment, so uv goes into its own. The hash is the PyPI wheel for
-        # Linux x86_64; raise the version and the hash together, and keep the
+        # Linux x86_64; raise the version and this hash together with the one in
+        # the menu-bar-icon job below, and keep the
         # version inside the uv_build range in pyproject.toml. 0.13.7 (uploaded
         # 2026-11-03) is the newest release in that range that was at least two
         # weeks old when it was pinned.
@@ -86,12 +87,12 @@ jobs:
 
   menu-bar-icon:
     # The menu bar icon's helper is Swift (ADR 0024), which the Linux job above
-    # cannot compile: there the test that builds it is skipped. This job builds
-    # it on a Mac, so a change that breaks the Swift fails the pull request.
-    # It needs no Python: the build script uses only the compiler and codesign
-    # that the runner already has. The helper is built and never started.
+    # cannot compile: there its tests are skipped. This job builds it on a Mac,
+    # so a change that breaks the Swift fails the pull request, and runs the
+    # tests that compile its model and check what the menu shows (ADR 0025).
+    # The helper itself is built and never started.
     runs-on: macos-15
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - name: Check out the repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -103,3 +104,20 @@ jobs:
 
       - name: Check the signature
         run: codesign --verify --strict "$RUNNER_TEMP/menu-bar-icon/goodall.app"
+
+      - name: Install uv
+        # As in the job above, but the hash is the PyPI wheel for macOS on
+        # Apple chips. Raise the version and both hashes together.
+        run: |
+          python3 -m venv "$RUNNER_TEMP/uv-tool"
+          echo "uv==0.13.7 --hash=sha256:f91a229093163eefca89ea1b220a221d64c3beade05d03519a6584d1797a5a5f" > "$RUNNER_TEMP/uv-requirements.txt"
+          "$RUNNER_TEMP/uv-tool/bin/pip" install --require-hashes --only-binary :all: -r "$RUNNER_TEMP/uv-requirements.txt"
+          echo "$RUNNER_TEMP/uv-tool/bin" >> "$GITHUB_PATH"
+
+      - name: Install dependencies from the lockfile
+        # No scout extra: these tests need only goodall itself. uv may fetch
+        # Python 3.12 here, since the Mac runner's own Python can be older.
+        run: uv sync --locked
+
+      - name: Menu bar icon tests
+        run: uv run pytest tests/test_menu_bar_icon_model.py tests/test_menu_bar_icon_helper.py tests/test_menu_bar_icon.py
