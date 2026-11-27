@@ -741,8 +741,11 @@ def test_missing_eval_config_names_the_file_and_the_fix(eval_account: EvalAccoun
     assert standard_error.startswith("FAIL  No eval config was found")
     assert str(eval_account.eval_config_file) in standard_error
     # The fix is either a wrong record_repo in local settings or a record
-    # repo that is not up to date, so both files are named.
+    # repo that has no eval config written yet, so both files are named.
     assert str(eval_account.settings_file) in standard_error
+    # The record repo has no remote (ADR 0023), so there is nothing to pull.
+    assert "git pull" not in standard_error
+    assert "write eval.toml" in " ".join(standard_error.split())
     assert failure_kinds() == ["eval_config_missing"]
 
 
