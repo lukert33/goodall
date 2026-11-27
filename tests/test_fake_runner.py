@@ -47,6 +47,20 @@ def test_a_command_whose_output_is_discarded_gets_none_of_the_scripted_output() 
     assert result.standard_output == ""
 
 
+def test_a_handed_over_command_gets_none_of_the_scripted_output_but_keeps_its_exit_code() -> None:
+    # What a program prints to a terminal handed over to it goes to the
+    # person, never to goodall, as with the real runner.
+    runner = FakeRunner()
+    runner.answer(["/usr/bin/sudo", "true"], exit_code=1, standard_output="Password:", standard_error="Sorry")
+
+    result = runner.run(Command(["/usr/bin/sudo", "true"], output=OutputMode.HAND_OVER))
+
+    assert result.exit_code == 1
+    assert result.standard_output == ""
+    assert result.standard_error == ""
+    assert runner.calls[0].output == OutputMode.HAND_OVER
+
+
 def test_a_command_can_be_scripted_as_missing_or_as_never_finishing() -> None:
     runner = FakeRunner()
     runner.answer_not_found(["gh", "--version"])
