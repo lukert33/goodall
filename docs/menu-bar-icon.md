@@ -29,7 +29,7 @@ work. It goes away when you open the menu.
 | Item | The one command it runs |
 | --- | --- |
 | A gray status line, such as "Recording research since 09:30" | none |
-| **Record work block** ▸ one item per workstream, your main workstream first and marked "(main)" | `goodall start --workstream NAME` |
+| **Record work block** ▸ one item per workstream, your main workstream first | `goodall start --workstream NAME` |
 | **Pause** | `goodall pause` |
 | **Stop recording** | `goodall stop` |
 | **Settings…** | `goodall settings` |
@@ -66,15 +66,20 @@ the full message with its next step.
 ## Where the logic is
 
 The icon is a small program written in Swift, because an icon in the menu
-bar cannot be made with Python's standard library. Its whole source is one
-commented file, [`menu-bar-icon/main.swift`](../menu-bar-icon/main.swift),
-written to be read by someone who does not know Swift.
+bar cannot be made with Python's standard library. Its source is two
+commented files, written to be read by someone who does not know Swift:
+[`menu-bar-icon/MenuModel.swift`](../menu-bar-icon/MenuModel.swift) decides
+what to show, and [`menu-bar-icon/main.swift`](../menu-bar-icon/main.swift)
+draws it and runs goodall (ADR 0025).
 
-It decides nothing. It runs `goodall icon-state --json`, draws what the
-answer says, and runs one goodall command per menu item. The words of the
-status line, which items are enabled, the list of workstreams and which is
-the main one all come from the Python (`src/goodall/icon_state.py`). To
-change what the icon says, change the Python.
+It decides as little as it can. It runs `goodall icon-state --json`, draws
+what the answer says, and runs one goodall command per menu item. The words
+of the status line, which items are enabled, the list of workstreams and
+which is the main one all come from the Python (`src/goodall/icon_state.py`).
+To change what the icon says, change the Python. What the helper does
+decide (the line shown while a command runs, when a failure shows, what
+Quit goodall does first) is in `MenuModel.swift`, and
+`tests/test_menu_bar_icon_model.py` tests it by running it.
 
 It asks goodall for the state:
 
@@ -233,5 +238,7 @@ Remove it again with `rm -rf /Applications/goodall.app` after choosing
 - **Tried by a person once.** On 2026-11-27 every menu item was clicked
   against a throwaway eval, in light and dark menu bars, from a development
   account. It has not been run in a standard account or from a LaunchAgent.
-  What the menu does when clicked is still checked only by hand: the tests
-  read the Swift as text and build it, and never run it.
+  What the menu shows after each event is tested automatically (ADR 0025);
+  what AppKit does with it is not. After changing `main.swift`, check by
+  hand that an open menu changes when a command finishes, and that the
+  three looks are right in light and dark menu bars.

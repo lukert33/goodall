@@ -1,0 +1,10 @@
+# The menu bar icon's decisions live in a model tested from pytest
+
+The menu bar icon's helper (ADR 0024) leaves goodall to decide what can be done, but it still decides a little itself: the line shown while a command runs, when a failure is shown and when its mark clears, and what Quit goodall must do first. Until 2026-11-27 none of that was tested; the tests only read the Swift as text and compiled it. That day's hand test found three bugs, and none of them could have been caught. So the helper is split in two. `menu-bar-icon/MenuModel.swift` holds every decision and uses no AppKit; it takes four events (goodall answered, a command started, a command finished, the menu opened) and says which rows, look and mark to draw. `main.swift` passes the events in, draws what the model says, and runs goodall. Swift's own test frameworks, XCTest and Swift Testing, come with Xcode and are missing from the Command Line Tools that goodall builds with (checked on 2026-11-27, Swift 6.3.3), so the model is tested from pytest: `tests/test_menu_bar_icon_model.py` compiles it with a small driver, `tests/menu_bar_icon_driver/main.swift`, feeds it events as JSON and checks every menu it would draw. The driver is never part of the helper anyone runs. We also considered a hidden test mode in the helper itself, which would ship test code, and requiring Xcode for XCTest, which would make Xcode a build and CI requirement. Driving the real menu through the Accessibility API or XCUITest would test AppKit too, but needs an Accessibility permission on every machine that runs it.
+
+## Consequences
+
+- A decision added to the helper goes in `MenuModel.swift` with a test, not in `main.swift`.
+- What AppKit does stays untested by running it: how an open menu redraws, and how the binoculars look. Source-text checks in `tests/test_menu_bar_icon_helper.py` and the hand checks in `docs/menu-bar-icon.md` cover those.
+- The model tests run only where there is a Swift compiler. CI's Linux job skips them; its Mac job runs them.
+- One test feeds the model the real `goodall icon-state --json` output, so a change to that document that the Swift cannot read fails a test.

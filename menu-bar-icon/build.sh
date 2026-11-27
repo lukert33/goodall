@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build the menu bar icon's helper, goodall.app, from main.swift (ADR 0024).
+# Build the menu bar icon's helper, goodall.app, from main.swift and MenuModel.swift (ADR 0024).
 #
 #     menu-bar-icon/build.sh [output folder]
 #
@@ -35,7 +35,7 @@ cp -f "$source_folder/Info.plist" "$application/Contents/Info.plist"
 plutil -replace CFBundleShortVersionString -string "$version" "$application/Contents/Info.plist"
 plutil -replace CFBundleVersion -string "$version" "$application/Contents/Info.plist"
 
-swiftc -O -target arm64-apple-macos13.0 "$source_folder/main.swift" -o "$program"
+swiftc -O -target arm64-apple-macos13.0 "$source_folder/main.swift" "$source_folder/MenuModel.swift" -o "$program"
 codesign --force -s - "$application"
 
 echo "Built $application"
