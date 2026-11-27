@@ -340,7 +340,7 @@ final class MenuBarIcon: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // The three looks, all the same binoculars:
     //   not recording   an outline, with empty lenses
     //   paused          an outline, with an upright bar in each lens: together, a pause mark
-    //   recording       red, with a filled dot in each lens, like two recording lights
+    //   recording       orange, with a filled dot in each lens, like two recording lights
     // The icon shows no running time. A clock that reads 0:00 for the first minute looks
     // broken, and the icon's job is only to say whether goodall is recording.
     func drawIcon() {
@@ -376,7 +376,7 @@ final class MenuBarIcon: NSObject, NSApplicationDelegate, NSMenuDelegate {
             shrink.scale(by: scale)
             shrink.concat()
             // Black here is only a stand-in when the image is a "template" (see below).
-            let color: NSColor = state == "recording" ? .systemRed : .black
+            let color: NSColor = state == "recording" ? .systemOrange : .black
             color.setStroke()
             color.setFill()
 
@@ -420,7 +420,8 @@ final class MenuBarIcon: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return true
         }
         // A "template" image is one macOS recolors black or white to suit the menu bar.
-        // The recording look stays red, the color every recording light has.
+        // The recording look stays orange: macOS's own bright, citrus orange, which the
+        // owner chose over red.
         image.isTemplate = state != "recording"
         image.accessibilityDescription = description
         return image

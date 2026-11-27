@@ -66,6 +66,13 @@ def test_the_helper_draws_binoculars_and_shows_no_clock() -> None:
     assert "clockTick" not in source
 
 
+def test_the_recording_look_is_orange() -> None:
+    # The owner's choice of 2026-11-27: a bright citrus orange, not red.
+    source = (HELPER_FOLDER / "main.swift").read_text()
+    assert ".systemOrange" in source
+    assert ".systemRed" not in source
+
+
 needs_swift = pytest.mark.skipif(
     sys.platform != "darwin" or shutil.which("swiftc") is None or shutil.which("codesign") is None,
     reason="building the menu bar icon's helper needs macOS with the Swift compiler",

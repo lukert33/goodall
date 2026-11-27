@@ -14,7 +14,7 @@ only way to see it is to build it yourself, as below.
 
 | Look | Meaning |
 | --- | --- |
-| Red binoculars with a filled dot in each lens | Goodall is recording. |
+| Orange binoculars with a filled dot in each lens | Goodall is recording. |
 | Binoculars with an upright bar in each lens | Recording is paused. Goodall is not recording. |
 | Binoculars with empty lenses | Goodall is not recording. |
 
