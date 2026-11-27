@@ -159,10 +159,13 @@ facts are the provenance.
   asking. Open the pull request as a draft (`gh pr create --draft`) while the
   work is unfinished or a quality gate fails, and mark it ready when it is
   done; if GitHub refuses a draft, prefix the title with `[DRAFT]` instead.
-  This repository rule takes precedence over the default in the Beads sections
-  below. Merging any pull request, committing to `main`, force-pushing, and
-  pushing to a branch someone else is working on still wait for the owner's
-  go-ahead.
+  An agent may also rebase such a branch and force-push it, always with
+  `git push --force-with-lease` so that a commit it has not seen is never
+  overwritten. A branch stops being yours alone once someone else has
+  committed to it or stacked a branch on it. This repository rule takes
+  precedence over the default in the Beads sections below. Merging any pull
+  request, committing to `main`, and pushing to a branch someone else is
+  working on still wait for the owner's go-ahead.
 - **A merged branch is finished.** Once a branch's pull request is merged,
   further work starts on a new branch from `origin/main`. Claude Code hooks
   (`.claude/hooks/branch_merge_status.py`) report a merged branch when a Claude
