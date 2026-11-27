@@ -373,6 +373,29 @@ class Terminal:
             lines.append(label.ljust(value_column) + wrapped[value_column:])
         self.standard_output.write("\n".join(lines) + "\n")
 
+    def show_rows(self, column_names: list[str], rows: list[list[str]]) -> None:
+        """Write rows of short values to standard output, lined up in columns under their names.
+
+        Each row has one value for each column name. A column is as wide as
+        its longest value, and rows are never wrapped: a row is read across,
+        and a wrapped one would no longer line up. The last column is not
+        padded, so no line ends in spaces.
+        """
+        self.start_output_block()
+        widths = []
+        for column_number, column_name in enumerate(column_names):
+            width = len(column_name)
+            for row in rows:
+                width = max(width, len(row[column_number]))
+            widths.append(width)
+        lines = []
+        for row in [column_names, *rows]:
+            cells = []
+            for column_number, value in enumerate(row):
+                cells.append(value.ljust(widths[column_number]))
+            lines.append("  ".join(cells).rstrip())
+        self.standard_output.write("\n".join(lines) + "\n")
+
     def show_paragraph(self, text: str) -> None:
         """Write a paragraph of text to standard output, wrapped to the output width."""
         self.start_output_block()

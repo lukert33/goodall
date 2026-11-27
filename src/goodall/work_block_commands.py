@@ -17,8 +17,9 @@ What each command does, in order:
   work block cleanly, copy every agent session that has a record inside it
   into the log directory (goodall.agent_session_copies), copy
   ActivityWatch's data there too when the eval includes it
-  (goodall.activitywatch_copies), and write the work block's record into
-  the record repo. If the record cannot be
+  (goodall.activitywatch_copies), write the work block's record into
+  the record repo, and build the timeline again from all of it
+  (goodall.timeline). If the record cannot be
   written yet it waits in the log directory, a warning says so, and the
   exit is still 0. With none active it says so and exits 1.
 - `goodall pause`: end the active work block exactly as `goodall stop`
@@ -42,7 +43,8 @@ goodall has just closed itself and any copy that failed earlier, and is
 said in one sentence only when something was copied; ActivityWatch's data
 is copied, for an eval that includes it, when a work block has ended since
 its last copy (never otherwise, so nothing is asked of ActivityWatch while
-a work block simply runs); and any problem a
+a work block simply runs); the timeline is built again when settling
+closed a work block; and any problem a
 hook noted (goodall.hook_problems), such as a prompt whose input goodall
 could not read, is reported once as a warning and filed away.
 
@@ -77,6 +79,7 @@ from goodall import (
     records,
     telemetry_capture,
     telemetry_receivers,
+    timeline,
     work_blocks,
 )
 from goodall.eval_config import (
@@ -321,6 +324,9 @@ def run_stop(terminal: Terminal, runner: Runner, clock: Clock) -> int:
     that copy itself once the work block has ended: one copy, holding the
     whole work block, not one before its end and another after.
 
+    Once the copies are made and the record is written, the timeline is
+    built again (goodall.timeline); a problem there is a warning too.
+
     `Claude sessions` counts those the work block's heartbeats named, which
     only Claude Code's hooks leave; `Agent sessions copied` counts those,
     of every source application, with a record inside the work block.
@@ -339,6 +345,7 @@ def run_stop(terminal: Terminal, runner: Runner, clock: Clock) -> int:
         # closed, or an earlier copy that failed, may still want its copy.
         show_activitywatch_copy(terminal, copy_activitywatch(runner, eval_reading, now))
     if active is None and settling.closings:
+        terminal.show_warnings(timeline_warnings(build_timeline(eval_reading, now)))
         # The work block the person meant to stop had been forgotten, and
         # settling has just closed it at its last heartbeat and said so.
         # That is what they asked for. If its record could not be written
@@ -462,6 +469,10 @@ def end_active_work_block(
         copy_warnings.append(activitywatch_not_copied_failure(activitywatch.problem))
     waiting_file = work_blocks.WorkBlockFiles(log_directory).unrecorded_file(ended_record.id)
     write_of_this_block = write_one_unrecorded_record(runner, eval_reading, waiting_file)
+    # Last, because the timeline is worked out from the copies just made
+    # and points at the work block's record, wherever that now is.
+    timeline_build = build_timeline(eval_reading, now)
+    copy_warnings.extend(timeline_warnings(timeline_build))
     if not write_of_this_block.committed:
         # The work block is ended and its record is safe, so what the person
         # asked for is done: a warning, not a failure, and exit 0. An agent
@@ -483,6 +494,8 @@ def end_active_work_block(
         ("Claude sessions", str(len(ended_record.claude_sessions))),
         ("Agent sessions copied", str(copies.agent_sessions_copied)),
     ]
+    if timeline_build.built:
+        facts.append(("Timeline", "built; run goodall timeline to read this work block in time order"))
     telemetry_description = describe_telemetry(log_directory, ended_record)
     if telemetry_description is not None:
         facts.append(("Telemetry", telemetry_description))
@@ -635,6 +648,8 @@ class Settling:
     copies: agent_session_copies.CopyResult = field(default_factory=agent_session_copies.CopyResult)
     activitywatch: activitywatch_copies.CopyResult = field(default_factory=activitywatch_copies.CopyResult)
     noted_hook_problems: hook_problems.HookProblems | None = None
+    # Warnings from building the timeline again, which settling does when it closed a work block.
+    timeline_warnings: list[Failure] = field(default_factory=list)
 
     @property
     def warnings(self) -> list[Failure]:
@@ -651,6 +666,7 @@ class Settling:
             warnings.append(agent_sessions_not_copied_failure(self.copies))
         if self.activitywatch.problem is not None:
             warnings.append(activitywatch_not_copied_failure(self.activitywatch.problem))
+        warnings.extend(self.timeline_warnings)
         if self.noted_hook_problems is not None and self.noted_hook_problems.unreadable_inputs > 0:
             warnings.append(hook_input_unreadable_failure(self.noted_hook_problems))
         if self.noted_hook_problems is not None and self.noted_hook_problems.unknown_events > 0:
@@ -738,13 +754,46 @@ def settle(
     activitywatch = activitywatch_copies.CopyResult()
     if copy_activitywatch_now:
         activitywatch = copy_activitywatch(runner, eval_reading, now)
-    return Settling(
+    settling = Settling(
         closings=closings,
         writes=write_unrecorded_records(runner, eval_reading),
         copies=agent_session_copies.copy_ended_work_blocks(log_directory, now),
         activitywatch=activitywatch,
         noted_hook_problems=hook_problems.take_hook_problems(log_directory, now),
     )
+    if closings and copy_activitywatch_now:
+        # A work block has just ended and its copies are made, so the
+        # timeline is built again. goodall stop does this itself, after
+        # the ActivityWatch copy it takes.
+        built = timeline_warnings(build_timeline(eval_reading, now))
+        settling = dataclasses.replace(settling, timeline_warnings=built)
+    return settling
+
+
+def build_timeline(eval_reading: EvalForThisAccount, now: datetime) -> timeline.BuildResult:
+    """Build this eval's timeline again, from its log directory and record repo (goodall.timeline).
+
+    Called once a work block has ended and its copies are made, and by
+    `goodall timeline`. Never raises for anything on the disk.
+    """
+    return timeline.build_timeline(
+        eval_reading.local_settings.log_directory.path,
+        eval_reading.local_settings.record_repo.path,
+        tuple(eval_reading.eval_config.intervention_categories),
+        now,
+    )
+
+
+def timeline_warnings(build: timeline.BuildResult) -> list[Failure]:
+    """The warning for a timeline build that had problems; none when it had none.
+
+    Always a warning when a work block ends, never a failure: the timeline
+    is derived, the raw records it is built from are untouched, and
+    `goodall timeline --rebuild` builds it again.
+    """
+    if not build.problems:
+        return []
+    return [timeline.build_problems_failure(build)]
 
 
 def close_damaged_work_block(
